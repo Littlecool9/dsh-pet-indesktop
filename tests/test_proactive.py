@@ -604,6 +604,14 @@ class TestVisionAndWatcherPhase2:
         # vision 的 PIL 已下沉为函数内懒导入，直接 patch PIL.ImageGrab 本体
         # （与原先 patch vision.ImageGrab 语义一致：同一模块对象）
         monkeypatch.setattr("PIL.ImageGrab.grab", lambda all_screens=True: fake_all_screen)
+        # 虚拟画布的原点也属于测试输入；不能沿用本机多屏的负坐标原点。
+        if os.name == "nt":
+            user32 = vision.ctypes.windll.user32
+            real_metrics = user32.GetSystemMetrics
+            monkeypatch.setattr(
+                user32, "GetSystemMetrics",
+                lambda metric: 0 if metric in (76, 77) else real_metrics(metric),
+            )
 
         # 模拟抓取有效区域 (100, 100, 200, 200)
         img = vision.capture_window_rect((100, 100, 200, 200))

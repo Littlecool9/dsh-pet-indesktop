@@ -491,6 +491,8 @@ DeepSeek 余额显示（气泡/小部件思路）参考了 [MeteorNOX/DeepSeek-B
 
 ### 从源码运行（开发者）
 
+本地 Windows 环境的固定解释器、一键启动、调试与重建步骤见 [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md)。
+
 建议使用 Python 3.10 或更高版本（CI 使用 Python 3.11，Windows 实机开发验证覆盖 Python 3.13），并在项目根目录执行：
 
 ```powershell

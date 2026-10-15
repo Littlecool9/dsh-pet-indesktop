@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Desktop Pet (local development)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pet",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "APPDATA": "${workspaceFolder}/.local/appdata",
+        "PYTHONUTF8": "1",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "justMyCode": true
+    }
+  ]
+}
