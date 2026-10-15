@@ -252,7 +252,8 @@ WINDOW_PY_LINE_BUDGET = 4671
 # 2026-10-09 上调到 2501（bug 狩猎修复批，两批叠加）：即时音效开关的 reload 防陈旧
 # 快照守卫（+7，B04）+ 子宠页读写路由的配置入口一行与 harness 置灰摘除（+3，F2）。
 # 按文件约定预算只随实测校准，不为达标压缩行宽/合并语句；拆分仍是待办。
-MODERN_SETTINGS_DIALOG_PY_LINE_BUDGET = 2501
+# 2026-10-15 focus: import + section assembly + save delegation; implementation lives in settings_focus.py.
+MODERN_SETTINGS_DIALOG_PY_LINE_BUDGET = 2504
 
 
 def _read(name: str) -> str:

@@ -2730,6 +2730,9 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         被拒——此时 _switch 已回退到可播放动画并安排重试，移动计划绝不建立
         （B7 审查 P1-1 / 复审 R2）。
         """
+        from .focus_mode import shared_focus_session
+        if shared_focus_session().focusing:
+            return False
         if (self._physics_mode is not None
                 or self._interaction_state in (THROWN, DRAGGING)):
             return False
@@ -2812,7 +2815,8 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
 
     def _on_move_tick(self) -> None:
         """位移守卫：位置由 _on_frame 帧驱动，这里只做异常清场（物理接管/动画丢失）。"""
-        if self._physics_mode is not None:
+        from .focus_mode import shared_focus_session
+        if self._physics_mode is not None or shared_focus_session().focusing:
             self._cancel_move()
             return
         if not self._move_plan or self.movie is None:

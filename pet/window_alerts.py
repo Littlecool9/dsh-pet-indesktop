@@ -687,6 +687,9 @@ def pick_self_talk_choice(texts, images, image_chance):
 
 
 def show_random_self_talk(host) -> bool:
+    from .focus_mode import shared_focus_session
+    if shared_focus_session().focusing:
+        return False  # FocusController provides the task-aware persona utterance once per process.
     from .window import _set_speech_bubble_interactive
     if bubble_blocked(host):
         return False

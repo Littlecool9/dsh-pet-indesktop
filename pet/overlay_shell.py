@@ -645,6 +645,9 @@ class _SpriteSelfTalkHost:
         抽样/出图概率复用 ``window_alerts`` 的纯逻辑函数；配图只走壳的预热缓存
         （GUI 线程绝不付磁盘/解码税——冷缓存回退文本，与主宠同口径）。
         """
+        from .focus_mode import shared_focus_session
+        if shared_focus_session().focusing:
+            return False
         if self._bubble_blocked():
             return False
         if self._sticky_bubble_active or self._alert_current is not None:
@@ -2320,6 +2323,9 @@ class OverlayShell(QObject):
         落地走 sprite 版气泡面（配图 = 刀 1 的 ``SpriteBubbleFollower.show_image``），
         不触碰 window 私面。
         """
+        from .focus_mode import shared_focus_session
+        if shared_focus_session().focusing:
+            return False
         if self._bubble_blocked():
             return False
         # 审批等一直挂着的气泡优先，自言自语不覆盖（window_alerts 同款守卫）

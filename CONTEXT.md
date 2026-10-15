@@ -5,6 +5,17 @@ their platform-specific presentations.
 
 ## Language
 
+**Focus Session**:
+The process-wide Pomodoro runtime, shared by every pet. It owns the current
+focus/break phase, deadline, pause state and completed rounds; a finished phase
+waits for the user to start the next one. Persistent work background and timing
+preferences belong to the global Settings System, while the island and context
+menu invoke commands on this one runtime. Focus pauses autonomous walking and
+replaces casual self-talk with persona-aware encouragement or a foreground-window
+observation. Pausing, resting or exiting cancels pending focus speech; existing
+quiet mode remains an independent user choice.
+_Avoid_: Per-pet timers, permanently changing no-move, AI attention score
+
 **Shared UX Contract**:
 The cross-platform agreement for information architecture, state semantics,
 interaction meaning, spacing roles, and brand roles. Platform presentation may

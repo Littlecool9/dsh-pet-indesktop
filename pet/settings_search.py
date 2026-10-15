@@ -56,6 +56,10 @@ from .settings_widgets import CollapsibleGroup, SettingRow, SettingsSection
 #:   ``SettingRow``，给不出行的落点——本刀不做（要做得先把按钮纳入候选模型，
 #:   那是另一件事，不该顺手塞进搜索）。
 ROW_ALIASES: dict[str, tuple[str, ...]] = {
+    # 用户功能名是「番茄钟」，设置组名是「专注模式」；长期背景也常被称为工作内容。
+    "番茄": ("focus_work_context", "focus_work_minutes", "focus_short_break_minutes", "focus_long_break_minutes"),
+    "专注模式": ("focus_work_context",),
+    "工作内容": ("focus_work_context",),
     # 岛上那一行的 label 是「灵动岛指标 · 网络」，文案写「↓下行 / ↑上行速率」，
     # 用户张口就是「网速」——关键词 0 命中。
     "网速": ("island_network",),

@@ -85,7 +85,7 @@ class ChatSettingsDialog(QDialog):
         # 视觉模型（看看屏幕）：默认同聊天模型推导；取消勾选可手填（如免费 glm-4.6v-flash）
         self.vmodel = QLineEdit(p.vision_model)
         self.vmodel.setPlaceholderText('留空自动推导；免费视觉可用智谱 glm-4.6v-flash')
-        self.vsame = QCheckBox('视觉模型同聊天模型（ds 文本模型自动换 vision-exp；GLM/Kimi 等多模态直接复用）')
+        self.vsame = QCheckBox('视觉模型同聊天模型（官方 DeepSeek 使用 deepseek-flash；GLM/Kimi 等多模态直接复用）')
         self.vsame.setChecked(p.vision_same_as_chat)
         self.vurl = QLineEdit(p.vision_base_url)
         self.vurl.setPlaceholderText('视觉 API 地址（留空复用聊天地址；GLM 填 https://open.bigmodel.cn/api/paas/v4）')

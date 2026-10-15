@@ -38,6 +38,7 @@ app = QApplication.instance() or QApplication([])
 _AUTOMATION_ORDER = [
     "待办提醒",
     "免打扰",
+    "专注模式",
     "主动识屏 · 开关与节奏",
     "主动识屏 · 什么时候看",
     "主动识屏 · 看哪些软件",
@@ -53,6 +54,7 @@ _AUTOMATION_ORDER = [
 _AUTOMATION_ORDER_WITHOUT_PROACTIVE = [
     "待办提醒",
     "免打扰",
+    "专注模式",
     "消费统计",
     "box:Agent 联动",
     "文案风格与模板",

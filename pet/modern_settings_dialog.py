@@ -173,6 +173,7 @@ from . import settings_page_guide
 from . import settings_weather
 from . import settings_pet_controls
 from . import settings_quiet
+from . import settings_focus
 from . import settings_reset_defaults
 from . import settings_search
 
@@ -2013,6 +2014,7 @@ class ModernSettingsDialog(QDialog):
                 ("待办提醒", claim("todo_reminder_enabled", "todo_reminder_lead_minutes")),
                 # 「免打扰」两行在本模块构建（settings_quiet，行数预算原因）。
                 ("免打扰", settings_quiet.build_quiet_rows(self)),
+                ("专注模式", settings_focus.build_focus_rows(self)),
                 *proactive_sections,
                 ("消费统计", agent_cost_rows),
                 agent_box,
@@ -2401,6 +2403,7 @@ class ModernSettingsDialog(QDialog):
         settings_network.save_network_settings(self)
         settings_music.save_music_player_settings(self)
         settings_quiet.save_quiet_settings(self)
+        settings_focus.save_focus_settings(self)
         settings_weather.save_weather_settings(self)
         if sys.platform == "win32" and self.include_ai and hasattr(self, "pro_enabled_check"):
             from .proactive import PRESET_DEFAULTS

@@ -356,7 +356,8 @@ def test_offer_twice_while_running_is_busy_hint(tmp_path):
 
 def test_confirm_creates_session_sends_and_writes_back(tmp_path):
     _qapp()
-    win = _FakeWin(tmp_path)
+    # This case tests the global fallback prompt; do not depend on a bundled character's persona.
+    win = _FakeWin(tmp_path, data={"character": "file-interpret-fixture"})
     service = FakeChatService()
     controller = FileInterpretController(win, service_factory=lambda: service)
     note = tmp_path / "note.md"
@@ -380,7 +381,7 @@ def test_confirm_creates_session_sends_and_writes_back(tmp_path):
 
     # 会话落库：user + assistant（AI 对话窗口可见）
     store = SessionStore(tmp_path, "")
-    sessions = store.list("shenshen")
+    sessions = store.list("file-interpret-fixture")
     assert len(sessions) == 1
     roles = [m.role for m in sessions[0].messages]
     assert roles == ["user", "assistant"]

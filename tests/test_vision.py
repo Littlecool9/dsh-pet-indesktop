@@ -11,16 +11,16 @@ def _p(model, **kw):
     return ProviderConfig.from_dict('test', raw)
 
 
-def test_deepseek_flash_maps_to_preview_vision():
-    assert resolve_vision_model(_p('deepseek-v4-flash')) == 'deepseek-v4-flash-vision-exp'
+def test_deepseek_flash_maps_to_current_official_vision():
+    assert resolve_vision_model(_p('deepseek-v4-flash')) == 'deepseek-flash'
 
 
 def test_other_deepseek_models_use_default_vision():
-    assert resolve_vision_model(_p('deepseek-v4-pro')) == 'deepseek-v4-flash-vision-exp'
+    assert resolve_vision_model(_p('deepseek-v4-pro')) == 'deepseek-flash'
 
 
-def test_already_vision_model_passes_through():
-    assert resolve_vision_model(_p('deepseek-v4-flash-vision-exp')) == 'deepseek-v4-flash-vision-exp'
+def test_old_official_vision_alias_maps_to_current_model():
+    assert resolve_vision_model(_p('deepseek-v4-flash-vision-exp')) == 'deepseek-flash'
 
 
 def test_multimodal_chat_model_used_as_is():
@@ -34,7 +34,7 @@ def test_manual_override_wins():
 
 def test_manual_empty_falls_back_to_derivation():
     p = _p('deepseek-v4-flash', vision_same_as_chat=False, vision_model='  ')
-    assert resolve_vision_model(p) == 'deepseek-v4-flash-vision-exp'
+    assert resolve_vision_model(p) == 'deepseek-flash'
 
 
 def test_capture_screen_bytes_in_memory(tmp_path):

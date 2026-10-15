@@ -40,6 +40,9 @@ from .settings_widgets import ModernSelect, SettingRow, ToggleSwitch
 #: 时不必列在这里（先查本表，再回落「行键就是顶层键」）。值写成 ``(路径, 倍数)``
 #: 表示控件与配置不同量纲（配置存 0~1、控件按百分比显示）。
 _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
+    **{f"focus_{key}": f"focus_mode.{key}" for key in (
+        "work_minutes", "short_break_minutes", "long_break_minutes", "long_break_every",
+        "check_minutes", "daily_cap", "screen_enabled")},
     "file_interpret_enabled": "file_interpret.enabled",
     # 主动识屏（嵌套 dict；preset 会在保存时按数值自动落为 custom）
     "proactive_enabled": "proactive_screen.enabled",

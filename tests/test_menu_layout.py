@@ -30,6 +30,7 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
         "agent_link",
         "proactive_screen",
         "todo_panel",
+        "focus_mode",
         "quiet_mode",
         "memory_trim",
         "weather",
@@ -344,6 +345,7 @@ def test_missing_user_layout_resolves_versioned_default():
         "agent_link",
         "proactive_screen",
         "todo_panel",
+        "focus_mode",
         "quiet_mode",
         "memory_trim",
         "weather",
@@ -380,6 +382,7 @@ def test_missing_user_layout_resolves_versioned_default():
         "agent_link",
         "proactive_screen",
         "todo_panel",
+        "focus_mode",
         "quiet_mode",
         "memory_trim",
         "weather",
@@ -550,10 +553,12 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     if sys.platform == "win32":
         expected_root.insert(-2, "主动识屏")
         expected_root.insert(-2, "待办提醒")
+        expected_root.insert(-2, "专注模式")
         expected_root.insert(-2, "免打扰")
         expected_root.insert(-2, "回收内存")
     else:
         expected_root.insert(-2, "待办提醒")
+        expected_root.insert(-2, "专注模式")
         expected_root.insert(-2, "免打扰")
     # 天气两个入口在 tools 段末尾（待办提醒之后、桌宠设置之前）
     expected_root[-2:-2] = ["查看天气", "天气城市"]
@@ -573,6 +578,7 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     # tools 段顺序：… Agent 联动 [主动识屏] 待办提醒 免打扰 [回收内存] 查看天气 天气城市 | 桌宠设置 退出
     # （报时/节日四项默认 visible: false，不渲染；回收内存仅在 Windows 出现）
     expected_rendered.insert(-3, "待办提醒")
+    expected_rendered.insert(-3, "专注模式")
     expected_rendered.insert(-3, "免打扰")
     if sys.platform == "win32":
         expected_rendered.insert(-3, "回收内存")

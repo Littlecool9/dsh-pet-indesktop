@@ -76,11 +76,15 @@ class VisionError(RuntimeError):
 
 def resolve_vision_model(p) -> str:
     """推导视觉模型：取消「同聊天模型」且手填了就用filled值；
-    否则按聊天模型推导——本身多模态的直接用，ds 文本模型映射到预览版视觉模型。"""
+    否则按聊天模型推导；官方 DeepSeek 使用当前多模态型号，中转保留原映射。"""
     if not p.vision_same_as_chat and p.vision_model.strip():
         return p.vision_model.strip()
     m = (p.model or '').strip()
     low = m.lower()
+    from urllib.parse import urlparse
+    endpoint = p.base_url if p.vision_same_as_chat else (p.vision_base_url or p.base_url)
+    if urlparse(endpoint).hostname == 'api.deepseek.com' and low.startswith('deepseek'):
+        return 'deepseek-flash'
     if 'vision' in low:
         return m
     if low.endswith('deepseek-v4-flash'):

@@ -375,6 +375,10 @@ class BehaviorController:
                 st = self._states[sprite] = _SpriteState()
                 st.predictor = self._make_predictor(sprite)
             istate = getattr(sprite, "interaction_state", INTERACTION_NORMAL)
+            from .focus_mode import shared_focus_session
+            if (istate == INTERACTION_NORMAL and shared_focus_session().focusing
+                    and (st.state == STATE_MOVE or st.pending_move is not None)):
+                self._enter_idle(sprite, st, self._categories(sprite.library))
             # 飞行边沿（B1）：走路就是这么走的——在既有的 istate 读取处顺带
             # 判一次边沿，零额外查询、不新增 timer/线程（见 _sync_flight_edge）
             self._sync_flight_edge(sprite, st, istate == INTERACTION_THROWN)
@@ -1544,7 +1548,8 @@ class BehaviorController:
         / loops / loop_duration，F3）：旧架构 window.py:2753-2768 的计划键
         同款，位置由曲线（而非平均速度）决定，静帧段不位移。
         """
-        if getattr(sprite, "probe_active", False):
+        from .focus_mode import shared_focus_session
+        if shared_focus_session().focusing or getattr(sprite, "probe_active", False):
             return False
         moves = cats["moves"]
         if not moves:

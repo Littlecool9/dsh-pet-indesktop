@@ -907,6 +907,7 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     if sys.platform == "win32":
         expected_labels.append("主动识屏")  # 仅 Windows + 有聊天能力时显示
     expected_labels.append("待办提醒")  # 待办管理面板入口（所有平台）
+    expected_labels.append("专注模式")
     expected_labels.append("免打扰")    # 免打扰入口（#208，四档时长子菜单）
     if sys.platform == "win32":
         expected_labels.append("回收内存")  # 「回收内存」菜单动作（#210）：仅 Windows
@@ -2643,6 +2644,7 @@ def test_product_copy_has_no_external_brand_reference():
                 # Contributor/change reports are repository evidence, not
                 # user-facing product copy and may mention external brands.
                 or path.name.startswith("README-CHANGE-")
+                or path.name.startswith("PR-REPORT-")
             ):
                 continue
             if forbidden in path.read_text(encoding="utf-8", errors="ignore").lower():

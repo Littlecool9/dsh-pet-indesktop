@@ -180,6 +180,28 @@ def test_first_tick_enters_idle():
     assert sprite.velocity == QPointF(0, 0)
 
 
+def test_focus_stops_existing_walk_without_saving_no_move_and_restores_on_break():
+    from pet.focus_mode import shared_focus_session
+    state = shared_focus_session()
+    lib = _make_library()
+    sprite = _make_sprite(lib, facing="right")
+    controller = BehaviorController(BOUNDS, rng=ScriptedRng())
+    _roll_into_move(controller, sprite, lib)
+    assert controller.state_of(sprite) == STATE_MOVE
+    position = QPointF(sprite.pos)
+    try:
+        state.start()
+        _run(controller, sprite, 0.5)
+        assert sprite.pos == position
+        assert sprite.velocity == QPointF(0, 0)
+        assert not controller.no_move
+        state.pause()
+        _roll_into_move(controller, sprite, lib)
+        assert controller.state_of(sprite) == STATE_MOVE
+    finally:
+        state.stop()
+
+
 def test_idle_to_move_transition():
     lib = _make_library()
     # 朝右 + 方向右：无需先转向，直接进移动
@@ -230,6 +252,45 @@ def test_turn_before_reverse_move():
     assert c.state_of(sprite) == STATE_MOVE
     assert lib.clip("walk").start_count == 1
     assert sprite.velocity.x() > 0
+
+
+def test_focus_cancels_walk_already_queued_behind_a_turn():
+    from pet.focus_mode import shared_focus_session
+    state = shared_focus_session()
+    lib = _make_library()
+    sprite = _make_sprite(lib, facing="left")
+    c = BehaviorController(BOUNDS, rng=ScriptedRng())
+    c.predict_enabled = False
+    _roll_into_move(c, sprite, lib, choices=(1,))
+    assert c.state_of(sprite) == STATE_TURN
+    position = QPointF(sprite.pos)
+    try:
+        state.start()
+        _run(c, sprite, lib.duration("turn1") + 0.4)
+        assert sprite.pos == position
+        assert lib.clip("walk").start_count == 0
+    finally:
+        state.stop()
+
+
+def test_focus_does_not_cancel_velocity_owned_by_throw_physics():
+    from pet.focus_mode import shared_focus_session
+    state = shared_focus_session()
+    lib = _make_library()
+    sprite = _make_sprite(lib, facing="right")
+    c = BehaviorController(BOUNDS, rng=ScriptedRng())
+    _roll_into_move(c, sprite, lib)
+    assert c.state_of(sprite) == STATE_MOVE
+    sprite.interaction_state = INTERACTION_THROWN
+    velocity = QPointF(160, -600)
+    sprite.set_velocity(velocity)
+    try:
+        state.start()
+        c.tick([sprite], 0.016)
+        assert sprite.velocity == velocity
+        assert c.state_of(sprite) == STATE_THROWN
+    finally:
+        state.stop()
 
 
 def test_turn_roll_without_correction_degrades_to_idle():

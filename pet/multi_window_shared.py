@@ -528,6 +528,12 @@ class SharedSubsystems:
 
     def __init__(self, shell) -> None:
         self.proxy = MultiWindowProxy(shell)
+        from .focus_service import FocusController
+        from PySide6.QtCore import QCoreApplication
+        self.focus = FocusController(shell.config, self.proxy,
+                                     identity_config=lambda: shell._chat_identity_config()
+                                     if hasattr(shell, "_chat_identity_config") else shell.config,
+                                     parent=QCoreApplication.instance())
         self.agent_link = SharedAgentLinkManager(self.proxy, shell.config)
         self.proactive = SharedProactiveWatcher(self.proxy, shell.config)
         self.fs = SharedFullscreenWatcher(shell)
@@ -591,6 +597,7 @@ class SharedSubsystems:
         self.agent_link.stop_all()
         self.fs.stop()
         self.quiet.stop()
+        self.focus.stop()
         _release_qt_lifetimes(self)
 
     @classmethod

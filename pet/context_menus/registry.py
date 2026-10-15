@@ -11,6 +11,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMenu, QWidgetAction
 
 from ..config import DEFAULT_MENU_EASTER_EGG
+from ..focus_ui import build_focus_menu
 from ..weather_menu import (
     WEATHER_DISABLED_REASON,
     add_show_weather,
@@ -85,7 +86,7 @@ ACTION_LABELS = {
     "check_update": "检查更新", "github_project": "GitHub 项目页",
     "quark_download": "夸克网盘下载", "agent_link": "Agent 联动",
     "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
-    "quiet_mode": "免打扰",
+    "quiet_mode": "免打扰", "focus_mode": "专注模式",
     "weather": "查看天气", "weather_cities": "天气城市",
     "network_info": "网络信息",
     "modern_settings": "桌宠设置", "quit": "退出",
@@ -114,7 +115,7 @@ ACTION_ICONS = {
     "deepseek_web": "web", "check_update": "update", "github_project": "web",
     "quark_download": "download", "agent_link": "automation",
     "proactive_screen": "screen", "todo_panel": "todo",
-    "quiet_mode": "pause",
+    "quiet_mode": "pause", "focus_mode": "pause",
     "weather": "weather", "weather_cities": "weather",
     "network_info": "web",
     "modern_settings": "settings", "quit": "quit",
@@ -352,6 +353,7 @@ class MenuActionRegistry:
             # 免打扰：进程级状态，任何宿主（PetWindow / SpriteMenuFacade）都可用，
             # 不做能力判定——菜单里永远给得出入口，用户不必先找开关。
             "quiet_mode": MenuActionSpec(add_quiet_mode_menu),
+            "focus_mode": MenuActionSpec(build_focus_menu),
             "modern_settings": MenuActionSpec(
                 _build_settings, _callback_available("on_open_modern_settings")
             ),

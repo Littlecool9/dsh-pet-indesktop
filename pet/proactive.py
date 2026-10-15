@@ -246,6 +246,9 @@ class ProactiveScreenWatcher:
 
             def _forward_bubble(self, text: str, duration_ms: int) -> None:
                 from . import window_alerts as _alerts
+                from .focus_mode import shared_focus_session
+                if shared_focus_session().owns_observation:
+                    return
 
                 if _alerts.quiet_blocked(self._watcher.win):
                     # 免打扰（含全屏等效）：识屏答复属普通气泡，不冒，转存暂存队列。
@@ -337,6 +340,9 @@ class ProactiveScreenWatcher:
 
     def _on_tick(self) -> None:
         """8s 心跳主线程快速判定（G1~G4）。"""
+        from .focus_mode import shared_focus_session
+        if shared_focus_session().owns_observation:
+            return
         if self._worker_busy or self._request_in_flight:
             return
 
@@ -484,6 +490,9 @@ class ProactiveScreenWatcher:
     ) -> None:
         """主线程槽：接收后台截图计算结果，执行 dHash 差异与频控，进入真实请求或日志模式。"""
         try:
+            from .focus_mode import shared_focus_session
+            if shared_focus_session().owns_observation:
+                return
             info = info or {}
             eff = effective_proactive_config(self.cfg.get("proactive_screen", {}))
 

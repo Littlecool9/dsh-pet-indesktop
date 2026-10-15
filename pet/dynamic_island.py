@@ -1965,11 +1965,34 @@ class DynamicIsland(QWidget):
             button_row.addWidget(btn)
         actions.addLayout(button_row)
 
-        for section in (self._card_overview, self._card_metrics,
+        from .focus_ui import FocusControls
+        self._focus_controls = FocusControls(self.config, self._card_box)
+        for section in (self._card_overview, self._card_metrics, self._focus_controls,
                         self._card_message_box, self._card_actions):
             layout.addWidget(section)
         self._card_box.hide()
         self._sync_card_labels()
+        from .focus_mode import shared_focus_session
+        session = shared_focus_session()
+        listener = self.refresh_focus
+        session.add_listener(listener)
+        self.destroyed.connect(lambda _obj=None: session.remove_listener(listener))
+
+    def refresh_focus(self) -> None:
+        """Update focus content without a per-second topmost/system probe."""
+        import shiboken6
+        if not shiboken6.isValid(self) or not shiboken6.isValid(self._focus_controls):
+            from .focus_mode import shared_focus_session
+            shared_focus_session().remove_listener(self.refresh_focus)
+            return
+        self._plan_inputs_key = self._content_cache_key = None
+        self._focus_controls.refresh()
+        if not self.isVisible():
+            return
+        if self._mode == "expanded":
+            self._sync_card_labels()
+        self._update_size()
+        self.update()
 
     def _sync_card_labels(self) -> None:
         """刷新四区文案与结构（展开 / 配置刷新 / 卡片开着时的每秒 tick）。
@@ -2014,6 +2037,18 @@ class DynamicIsland(QWidget):
             self._apply_card_style(btn, button_style)
             btn.setFixedHeight(_CARD_BUTTON_H)
         self._card_toggle_btn.setText("隐藏桌宠" if self._pet_visible else "显示桌宠")
+        self._focus_controls.refresh()
+        for btn in (self._focus_controls.toggle, self._focus_controls.end):
+            btn.setFont(self._font_for("name"))
+            self._apply_card_style(btn, button_style
+                                   + f"QPushButton:focus {{ border: 2px solid {accent.name()}; }}"
+                                   + f"QPushButton:disabled {{ color: {secondary_color.name()};"
+                                   + f" background: rgba({accent_rgb}, 0.03); border-color: rgba({accent_rgb}, 0.15); }}")
+            btn.setFixedHeight(_CARD_BUTTON_H)
+        self._focus_controls.status.setFont(self._font_for("aux"))
+        self._apply_card_style(self._focus_controls.status, f"color: {primary_color.name()};")
+        self._focus_controls.detail.setFont(self._font_for("aux"))
+        self._apply_card_style(self._focus_controls.detail, f"color: {secondary_color.name()};")
         # ---- A 概览 ----
         self._card_balance_label.setText(self._balance_text)
         self._card_tier_label.setText(self._balance_tier_text)
@@ -2107,6 +2142,7 @@ class DynamicIsland(QWidget):
         """
         rows = self._card_metric_rows()
         total = (_CARD_MARGIN_TOP + self._card_overview_height()
+                 + self._focus_controls.content_height(self._card_content_width())
                  + self._card_metrics_height(rows) + self._card_message_height()
                  + self._card_actions_height() + _CARD_MARGIN_BOTTOM)
         return total
@@ -2125,6 +2161,7 @@ class DynamicIsland(QWidget):
         self._card_message_box.setFixedHeight(self._card_message_height(lines))
         self._card_message_label.setFixedHeight(lines * metrics.lineSpacing())
         self._card_actions.setFixedHeight(self._card_actions_height())
+        self._focus_controls.setFixedHeight(self._focus_controls.content_height(self._card_content_width()))
 
     def _card_row_baseline(self) -> int:
         """B 区行的共享基线（相对行顶）= 内边距 + 值列（13px）的 ascent。"""
@@ -2764,6 +2801,8 @@ class DynamicIsland(QWidget):
         icon = bool(c.get("show_icon", True))
         name = bool(c.get("show_name", True))
         info = bool(c.get("show_info", True))
+        from .focus_mode import shared_focus_session
+        info = info or shared_focus_session().engaged
         status = bool(c.get("show_status", True))
         if not (icon or name or info or status):
             info = True
@@ -2861,7 +2900,13 @@ class DynamicIsland(QWidget):
         它们是产品契约的锚点，收缩不得动（见设计稿 §3.2 保底级）。
         """
         mode = str(self._cfg.get("info_mode") or "time")
-        if mode == "custom":
+        from .focus_mode import shared_focus_session
+        focus = shared_focus_session()
+        if focus.engaged:
+            text = focus.label()
+            sample = "长休息 180:00"
+            elide_px = 0
+        elif mode == "custom":
             text = str(self._cfg.get("custom_text") or "").strip() or "自定义"
             sample = text
             elide_px = _PRIMARY_ELIDE_PX
@@ -4411,6 +4456,8 @@ class DynamicIsland(QWidget):
         # 帧率段：停表 + 退订 + 丢这一岛对共享采集器的引用（**不 join**：收口的
         # 有界等待在采集线程自己那边，GUI 线程上等它就是"关个岛卡三秒"）。还有别的
         # 岛在看读数时，这一岛的销毁不会把采集链路带走（宿主按岛计数）。
+        from .focus_mode import shared_focus_session
+        shared_focus_session().remove_listener(self.refresh_focus)
         self._release_fps_slot()
         super().closeEvent(event)
 
@@ -4572,7 +4619,10 @@ class DynamicIsland(QWidget):
         screen = self._screen_at(event.globalPosition().toPoint())
         available = screen.availableGeometry() if screen is not None else None
         if not self._dragging:
-            if self._mode == "docked" and not self._hover_peek:
+            from .focus_mode import shared_focus_session
+            if shared_focus_session().engaged:
+                self.expand_card()
+            elif self._mode == "docked" and not self._hover_peek:
                 # 细条单击 = 滑出预览（不停留展开卡片，保持轻量）
                 self._hover_peek = True
                 self._animate_to(self._target_rect())

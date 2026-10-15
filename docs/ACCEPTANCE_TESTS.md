@@ -52,6 +52,39 @@ python -m pytest -q tests/test_agent_link.py tests/test_dsh_state.py
 
 ## Qt 生命周期与最终全量验收
 
+### 2026-10-15 Windows 本地补充
+
+Windows 10 / CPython 3.13.16 / PySide6 6.12.0 的专注模式最终回归连续两轮在
+`test_quick_chat.py::test_switch_character_moves_session_and_prompt_to_new_character`
+的 `app.processEvents()`（第 59 行）发生原生访问冲突，退出码 −1073741819；
+第二轮已开启 `DSPET_TEST_DIAG_DIR`，最后记录为该用例 setup 完成。此前没有断言失败。
+相关专注/快捷聊天/免打扰组合单独运行两遍均 91 passed。新增销毁测试的全局删除派发
+改为定向后仍复现，不能将这一修正当作崩溃根因。来源尚未定位，不能归因于当前栈的 owner。
+
+单独摘出快捷聊天后，崩溃移到 `test_quiet_mode.py:288` 的事件派发（仍为 −1073741819）。
+因此单文件隔离不足，尚不能排除更早测试遗留的原生状态。按 AGENTS.md 的隔离纪律，
+该环境用自动收集清单建立三个互斥分区，**不删除或跳过任何用例**：
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"
+python scripts/verify_focus_mode.py --suite-tests --output .scratch/focus-mode/suite-final
+```
+
+最初两个大分区中，`>= test_q` 完整通过 2,765 项 / 5 跳过；`< test_q` 后来在
+`test_proactive.py:1370` 事件派发中原生崩溃。因此最终将前半分区细化为**每个测试文件
+一个进程**，已通过的后半分区保留；期间产品与测试代码没有继续变更。
+
+脚本先 `pytest --collect-only -q`，检查测试总数与唯一 node ID 一致。前半文件逐个
+进程执行，后半作为一组；各进程用独立 APPDATA、缓存和诊断目录，最多两个并发。
+文件集合并集必须等于完整收集结果，交集必须为空。全部非解码进程退出码 0 后，才
+独立运行两个解码文件。清单、逐段日志、JUnit XML 和退出码均保留；任何一段失败
+脚本返回非零，不合计为全绿。支持 `--suite-part before-q/q-onward/decode` 单跑指定
+部分，部分结果本身不能宣称全量通过，必须合计完整清单与全部成功退出码。
+这只隔离本机全量进程中的原生生命周期风险，不证明快捷聊天或免打扰代码存在或不存在缺陷，
+不自动修改 CI 平台门禁。逐段最终结果见 [专注模式交付报告](PR-REPORT-FOCUS-MODE-2026-10-15.md)。
+
+### 原有标准与历史证据
+
 Windows/offscreen 的最终验证必须分两步执行，避免高并发跨进程压力测试掩盖普通
 Qt 生命周期问题：
 
