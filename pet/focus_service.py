@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .focus_mode import (focus_prompt, normalize_focus_config,
                          parse_observation, shared_focus_session)
 from .proactive_limiter import ProactiveLimiter
+from .focus_notes import FocusHistory, FocusNotes, parse_work_memory, reply_object
 
 
 def foreground_observation_available():
@@ -21,7 +22,7 @@ def foreground_observation_available():
 
 class FocusController(QObject):
     changed = Signal()
-    _result = Signal(int, str, str, str)
+    _result = Signal(int, str, str, str, str, str)
 
     def __init__(self, config, presentation, *, identity_config=None, session=None, parent=None):
         super().__init__(parent)
@@ -42,6 +43,10 @@ class FocusController(QObject):
         self.limiter = ProactiveLimiter(config.dir / "focus_ai_state.json", {})
         self._previous_phase = self.session.phase
         self._previous_status = self.session.status
+        self.notes = FocusNotes()
+        self.history = FocusHistory(config.dir / "focus_sessions.json")
+        self._request_character = ""
+        self._wrapup_alert_id = ""
         self.session.add_listener(self._transition)
 
     def _transition(self):
@@ -49,6 +54,12 @@ class FocusController(QObject):
             return
         old_phase, old_status = self._previous_phase, self._previous_status
         self._previous_phase, self._previous_status = self.session.phase, self.session.status
+        if old_status == "idle" and self.session.status == "running":
+            self.notes = FocusNotes()
+            resolve = getattr(self.presentation, "resolve_alert", None)
+            if self._wrapup_alert_id and callable(resolve):
+                resolve(self._wrapup_alert_id)
+            self._wrapup_alert_id = ""
         self._next_check = time.monotonic() + self._preferences()["check_minutes"] * 60
         if self.session.status == "running":
             self.timer.start()
@@ -69,7 +80,33 @@ class FocusController(QObject):
             self._play_phase_sound("agent-start" if self.session.phase == "focus" else "agent-done")
         elif self.session.status == "idle" and old_status != "idle":
             self._play_phase_sound("agent-done")
+            self._finish_session()
         self.changed.emit()
+
+    def _finish_session(self):
+        from . import window_alerts
+        summary = self.session.last_finished
+        if summary is None:
+            return
+        try:
+            character = str(self.identity_config().get("character", "shenshen"))
+        except Exception:
+            character = ""
+        self.history.record({**summary, "character": character,
+                             "work_context": self._preferences()["work_context"],
+                             "observed_work": list(self.notes.work)})
+        if (window_alerts.quiet_blocked(self.presentation)
+                or not self.presentation.has_presentation_target()):
+            return
+        text = self.notes.closing(summary["focus_seconds"], character)
+        alert = getattr(self.presentation, "show_alert", None)
+        if callable(alert):
+            self._wrapup_alert_id = f"focus/wrapup/{self.session.generation}"
+            alert(text, duration_ms=10000, sticky=False, priority=1,
+                  alert_type="focus/wrapup", alert_id=self._wrapup_alert_id)
+        elif (not getattr(self.presentation, "_sticky_bubble_active", False)
+              and time.monotonic() >= getattr(self.presentation, "_bubble_busy_until", 0.0)):
+            self.presentation.show_bubble(text, duration_ms=10000)
 
     def _play_phase_sound(self, sound_id):
         from . import window_alerts
@@ -138,14 +175,16 @@ class FocusController(QObject):
             self._recent.clear()
             self._last_config = cfg
         token = self.session.generation
+        self._request_character = character
         self._busy = True
         self.session.observation = "正在观察前台窗口……" if visual else "正在准备专注鼓励……"
         self.changed.emit()
-        threading.Thread(target=self._request, args=(token, provider, prompt, visual, tuple(self._recent)),
+        threading.Thread(target=self._request, args=(token, provider, prompt, visual,
+                         tuple(self._recent), tuple(self.notes.work)),
                          daemon=True, name="focus-observation").start()
         return True
 
-    def _request(self, token, provider, prompt, visual, recent):
+    def _request(self, token, provider, prompt, visual, recent, work_notes):
         # No Qt/widget/config access on this thread. All output is queued to _deliver.
         try:
             from . import vision
@@ -171,35 +210,42 @@ class FocusController(QObject):
                 reply = vision._post_vision_request(
                     buffer.getvalue(), "", prompt, provider,
                     consume_budget=consume_budget,
-                    user_text="观察当前前台窗口，结合工作背景判断。近期判断：" + ", ".join(recent))
+                    user_text=("观察当前前台窗口，结合工作背景判断。近期判断：" + ", ".join(recent)
+                               + "\n本次之前看到的工作摘要（不代表已完成）：" + "；".join(work_notes)))
                 kind, message = parse_observation(reply)
+                work_summary, closing_template = parse_work_memory(reply)
             else:
                 # Use the same transport, provider/key rules, and per-HTTP budget as vision.
                 messages = [{"role": "system", "content": prompt},
                             {"role": "user", "content": "请用自己的口吻，简短地陪我专注。"}]
-                message = vision._post_vision_request(
+                reply = vision._post_vision_request(
                     b"", "", prompt, provider, messages_override=messages,
-                    consume_budget=consume_budget).strip()[:180]
+                    consume_budget=consume_budget)
+                raw = reply_object(reply)
+                message = raw.get("message", "") if raw else reply.strip()
+                message = message.strip()[:180] if isinstance(message, str) else ""
+                work_summary, closing_template = "", raw.get("closing_template", "")
                 kind = "encouragement"
             if (visual and not reply.strip()) or (not visual and not message):
                 raise RuntimeError("模型返回空内容")
             self.limiter.record_success()
             # A settings edit while the request is in flight invalidates its task context too.
-            self._publish(token, kind, message, "")
+            self._publish(token, kind, message, "", work_summary, closing_template)
         except Exception as exc:
             if not self._closed and token == self.session.generation:
                 self.limiter.record_failure()
             self._publish(token, "", "", f"{type(exc).__name__}: {str(exc)[:160]}")
 
-    def _publish(self, token, kind, message, error):
+    def _publish(self, token, kind, message, error, work_summary="", closing_template=""):
         if self._closed:
             return
         try:
-            self._result.emit(token, kind, message, error)
+            self._result.emit(token, kind, message, error, work_summary,
+                              closing_template if isinstance(closing_template, str) else "")
         except RuntimeError:
             pass  # QApplication may already have destroyed this QObject during exit.
 
-    def _deliver(self, token, kind, message, error):
+    def _deliver(self, token, kind, message, error, work_summary="", closing_template=""):
         self._busy = False
         if self._closed or token != self.session.generation or not self.session.focusing:
             return
@@ -214,6 +260,7 @@ class FocusController(QObject):
         labels = {"on_task": "当前画面与工作相关", "off_task": "当前画面可能偏离工作",
                   "uncertain": "当前画面不足以判断", "encouragement": "专注陪伴"}
         self.session.observation = labels.get(kind, "当前画面不足以判断")
+        self.notes.remember(kind, work_summary, closing_template, self._request_character)
         if kind != "encouragement":
             self._recent = (self._recent + [kind])[-3:]
         now = time.monotonic()
@@ -235,3 +282,5 @@ class FocusController(QObject):
         self.timer.stop()
         self.session.remove_listener(self._transition)
         self.session.stop()
+        if not self.history.flush(1.0):
+            logging.getLogger(__name__).warning("退出时专注摘要尚未保存成功")

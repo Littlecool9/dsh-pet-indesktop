@@ -11,7 +11,11 @@ focus/break phase, deadline, pause state and completed rounds; a finished phase
 automatically starts the next full phase, with one sound at each boundary.
 Pause/resume stays silent; explicit stop plays an end sound, while application
 shutdown and quiet mode stay silent. Persistent work background and timing
-preferences belong to the global Settings System, while the island and context
+preferences belong to the global Settings System. Explicit stop also presents
+one persona farewell using actual elapsed focus time (excluding pauses/breaks)
+and up to six short observations from this run. A cached template from the
+existing observation request avoids an extra network call; local history keeps
+only ten finished runs as bounded text, never screenshots. The island and context
 menu invoke commands on this one runtime. Focus pauses autonomous walking and
 replaces casual self-talk with persona-aware encouragement or a foreground-window
 observation. Pausing, resting or exiting cancels pending focus speech; existing
