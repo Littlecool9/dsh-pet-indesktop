@@ -19,8 +19,6 @@ def command_label():
         return "暂停"
     if state.status == "paused":
         return "继续"
-    if state.status == "waiting":
-        return f"开始{PHASE_NAMES[state.next_phase]}"
     return "开始专注"
 
 
@@ -62,8 +60,6 @@ class FocusControls(QWidget):
         if state.engaged:
             if state.status == "paused":
                 text += "（已暂停）"
-            elif state.status == "waiting":
-                text += "已结束"
             text += f" · 已完成 {state.completed} 轮"
         self.status.setText(text)
         self.detail.setText(state.observation or "工作背景与时长在设置中修改。")

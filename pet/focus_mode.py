@@ -39,7 +39,7 @@ def normalize_focus_config(raw) -> dict:
 
 
 class FocusSession:
-    """Deadline-based session. Completed phases always wait for an explicit start."""
+    """Deadline-based automatic cycle; overdue ticks advance only one phase."""
 
     def __init__(self, *, clock=time.monotonic):
         self.clock = clock
@@ -103,8 +103,7 @@ class FocusSession:
     def pause(self):
         if self.status != "running":
             return
-        if self.tick():
-            return
+        self.tick()
         self._remaining = max(0.0, self._deadline - self.clock())
         self.status = "paused"
         self.observation = "已暂停专注观察与鼓励。"
@@ -126,23 +125,24 @@ class FocusSession:
         self.observation = ""
         self._changed()
 
-    def tick(self):
+    def tick(self, config=None):
         if self.status != "running" or self.clock() < self._deadline:
             return False
+        if config is not None:
+            self._config = normalize_focus_config(config)
         if self.phase == "focus":
             self.completed += 1
             self.next_phase = ("long_break" if self.completed % self._config["long_break_every"] == 0
                                else "short_break")
         else:
             self.next_phase = "focus"
-        self._remaining = 0.0
-        self.status = "waiting"
-        self._changed()
+        # Start a full new stage now, rather than catching up unattended cycles.
+        # Apply saved timing preferences only at a stage boundary.
+        self.status = "idle"
+        self.start()
         return True
 
     def label(self):
-        if self.status == "waiting":
-            return f"待{PHASE_NAMES[self.next_phase]}"
         if not self.engaged:
             return PHASE_NAMES["idle"]
         minutes, seconds = divmod(self.remaining_seconds(), 60)

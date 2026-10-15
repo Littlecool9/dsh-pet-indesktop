@@ -8,26 +8,44 @@ import pytest
 from pet.focus_mode import FocusSession, focus_prompt, normalize_focus_config, parse_observation
 
 
-def test_full_cycle_waits_for_user_and_long_break_after_four_focuses():
+def test_full_cycle_automatically_alternates_and_long_break_after_four_focuses():
     now = [0.0]
     session = FocusSession(clock=lambda: now[0])
+    session.start()
     for index in range(4):
-        session.start()
         assert session.focusing
         assert session.remaining_seconds() == 1500
         now[0] += 1501
         assert session.tick()
-        assert session.status == "waiting"
+        assert session.status == "running"
         assert session.completed == index + 1
-        assert session.next_phase == ("long_break" if index == 3 else "short_break")
-        now[0] += 3600
-        assert not session.tick()  # No unattended cycles after sleep or a long wait.
-        session.start()
+        assert session.phase == ("long_break" if index == 3 else "short_break")
         assert not session.focusing
         assert session.remaining_seconds() == (900 if index == 3 else 300)
         now[0] += session.remaining_seconds()
-        session.tick()
-    assert session.next_phase == "focus"
+        assert session.tick()
+    assert session.focusing
+
+
+def test_sleep_crosses_only_one_boundary_and_new_stage_uses_current_preferences():
+    now = [0.0]
+    session = FocusSession(clock=lambda: now[0])
+    session.start({"work_minutes": 1})
+    now[0] += 36000
+    assert session.tick({"short_break_minutes": 7})
+    assert session.phase == "short_break" and session.completed == 1
+    assert session.remaining_seconds() == 420
+    assert not session.tick()
+
+
+def test_pause_at_expiry_pauses_the_new_stage_instead_of_ignoring_click():
+    now = [0.0]
+    session = FocusSession(clock=lambda: now[0])
+    session.start({"work_minutes": 1})
+    now[0] = 60
+    session.pause()
+    assert session.phase == "short_break" and session.status == "paused"
+    assert session.remaining_seconds() == 300
 
 
 def test_pause_resume_stop_and_deadline_are_independent_of_tick_count():

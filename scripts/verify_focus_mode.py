@@ -123,6 +123,18 @@ def gui(output):
             island.grab().save(str(output / f"island-{'dark' if dark else 'light'}-paused.png"))
             samples = timeit.repeat(island.refresh_focus, number=100, repeat=5)
             observations[f"island_refresh_{'dark' if dark else 'light'}_ms"] = statistics.median(samples) * 10
+            state.resume()
+            original_clock = state.clock
+            try:
+                overdue = original_clock() + 7200
+                state.clock = lambda: overdue
+                assert state.tick(cfg.get("focus_mode"))
+                assert state.phase == "short_break"
+                island.refresh_focus()
+                settle()
+                island.grab().save(str(output / f"island-{'dark' if dark else 'light'}-break.png"))
+            finally:
+                state.clock = original_clock
         finally:
             state.stop()
             island.close()
@@ -137,11 +149,13 @@ def application(output):
     from pet.app import AppShell
     from pet.config import Config
     from pet.focus_mode import shared_focus_session
+    from pet import click_sound
 
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
     cfg = Config(base=output / "application-data")
-    cfg.set("focus_mode", {"work_minutes": 1, "screen_enabled": False, "check_minutes": 30})
+    cfg.set("focus_mode", {"work_minutes": 1, "short_break_minutes": 1,
+                           "screen_enabled": False, "check_minutes": 30})
     cfg.set("harness_autostart", False)
     cfg.set("voice_chime_enabled", False)
     cfg.set("festival_reminder_enabled", False)
@@ -149,11 +163,27 @@ def application(output):
     shell = AppShell(app, cfg, enable_chat=True)
     state = shared_focus_session()
     samples = []
+    sounds = []
     process = psutil.Process()
+    actual_play = click_sound.play_sound
+    def record_play(path, volume=1.0):
+        import time
+        started = time.perf_counter()
+        accepted = actual_play(path, volume=volume)
+        if Path(path).name in ("start.wav", "done.wav"):
+            record = {"file": Path(path).name, "accepted": accepted,
+                      "milliseconds": (time.perf_counter() - started) * 1000,
+                      "phase": state.phase, "status": state.status,
+                      "rss_mib": process.memory_info().rss / 1048576}
+            sounds.append(record)
+            print("Native sound: " + json.dumps(record), flush=True)
+        return accepted
+    click_sound.play_sound = record_play
     shell.start()
     timer = QTimer()
     ticks = [0]
     started = [None]
+    break_started = [None]
 
     def sample():
         import time
@@ -170,28 +200,39 @@ def application(output):
             print("Native application: island button started a 60-second focus", flush=True)
         if ticks[0] == 12:
             shell.island.grab().save(str(output / "application-running.png"))
-        if state.status == "waiting":
+        if state.phase == "short_break" and break_started[0] is None:
             elapsed = time.monotonic() - started[0]
-            assert state.completed == 1 and state.next_phase == "short_break"
-            shell.island._focus_controls.toggle.click()
-            assert state.phase == "short_break"
+            assert state.completed == 1 and state.status == "running"
+            break_started[0] = time.monotonic()
+            shell.island.grab().save(str(output / "application-break.png"))
+            count = len(sounds)
             shell.island._focus_controls.toggle.click()
             assert state.status == "paused"
             shell.island._focus_controls.toggle.click()
             assert state.status == "running"
+            assert len(sounds) == count
+            print(f"Native application: automatic break after {elapsed:.3f}s; pause/resume stayed silent", flush=True)
+        elif state.focusing and break_started[0] is not None:
+            elapsed = time.monotonic() - break_started[0]
+            assert state.completed == 1
             shell.island._focus_controls.end.click()
             assert not state.engaged
-            print(f"Native application: expiry after {elapsed:.3f}s; manual break / pause / resume / end passed", flush=True)
+            assert [event["file"] for event in sounds] == ["start.wav", "done.wav", "start.wav", "done.wav"]
+            assert all(event["accepted"] for event in sounds)
+            print(f"Native application: automatic focus after {elapsed:.3f}s; start / both boundaries / stop sounds accepted", flush=True)
             timer.stop()
             app.exit(0)
-        if ticks[0] > 90:
+        if ticks[0] > 160:
             app.exit(2)
 
     timer.timeout.connect(sample)
     timer.start(1000)
-    code = app.exec()
+    try:
+        code = app.exec()
+    finally:
+        click_sound.play_sound = actual_play
     assert code == 0
-    return {"samples": samples, "sample_count": len(samples), "platform": app.platformName()}
+    return {"samples": samples, "sample_count": len(samples), "sounds": sounds, "platform": app.platformName()}
 
 
 def live_ai(output, profile_base):
@@ -373,7 +414,7 @@ def suite_tests(output, part="all"):
 
     selected = ([name for name in groups if name not in ("q-onward", "decode")]
                 if part == "before-q" else [part] if part != "all"
-                else [name for name in groups if name != "decode"])
+                else ["q-onward"] + [name for name in groups if name not in ("q-onward", "decode")])
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(run, selected))
     assert all(item["exit_code"] == 0 for item in results), "Partitions failed; inspect logs"

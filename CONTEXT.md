@@ -8,7 +8,9 @@ their platform-specific presentations.
 **Focus Session**:
 The process-wide Pomodoro runtime, shared by every pet. It owns the current
 focus/break phase, deadline, pause state and completed rounds; a finished phase
-waits for the user to start the next one. Persistent work background and timing
+automatically starts the next full phase, with one sound at each boundary.
+Pause/resume stays silent; explicit stop plays an end sound, while application
+shutdown and quiet mode stay silent. Persistent work background and timing
 preferences belong to the global Settings System, while the island and context
 menu invoke commands on this one runtime. Focus pauses autonomous walking and
 replaces casual self-talk with persona-aware encouragement or a foreground-window

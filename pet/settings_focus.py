@@ -33,7 +33,7 @@ def build_focus_rows(dialog):
         dialog.focus_controls[key] = spin
         hint = ("仅专注期间观察或鼓励；偏离提醒至少间隔 5 分钟。影响所有桌宠。" if key == "check_minutes"
                 else "包括重试的实际请求次数；耗尽后计时照常，次日恢复。影响所有桌宠。" if key == "daily_cap"
-                else "下一个阶段开始时生效；阶段结束后手动开始下一段。影响所有桌宠。")
+                else "下一个阶段开始时生效；专注与休息到点后自动切换。影响所有桌宠。")
         rows.append(SettingRow(f"focus_{key}", label, hint, spin, parent=dialog))
     toggle = ToggleSwitch(dialog)
     toggle.setChecked(cfg["screen_enabled"])

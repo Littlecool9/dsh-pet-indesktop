@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import copy
 import io
+import logging
 import sys
 import threading
 import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from .focus_mode import (PHASE_NAMES, focus_prompt, normalize_focus_config,
+from .focus_mode import (focus_prompt, normalize_focus_config,
                          parse_observation, shared_focus_session)
 from .proactive_limiter import ProactiveLimiter
 
@@ -39,21 +40,15 @@ class FocusController(QObject):
         self._recent = []
         self._last_config = None
         self.limiter = ProactiveLimiter(config.dir / "focus_ai_state.json", {})
-        self._notification = None
-        self._completion_alert_id = ""
+        self._previous_phase = self.session.phase
+        self._previous_status = self.session.status
         self.session.add_listener(self._transition)
 
     def _transition(self):
         if self._closed:
             return
-        if self.session.status != "waiting":
-            resolve = getattr(self.presentation, "resolve_alert", None)
-            if self._completion_alert_id and callable(resolve):
-                resolve(self._completion_alert_id)
-            self._completion_alert_id = ""
-            if self._notification is not None:
-                self._notification.close()
-                self._notification = None
+        old_phase, old_status = self._previous_phase, self._previous_status
+        self._previous_phase, self._previous_status = self.session.phase, self.session.status
         self._next_check = time.monotonic() + self._preferences()["check_minutes"] * 60
         if self.session.status == "running":
             self.timer.start()
@@ -69,30 +64,31 @@ class FocusController(QObject):
             self.session.observation = "未填写工作背景，仅提供专注鼓励；可在设置中长期保存背景。"
         if self.session.status == "idle":
             self._last_speech = None
+        if (self.session.status == "running"
+                and (old_status == "idle" or old_phase != self.session.phase)):
+            self._play_phase_sound("agent-start" if self.session.phase == "focus" else "agent-done")
+        elif self.session.status == "idle" and old_status != "idle":
+            self._play_phase_sound("agent-done")
         self.changed.emit()
+
+    def _play_phase_sound(self, sound_id):
+        from . import window_alerts
+        if window_alerts.quiet_blocked(self.presentation):
+            return
+        try:
+            from .click_sound import play_sound, resolve_builtin_sound
+            path = resolve_builtin_sound(sound_id)
+            if path is not None:
+                play_sound(path, volume=0.65)
+        except Exception:
+            # Device/backend failures must never interrupt the timer or cycle.
+            logging.getLogger(__name__).warning("专注提示音播放失败", exc_info=True)
 
     def _preferences(self):
         return normalize_focus_config(self.config.get("focus_mode"))
 
     def _tick(self):
-        if self.session.tick():
-            text = f"{PHASE_NAMES[self.session.phase]}结束了，准备好后开始{PHASE_NAMES[self.session.next_phase]}。"
-            from . import window_alerts
-            if window_alerts.quiet_blocked(self.presentation):
-                window_alerts.defer_quiet(text)
-            elif self.presentation.has_presentation_target():
-                alert = getattr(self.presentation, "show_alert", None)
-                if callable(alert):
-                    self._completion_alert_id = f"focus/{self.session.generation}"
-                    alert(text, duration_ms=8000, sticky=False, priority=3,
-                          alert_type="focus/timer", alert_id=self._completion_alert_id)
-                else:
-                    self.presentation.show_bubble(text, duration_ms=8000)
-            elif self.config.get("system_notifications_enabled", True):
-                from .desktop_notify import DesktopNotification
-                self._notification = DesktopNotification("番茄钟", text)
-                self._notification.position_bottom_right()
-                self._notification.show()
+        self.session.tick(self._preferences())
         self.changed.emit()
         if self.session.focusing and time.monotonic() >= self._next_check:
             self.request_observation()
@@ -239,5 +235,3 @@ class FocusController(QObject):
         self.timer.stop()
         self.session.remove_listener(self._transition)
         self.session.stop()
-        if self._notification is not None:
-            self._notification.close()

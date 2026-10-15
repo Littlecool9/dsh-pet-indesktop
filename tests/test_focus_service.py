@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from PySide6.QtCore import QEventLoop, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
@@ -66,24 +68,54 @@ def setup_controller(tmp_path, *, clock=None):
     return cfg, state, target, controller
 
 
-def test_phase_completion_uses_alert_channel_once_in_real_event_loop(tmp_path):
+def test_phase_boundaries_play_once_and_automatically_cycle_in_real_event_loop(tmp_path, monkeypatch):
+    from pet import click_sound
     now = [0.0]
     cfg, state, target, controller = setup_controller(tmp_path, clock=lambda: now[0])
+    sounds = []
+    def play(path, volume):
+        assert QThread.currentThread() == target.thread()
+        sounds.append((path.name, volume))
+        return True
+    monkeypatch.setattr(click_sound, "play_sound", play)
     try:
         state.start({"work_minutes": 1})
+        assert sounds == [("start.wav", 0.65)]
+        state.pause()
+        state.resume()
+        assert len(sounds) == 1
         now[0] = 61
-        pump_until(lambda: state.status == "waiting")
-        assert len(target.alerts) == 1
-        assert target.alerts[0][1]["sticky"] is False
-        assert target.alerts[0][1]["alert_type"] == "focus/timer"
-        assert target.messages == []
+        pump_until(lambda: state.phase == "short_break")
+        assert sounds[-1] == ("done.wav", 0.65) and len(sounds) == 2
+        assert controller.timer.isActive()
+        assert target.alerts == target.messages == []
+        now[0] += state.remaining_seconds()
+        pump_until(lambda: state.focusing)
+        assert sounds[-1] == ("start.wav", 0.65) and len(sounds) == 3
+        state.stop()
+        state.stop()
+        assert sounds[-1] == ("done.wav", 0.65) and len(sounds) == 4
         assert not controller.timer.isActive()
-        completion_id = target.alerts[0][1]["alert_id"]
-        state.start()
-        assert target.resolved == [completion_id]
     finally:
         controller.stop()
         target.close()
+
+
+def test_quiet_and_application_shutdown_do_not_play_focus_sound(tmp_path, monkeypatch):
+    from pet import click_sound
+    sounds = []
+    cfg, state, target, controller = setup_controller(tmp_path)
+    monkeypatch.setattr(click_sound, "play_sound", lambda *a, **k: sounds.append(True))
+    monkeypatch.setattr("pet.window_alerts.quiet_blocked", lambda win: True)
+    state.start()
+    state.stop()
+    assert sounds == []
+    monkeypatch.setattr("pet.window_alerts.quiet_blocked", lambda win: False)
+    state.start()
+    assert sounds == [True]
+    controller.stop()
+    assert sounds == [True]
+    target.close()
 
 
 def test_front_window_only_and_persona_context_reach_visual_request(tmp_path, monkeypatch):
@@ -120,9 +152,11 @@ def test_front_window_only_and_persona_context_reach_visual_request(tmp_path, mo
         controller.stop()
 
 
-def test_late_network_reply_cannot_speak_after_pause(tmp_path, monkeypatch):
+@pytest.mark.parametrize("transition", ["pause", "auto-break"])
+def test_late_network_reply_cannot_speak_after_phase_change(tmp_path, monkeypatch, transition):
     from pet import vision
-    cfg, state, target, controller = setup_controller(tmp_path)
+    now = [0.0]
+    cfg, state, target, controller = setup_controller(tmp_path, clock=lambda: now[0])
     cfg.set("focus_mode", {"screen_enabled": False})
     entered = threading.Event()
     release = threading.Event()
@@ -137,8 +171,13 @@ def test_late_network_reply_cannot_speak_after_pause(tmp_path, monkeypatch):
         state.start()
         controller.request_observation()
         pump_until(entered.is_set)
-        state.pause()
-        state.resume()
+        if transition == "pause":
+            state.pause()
+            state.resume()
+        else:
+            now[0] = 1500
+            assert state.tick()
+            assert state.phase == "short_break"
         assert not controller.request_observation()  # Still one worker, despite a new generation.
         release.set()
         pump_until(lambda: not controller._busy)
@@ -146,6 +185,25 @@ def test_late_network_reply_cannot_speak_after_pause(tmp_path, monkeypatch):
     finally:
         release.set()
         controller.stop()
+
+
+def test_audio_device_failure_does_not_interrupt_automatic_cycle(tmp_path, monkeypatch):
+    from pet import click_sound
+    now = [0.0]
+    cfg, state, target, controller = setup_controller(tmp_path, clock=lambda: now[0])
+    def unavailable(*args, **kwargs):
+        raise OSError("audio device unavailable")
+    monkeypatch.setattr(click_sound, "play_sound", unavailable)
+    try:
+        state.start({"work_minutes": 1})
+        assert controller.timer.isActive()
+        now[0] = 61
+        pump_until(lambda: state.phase == "short_break")
+        assert controller.timer.isActive()
+        assert target.alerts == []
+    finally:
+        controller.stop()
+        target.close()
 
 
 def test_context_edit_invalidates_in_flight_reply(tmp_path, monkeypatch):

@@ -117,7 +117,7 @@ def current_page_content(scroll: QScrollArea) -> QWidget:
 #: ``tests/test_settings_copy_lint.py``）。新增组必须在这里补一行，
 #: ``tests/test_settings_page_guide.py`` 的覆盖率守卫会盯住。
 SECTION_GUIDE: dict[str, str] = {
-    "专注模式": "工作背景填写一次，专注时自动带入；在灵动岛或右键菜单开始，阶段到点后手动继续。",
+    "专注模式": "工作背景填写一次，专注时自动带入；在灵动岛或右键菜单开始，专注与休息到点后自动切换并播放提示音。",
     # 常规
     "应用启动": "开机后要不要自动把桌宠叫起来。",
     "窗口与系统": "它压在别的窗口上面还是能被盖住，全屏玩游戏时让不让位。",
