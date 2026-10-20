@@ -24,6 +24,8 @@ from PySide6.QtGui import (
     QColor,
     QClipboard,
     QFontDatabase,
+    QKeySequence,
+    QShortcut,
     QIcon,
     QImageReader,
     QPainter,
@@ -50,7 +52,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QLayout,
     QMessageBox,
     QMenu,
@@ -98,6 +99,7 @@ from .menu_layout import (
     resolve_menu_layout,
 )
 from . import settings_close_flow
+from .application_icon import load_application_icon
 from .settings_slot_config import route_settings_config
 from .speech_bubble import BUBBLE_STYLE_PRESETS
 from .update_settings import UpdatePage
@@ -120,6 +122,7 @@ from .settings_widgets import (
     SETTINGS_DOMAIN_NAV,
     BROWSER_CONTROL_STYLESHEET,
     _widget_dark,
+    reveal_settings_row,
     ToggleSwitch,
     IMAGE_NAME_FILTER,
     AUDIO_NAME_FILTER,
@@ -143,6 +146,7 @@ from .settings_widgets import (
     ModernSelect,
     BrowserSpinBox,
     BrowserDoubleSpinBox,
+    CONTENT_READING_MAX_WIDTH,
     CollapsibleGroup,
     SettingRow,
     ResponsiveActionRow,
@@ -150,6 +154,10 @@ from .settings_widgets import (
     SettingsCard,
     SettingsDisclosureHeader,
     SettingsSection,
+    SettingsSidebarPane,
+    refresh_settings_icons,
+    settings_save_exit_button,
+    settings_sidebar_item,
     _CurrentPageStack,
     SettingsTabContainer,
     _SettingsPageShell,
@@ -170,6 +178,8 @@ from . import settings_interaction
 from . import settings_music
 from . import settings_network
 from . import settings_page_guide
+from . import settings_divination
+from . import settings_hotkeys
 from . import settings_weather
 from . import settings_pet_controls
 from . import settings_quiet
@@ -266,8 +276,8 @@ class ModernSettingsDialog(QDialog):
     def __init__(self, config, parent=None, *, include_ai: bool = True,
                  standalone: bool = False, initial_page: str | None = None):
         super().__init__(parent)
-        # 子宠设置页：非 per-slot 键直读**主**配置（而不是 slot 文件里的无效快照），
-        # 保存时按同一分流写回。不适用（主身份 / legacy 拓扑）时原样返回，
+        # slot 设置页（含 #271 起的主宠页 = slot0 页）：非 per-slot 键直读**主**配置
+        #（而不是 slot 文件里的无效快照），保存时按同一分流写回。
         # 见 pet/settings_slot_config.py 的模块 docstring。
         config = route_settings_config(config)
         # 每张表单一份**独立编辑视图**（草稿 + 编辑代次基线各自一份，运行期那份保持只读）：
@@ -284,6 +294,9 @@ class ModernSettingsDialog(QDialog):
         self.setProperty("modernStyle", True)
         self.setProperty("menuStyle", "modern")
         self.setWindowTitle("桌宠设置")
+        # 原生标题栏的图标：不设的话 Windows 摆的是系统给的通用图标（--icon 只写进
+        # 可执行文件/应用包的文件图标资源，与窗口属性是两回事）。拿不到时是空图标。
+        self.setWindowIcon(load_application_icon())
         self.resize(800, 560)
         self.setMinimumSize(720, 500)
         self._positioned_away = False
@@ -301,24 +314,21 @@ class ModernSettingsDialog(QDialog):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        sidebar_pane = QFrame(self)
-        sidebar_pane.setObjectName("sidebarPane")
-        sidebar_pane.setFixedWidth(200)
+        sidebar_pane = SettingsSidebarPane(self)
         sidebar_layout = QVBoxLayout(sidebar_pane)
         sidebar_layout.setContentsMargins(12, 16, 12, 12)
-        sidebar_layout.setSpacing(9)
-        self.save_exit_button = QPushButton("保存并退出", sidebar_pane)
-        self.save_exit_button.setObjectName("saveAndExit")
-        self.save_exit_button.setIcon(vector_widget_icon(self.save_exit_button, "back", 16))
-        self.save_exit_button.clicked.connect(self._save)
-        self.save_exit_button.setAutoDefault(False)
-        self.save_exit_button.setDefault(False)
+        # 间距 3px + 导航行距 1px：slot 页有两个重置按钮时，默认窗口 800×560 下 10 个
+        # 能力域要全落在视口里；3px 把本机余量 4 → 19px（CI 280：Ubuntu 上 6px 不够）。
+        sidebar_layout.setSpacing(3)
+        # 「保存并退出」的图标 / 保存时机 tooltip / 焦点旗标都在控件库里（本文件有行数预算）。
+        self.save_exit_button = settings_save_exit_button(sidebar_pane, self._save)
         sidebar_layout.addWidget(self.save_exit_button)
         self.search_edit = QLineEdit(sidebar_pane)
         self.search_edit.setObjectName("settingsSearch")
         self.search_edit.setPlaceholderText("搜索设置…")
         self.search_edit.addAction(
-            vector_widget_icon(self, "search", 16),
+            # 宿主就是搜索框自己：记在它身上的请求换主题后重画（QLineEdit 无 setIcon）。
+            vector_widget_icon(self.search_edit, "search", 16),
             QLineEdit.ActionPosition.LeadingPosition,
         )
         self.search_edit.installEventFilter(self)
@@ -331,10 +341,10 @@ class ModernSettingsDialog(QDialog):
         self.sidebar = QListWidget(sidebar_pane)
         self.sidebar.setObjectName("settingsSidebar")
         self.sidebar.setIconSize(QSize(18, 18))
-        self.sidebar.setSpacing(2)
+        # 导航行距 1px：与上面的侧栏间距一起把 10 个能力域收进默认窗口高度。
+        self.sidebar.setSpacing(1)
         sidebar_layout.addWidget(self.sidebar, 1)
-        # 全局兜底入口（命令而非偏好项，故放侧栏底部）：实现全在
-        # pet/settings_reset_defaults.py（本文件有行数预算），这里只做接线。
+        # 全局兜底入口（命令而非偏好项，故放侧栏底部；实现在 settings_reset_defaults.py）。
         settings_reset_defaults.create_reset_button(self, sidebar_layout)
         self.version_footer = QLabel(f"版本 v{__version__}", sidebar_pane)
         self.version_footer.setObjectName("settingsVersion")
@@ -490,15 +500,16 @@ class ModernSettingsDialog(QDialog):
         general_layout = QVBoxLayout(general_content)
         general_layout.setContentsMargins(0, 0, 0, 0)
         general_layout.setSpacing(18)
-        autostart_desc = "登录系统后自动启动桌宠。" if not self.config.instance_id else "登录系统后自动启动桌宠。（影响所有桌宠）"
         # 「自启目标」的说明随平台变：桌面端项在非 Windows 上置灰，文案必须
         # 说清原因（不能留着「选桌面端界面」这种本平台做不到的话）。逐字文案
         # 落在 settings_pet_controls.harness_target_hint（同行数预算约定）。
+        # 「开机自启」的范围声明同理：由 settings_pet_controls 的作用域 pass 拆成行内标注
+        # （挂在标签那一行，不占额外一行），说明与拆分机制同一处（GLOBAL_SCOPE_ROWS）。
         harness_target_hint = settings_pet_controls.harness_target_hint(
             self._harness_desktop_available
         )
         launch_rows = [
-            SettingRow("autostart", "开机自启", autostart_desc, self.autostart_check),
+            SettingRow("autostart", "开机自启", "登录系统后自动启动桌宠。", self.autostart_check),
             SettingRow(
                 "harness_autostart",
                 "随桌宠启动 dsh 服务",
@@ -542,6 +553,16 @@ class ModernSettingsDialog(QDialog):
                     SettingRow("stream_capture", "直播捕获兼容", settings_pet_controls.stream_capture_hint(), self.stream_capture_check),
                 ]
             )
+        # 「允许桌宠跨屏」不分平台（三端都有多显示器），排在窗口旗标类之后：前面几条
+        # 讲"窗口怎么摆"，它讲"桌宠能不能到别的显示器去"（行序见常规域装配的 claim 表）。
+        window_rows.append(
+            SettingRow(
+                "cross_screen",
+                "允许桌宠跨屏",
+                settings_pet_controls.CROSS_SCREEN_HINT,
+                self.cross_screen_check,
+            )
+        )
         general_layout.addWidget(SettingsSection("窗口与系统", window_rows, general_content))
         # 拓扑收口：「单进程多开」实验开关已从设置页移除，4.4b 起配置键
         # `experimental_single_process_spawn` 本身也随多进程多宠退役层删除
@@ -669,7 +690,7 @@ class ModernSettingsDialog(QDialog):
                 "音乐关联",
                 [
                     SettingRow("music_sing", "音乐自动唱歌", "检测到后台播放音乐时，自动播放唱歌动画。", self.music_sing_check),
-                    SettingRow("music_lyric", "显示歌词", "在气泡里显示当前播放歌曲的歌词。仅 Windows 可用；需要播放器支持系统媒体控制，酷狗等需在播放器设置里手动开启。网易云音乐不上报播放进度，歌词按开始时间估算——快进或从中途开始播放后，用右键菜单「音乐 → 歌词对齐」校正。", self.music_lyric_check),
+                    SettingRow("music_lyric", "显示歌词", "在气泡里显示当前播放歌曲的歌词。仅 Windows 可用；需要播放器支持系统媒体控制（酷狗音乐需在其 设置 → 常规设置 → 播放 里开启「支持系统播放控件」）。歌词识别不依赖「音乐关联」里的路径——那里只影响右键「打开播放器」菜单。网易云音乐不上报播放进度，歌词按开始时间估算——快进或从中途开始播放后，用右键菜单「音乐 → 歌词对齐」校正。", self.music_lyric_check),
                     SettingRow("music_lyric_lead", "歌词提前量", "歌词相对音频的时间偏移。正值让歌词抢先显示，负值让它延后；唱得比音乐早一点通常更自然。", self.music_lyric_lead_spin),
                 ] + settings_music.browser_media_rows(self) + settings_music.foobar_lyrics_rows(self),
                 behavior_content,
@@ -815,6 +836,9 @@ class ModernSettingsDialog(QDialog):
                     ),
                     SettingRow(
                         "todo_reminder_lead_minutes", "提前提醒", "到点前提前提醒的分钟数（0~60，0 = 不提前，仅准点提醒一次）。", self.todo_reminder_lead_spin
+                    ),
+                    SettingRow(
+                        "todo_reminder_speak", "语音播报", "到点时把提醒念出来；音色 / 语速 / 音量与「语音报时」共用同一套（设置 → 语音），本项只控制开与关。免打扰期间不出声，也不在结束后补播。", self.todo_reminder_speak_check
                     ),
                 ],
                 behavior_content,
@@ -988,10 +1012,20 @@ class ModernSettingsDialog(QDialog):
         self.sidebar.setCurrentRow(0)
         if self.initial_page:
             self.select_page(self.initial_page)
-        self._search_rows = self.findChildren(SettingRow)
+        # 索引口径：标准设置行 + 「更新」页的作者账号行（后者不是 SettingRow，
+        # 但暴露同名的 label/hint_label，故同一套匹配函数就能覆盖；侧栏命令类
+        # 控件仍不进索引——那是 docs/SETTINGS-CHANGE-GATES.md 里的既有决定）。
+        from .settings_about import AuthorRow
+
+        self._search_rows = self.findChildren(SettingRow) + self.findChildren(AuthorRow)
         self._search_matches: list[SettingRow] = []
         self._search_index = -1
         self.search_edit.textChanged.connect(self._search_settings)
+        # Ctrl+F：设置窗内任意位置把光标送进搜索框（浏览器/编辑器的一致习惯）。
+        # 不抢输入框自己的按键：焦点已经在搜索框时 Qt 不会再触发这条快捷方式。
+        find_shortcut = QShortcut(QKeySequence.StandardKey.Find, self)
+        find_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        find_shortcut.activated.connect(self._focus_search_box)
 
         self.self_talk_check.toggled.connect(self._update_self_talk_controls)
         self.menu_translucent_check.toggled.connect(self._update_translucency_controls)
@@ -1314,23 +1348,44 @@ class ModernSettingsDialog(QDialog):
         点击侧（``click_self_talk*`` / ``click_talk_bindings``）**不在这里**：它们是
         独立开关的后续项，见 :meth:`_update_click_self_talk_controls`。绑在一起会让
         「只想点击听声」的用户在设置页里连开关都看不到。
+
+        节奏项（最短/最长间隔、配图大小）只属于周期链路，仍只跟本开关；内容项
+        （显示时间/候选内容/图片目录/配图概率）两条链路**共读同一份配置**——点击
+        自言自语落地的 ``window_alerts.show_click_self_talk`` 读的正是这批键——所以
+        它们跟 :meth:`_update_self_talk_content_controls` 走「任一开启」。
         """
-        keys = (
-            "self_talk_duration",
-            "self_talk_min",
-            "self_talk_max",
-            "self_talk_texts",
-            "self_talk_images",
-            "self_talk_image_scale",
-            "self_talk_image_chance",
+        self._set_setting_rows_visible(
+            ("self_talk_min", "self_talk_max", "self_talk_image_scale"),
+            enabled,
+            dependency="self_talk",
         )
-        self._set_setting_rows_visible(keys, enabled)
+        self._update_self_talk_content_controls(enabled)
+
+    def _update_self_talk_content_controls(self, self_talk_enabled: bool) -> None:
+        """内容项显隐：周期气泡与点击自言自语**任一**开启就显示。
+
+        这些键是两条链路共用的内容源（候选文本 / 图片目录 / 配图概率 / 显示时长）。
+        旧模型把显隐整组挂在周期开关上，只开点击的用户必须先打开一个他不用的周期
+        功能才能编辑候选文本——消费侧早已解耦（``show_click_self_talk`` 不看
+        ``self_talk_enabled``），显隐跟着解耦。
+        """
+        self._set_setting_rows_visible(
+            (
+                "self_talk_duration",
+                "self_talk_texts",
+                "self_talk_images",
+                "self_talk_image_chance",
+            ),
+            self_talk_enabled or self.click_self_talk_check.isChecked(),
+            dependency="self_talk_content",
+        )
 
     def _update_click_self_talk_controls(self, enabled: bool) -> None:
         """点击自言自语（``click_self_talk``）的后续项显隐。
 
         预缓存也跟这里：只有点击链路才会把台词**读出来**（周期气泡只显示不朗读），
-        所以点击开关关着时预缓存没有意义。
+        所以点击开关关着时预缓存没有意义。内容项与周期气泡共用，见
+        :meth:`_update_self_talk_content_controls`（任一开启即显示）。
         """
         keys = (
             "click_self_talk_speak",
@@ -1338,6 +1393,7 @@ class ModernSettingsDialog(QDialog):
             "click_talk_bindings",
         )
         self._set_setting_rows_visible(keys, enabled, dependency="click_self_talk")
+        self._update_self_talk_content_controls(self.self_talk_check.isChecked())
 
     def _update_island_controls(self, enabled: bool) -> None:
         settings_pet_controls._update_island_controls(self, enabled)
@@ -1686,7 +1742,8 @@ class ModernSettingsDialog(QDialog):
                 return
 
     def _page_shell(self, title: str, content: QWidget) -> QWidget:
-        content_max_width = int(content.property("contentMaxWidth") or 960)
+        # 默认最大阅读宽度见 CONTENT_READING_MAX_WIDTH；「菜单」域的内容自己声明更宽的值。
+        content_max_width = int(content.property("contentMaxWidth") or CONTENT_READING_MAX_WIDTH)
         page = _SettingsPageShell(content_max_width, self.pages)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(30, 24, 28, 20)
@@ -1724,9 +1781,7 @@ class ModernSettingsDialog(QDialog):
         return False
 
     def _add_page(self, label: str, icon_name: str, page: QWidget) -> None:
-        item = QListWidgetItem(vector_widget_icon(self, icon_name, 16), label)
-        item.setSizeHint(QSize(0, 34))
-        self.sidebar.addItem(item)
+        self.sidebar.addItem(settings_sidebar_item(self, label, icon_name))
         self.pages.addWidget(page)
 
     def _rebuild_domain_navigation(self) -> None:
@@ -1775,7 +1830,13 @@ class ModernSettingsDialog(QDialog):
         general = page_content(
             [
                 ("应用启动", claim("autostart")),
-                ("窗口与系统", claim("dock_icon", "on_top", "auto_hide_fullscreen", "cursor_hidden_passthrough", "stream_capture")),
+                # 「光标隐藏时自动穿透」回主组：它也是窗口旗标类偏好（与置顶/全屏隐藏同族），
+                # 用户找它会先看这一组；原先跟「直播捕获」一起塞进"Windows 兼容"是埋掉了它。
+                ("窗口与系统", claim("dock_icon", "on_top", "auto_hide_fullscreen", "cursor_hidden_passthrough", "cross_screen")),
+                # 「直播捕获兼容」单独进一层折叠：行说明有四段（重启级切换、OBS 捕获方式、
+                # 平台限制、作用域），平铺在首屏就是逼用户读完。组描述只写一句"这一项做什么"，
+                # 重启/平台限制/作用域全部留在行内（展开即见全文），搜索照旧可达。
+                ("直播捕获（高级）", claim("stream_capture"), True),
                 # 首屏只回答"第一天会问的问题"：凡答案涉及 harness/dsh 的（自启服务、
                 # 自启目标）都是第 N 天才用的，进折叠——不是藏功能，是按"第几天用到"分层。
                 ("启动项（高级）", claim("harness_autostart", "harness_launch_target"), True),
@@ -1962,18 +2023,14 @@ class ModernSettingsDialog(QDialog):
             ("主动识屏 · 细调（高级）", claim("proactive_dry_run", "proactive_dwell", "proactive_cooldown",
                                        "proactive_min_interval", "proactive_daily_cap", "proactive_free"), True),
         ]
-        voice_sections = [
-            ("语音报时 · 何时报", claim("voice_chime_enabled", "voice_chime_schedule", "voice_chime_custom_times")),
-            ("语音报时 · 用什么声音", claim("voice_chime_voice", "voice_chime_rate", "voice_chime_pitch", "voice_chime_volume")),
-            ("语音报时 · 说什么", claim("voice_chime_show_bubble", "voice_chime_show_quote", "voice_chime_custom_quotes_zh",
-                                   "voice_chime_custom_quotes_en", "voice_chime_preview")),
-        ]
-        festival_sections = [
-            ("节日提醒 · 开关", claim("festival_reminder_enabled", "festival_reminder_cn", "festival_reminder_solar_terms",
-                                  "festival_reminder_west", "festival_reminder_speak")),
-            ("节日提醒 · 时间", claim("festival_reminder_mode", "festival_reminder_count", "festival_reminder_times")),
-            ("节日提醒 · 文案", claim("festival_reminder_show_quote", "festival_custom_quotes_cn", "festival_custom_quotes_west", "festival_preview")),
-        ]
+        voice_chime_rows = list(self.voice_chime_page.findChildren(SettingRow))
+        claimed.update(voice_chime_rows)
+        # 节日提醒的行**也要在这里登记**：本页的行从构造起就挂在自己的持有容器里
+        # （无父的 SettingRow 一旦 setVisible 就是个顶层窗口，用户会看到无标题小窗闪
+        # ——上游 #261 修的就是这个），因此 findChildren 现在取得到它们。不登记就会
+        # 掉进「待分类（开发期）」——它们稍后由 build_domain_page 现造卡片收进「语音」域。
+        festival_rows = list(self.festival_page.findChildren(SettingRow))
+        claimed.update(festival_rows)
         dialogue_rows = claim_prefix("dialogue_")
         # 「自定义台词」＝一个可折叠框（默认折叠）：逐事件文案行全部收进去，
         # 不用自定义台词的用户不该翻过整页文案框；搜索命中时会自动展开
@@ -2011,7 +2068,7 @@ class ModernSettingsDialog(QDialog):
         # 顶层顺序就是下表顺序（没有倒插）；折叠框是已构造好的 QWidget，直接作为表元素进布局。
         automation = page_content(
             [
-                ("待办提醒", claim("todo_reminder_enabled", "todo_reminder_lead_minutes")),
+                ("待办提醒", claim("todo_reminder_enabled", "todo_reminder_lead_minutes", "todo_reminder_speak")),
                 # 「免打扰」两行在本模块构建（settings_quiet，行数预算原因）。
                 ("免打扰", settings_quiet.build_quiet_rows(self)),
                 ("专注模式", settings_focus.build_focus_rows(self)),
@@ -2024,11 +2081,26 @@ class ModernSettingsDialog(QDialog):
         )
 
         # 「语音」总域（2026-09-17 定稿口径）：只收鱼开口说话（TTS）类设置——
-        # 语音报时整组 + 节日提醒 12 行（原「自动化与联动」域，带 speak/TTS 播报
+        # 语音报时整组 + 节日提醒整组（原「自动化与联动」域，带 speak/TTS 播报
         # 能力）。音效类回各自功能分组：点击音效 4 行回「互动 · 点击反馈」、
         # 碰撞音效 2 行回「桌宠」碰撞组；Agent 提示音效（agent_sound_*）留在
-        # Agent 联动折叠框内不动。
-        voice = page_content(voice_sections + festival_sections)
+        # Agent 联动折叠框内不动。节日提醒整组（分组标题 + 折叠编排）由
+        # festival_settings 自己建卡交给本域：本域不能按「一组行」收它——页面容器
+        # 会散架、四段分组标题会跟着丢（见 docs/SETTINGS-CHANGE-GATES.md 节日提醒
+        # 准入记录）。故这里不用 page_content，自己起一层容器。
+        voice = QWidget(self)
+        voice_layout = QVBoxLayout(voice)
+        voice_layout.setContentsMargins(0, 0, 0, 0)
+        voice_layout.setSpacing(18)
+        if voice_chime_rows:
+            voice_layout.addWidget(SettingsSection("语音报时", voice_chime_rows, voice))
+        voice_layout.addWidget(self.festival_page.build_domain_page(voice))
+        voice_layout.addStretch(1)
+        # 语音报时的行刚被搬进这张平卡（容器散架、行序即创建序）：让设置页按当前
+        # 后端重新排一遍——当前后端平铺在最上面，其余后端各占一行折叠头。
+        self.voice_chime_page.refresh_backend_rows()
+        # 节日提醒的行同样被搬进这张平卡：摆正「常用项在前 + 少用项折叠」的行序。
+        self.festival_page.refresh_backend_rows()
 
         # 「文件识别」域（2026-09-19 新增）：拖文件解读的设置集中在此独立页。
         # 行在本模块构建（settings_file_interpret，行数预算原因），不走 claim。
@@ -2072,7 +2144,20 @@ class ModernSettingsDialog(QDialog):
                 row.style().unpolish(row)
                 row.style().polish(row)
 
-    def _search_settings(self, query: str, *, advance: bool = False) -> None:
+    def _focus_search_box(self) -> None:
+        """把焦点送进侧栏搜索框并全选（Ctrl+F；不改变已输入的内容之外的状态）。"""
+        self.search_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.search_edit.selectAll()
+
+    def _search_settings(self, query: str, *, advance: int = 0) -> None:
+        """执行搜索；``advance`` 是**步长**（回车/↓ = +1、↑ = -1、0 = 不主动翻页）。
+
+        用步长而不是"要不要前进"的布尔：↑ 需要反方向，取模天然支持回绕
+        （第一条上按 ↑ 落到最后一条），不必为回绕写特判。
+
+        ``advance=0`` 是"不主动翻页"，**不是"重新开始"**：命中集合没变时保持当前
+        索引，只有集合变了（`:2166` 那支）才归零。
+        """
         query = query.strip().lower()
         self._clear_search_matches()
         if not query:
@@ -2091,7 +2176,7 @@ class ModernSettingsDialog(QDialog):
             self._search_matches = matches
             self._search_index = 0
         elif advance:
-            self._search_index = (self._search_index + 1) % len(matches)
+            self._search_index = (self._search_index + advance) % len(matches)
         row = matches[self._search_index]
         row.setProperty("searchMatch", True)
         row.style().unpolish(row)
@@ -2103,18 +2188,13 @@ class ModernSettingsDialog(QDialog):
                 break
         self.sidebar.setCurrentRow(page_index)
         page = self.pages.widget(page_index)
-        ancestor = row.parentWidget()
-        while ancestor is not None and ancestor is not page:
-            if isinstance(ancestor, CollapsibleGroup):
-                # 命中折叠框内的行：先自动展开，否则搜索结果存在但看不见。
-                ancestor.set_expanded(True)
-            elif isinstance(ancestor, SettingsSection) and ancestor.advanced:
-                # 高级折叠组同理：不展开等于折了搜不到（新老全部 advanced 组一体生效）。
-                ancestor.toggle.setChecked(True)
-            if isinstance(ancestor, SettingsTabContainer):
-                ancestor.activate_for_descendant(row)
-                break
-            ancestor = ancestor.parentWidget()
+        # 命中折叠里的行要先把它露出来，否则「搜索结果存在但看不见」。
+        # 折叠有两种形态，交给 settings_widgets.reveal_settings_row 一处管：
+        # ① CollapsibleGroup / 高级组 / 页内标签是 QWidget 嵌套（判祖先即可）；
+        # ② 语音报时与节日提醒的后端参数行是**行级**折叠（那批行会被搬进一张
+        #    平卡，容器活不下来，所以折叠状态落在行上的 _reveal_fold 回调里）。
+        # 只判祖先会漏掉 ②：搜索命中「豆包音色」这类行时它仍藏在折叠后端里。
+        reveal_settings_row(row, page)
         scroll = page.findChild(QScrollArea, "settingsScroll")
         if scroll is not None:
             scroll.ensureWidgetVisible(row, 0, 24)
@@ -2134,9 +2214,21 @@ class ModernSettingsDialog(QDialog):
         return f"需先开启「{source.label.text()}」"
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
-        if watched is self.search_edit and event.type() == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._search_settings(self.search_edit.text(), advance=True)
-            return True
+        if watched is self.search_edit and event.type() == QEvent.Type.KeyPress:
+            # 回车 / ↓ 前进、↑ 后退。只在**裸键**（或小键盘键）时拦：带 Ctrl/Alt/Shift
+            # 的 ↑/↓ 一律透传——输入法候选导航、以及将来可能加的组合键，不该被搜索抢走。
+            # 单行 QLineEdit 里裸 ↑/↓ 本来没有默认行为，拦掉不损失任何既有操作。
+            if event.modifiers() in (Qt.KeyboardModifier.NoModifier,
+                                     Qt.KeyboardModifier.KeypadModifier):
+                step = {
+                    Qt.Key.Key_Return: 1,
+                    Qt.Key.Key_Enter: 1,
+                    Qt.Key.Key_Down: 1,
+                    Qt.Key.Key_Up: -1,
+                }.get(event.key())
+                if step is not None:
+                    self._search_settings(self.search_edit.text(), advance=step)
+                    return True
         return super().eventFilter(watched, event)
 
     def _apply_selected_theme(self, *_args) -> None:
@@ -2144,6 +2236,8 @@ class ModernSettingsDialog(QDialog):
         dark = theme == "dark" or (theme == "system" and _system_dark())
         self.setProperty("settingsDark", dark)
         self.setStyleSheet(_settings_stylesheet(theme))
+        # 图标是位图：QSS 换了它不会自己换色，按记录的名字重画（见 settings_widgets）。
+        refresh_settings_icons(self)
         for control in self.findChildren(ModernSelect):
             if control._popup is not None:
                 control._popup.setStyleSheet(control.popupStyleSheet())
@@ -2300,6 +2394,8 @@ class ModernSettingsDialog(QDialog):
             self.config.set("balance_tier_color_enabled", self.balance_tier_color_check.isChecked())
         if self.auto_hide_fullscreen_check is not None:
             self.config.set("auto_hide_fullscreen", self.auto_hide_fullscreen_check.isChecked())
+        if getattr(self, "cross_screen_check", None) is not None:
+            self.config.set("allow_cross_screen", self.cross_screen_check.isChecked())
         # 「单进程多开」键不落盘控件值：开关已隐藏（拓扑收口 Phase A），
         # 配置字典里加载的原值随 config.save() 原样回写（兼容保留）。
         if self.cursor_hidden_passthrough_check is not None:
@@ -2356,7 +2452,8 @@ class ModernSettingsDialog(QDialog):
         self.config.set("agent_link", agent_cfg)
         self.config.set("todo_reminder_enabled", self.todo_reminder_check.isChecked())
         self.config.set("todo_reminder_lead_minutes", int(self.todo_reminder_lead_spin.value()))
-        # 语音报时设置页写回（仅写 voice_chime_* 11 键）
+        self.config.set("todo_reminder_speak", self.todo_reminder_speak_check.isChecked())
+        # 语音报时设置页写回（voice_chime_* 平铺键 + 各后端字段键）
         if self.voice_chime_page is not None:
             self.voice_chime_page.apply_to_config()
         # 节日提醒设置页写回（仅写 festival_reminder_* / festival_custom_* 10 键）
@@ -2405,6 +2502,8 @@ class ModernSettingsDialog(QDialog):
         settings_quiet.save_quiet_settings(self)
         settings_focus.save_focus_settings(self)
         settings_weather.save_weather_settings(self)
+        settings_divination.save_divination_settings(self)
+        settings_hotkeys.save_hotkey_settings(self)
         if sys.platform == "win32" and self.include_ai and hasattr(self, "pro_enabled_check"):
             from .proactive import PRESET_DEFAULTS
 

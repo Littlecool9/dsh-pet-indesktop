@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .brand_icons import load_ds_whale
 from .result_panel import _STYLES, resolve_style
 from .vision_bridge import VisionConversation
 
@@ -48,6 +49,11 @@ __all__ = ["ScreenAskDialog"]
 _MARGIN = 12          # 缺省落点贴屏幕右下的留白
 _MIN_W, _MIN_H = 320, 360
 _BUBBLE_RADIUS = 10
+
+#: 标题栏品牌标识：固定 DS logo 直接顶掉原来的「截图问答」四字（不随机、旁边
+#: 不加第二个图标位）；这四个字仍是窗口标题与无障碍名，供识别与自动化使用。
+_TITLE_TEXT = "截图问答"
+_TITLE_LOGO_BOX = 24   # logo 的边长（逻辑像素；实际出图按屏 DPR 放大）
 
 
 class _Bubble(QLabel):
@@ -60,7 +66,10 @@ class _Bubble(QLabel):
         # （AutoText 会把本地路径图片加载出来——那是隐私面，不是样式面）
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setWordWrap(True)
-        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         bg = "#1677e8" if role == "user" else colors["button"]
         fg = "#ffffff" if role == "user" else colors["text"]
         side = "right" if role == "user" else "left"
@@ -103,7 +112,7 @@ class ScreenAskDialog(QFrame):
         self._style = resolve_style(style, self.palette())
         self._palette = _STYLES[self._style]
         self.setObjectName("screen-ask-dialog")
-        self.setWindowTitle("截图问答")
+        self.setWindowTitle(_TITLE_TEXT)
         self.setFrameShape(QFrame.Shape.NoFrame)  # 卡片由 paintEvent 手画（同结果面板）
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -129,10 +138,17 @@ class ScreenAskDialog(QFrame):
         # 标题栏（拖拽把手：标签对鼠标透明，按下落在面板上）
         header = QHBoxLayout()
         header.setSpacing(8)
-        title = QLabel("截图问答", self)
-        title.setObjectName("screen-ask-title")
-        title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        header.addWidget(title)
+        # 标题栏就是品牌标识本身：「截图问答」四字由固定 DS logo 直接顶掉
+        # （标志性文字不重复出现在 logo 旁边）；这四个字留在窗口标题与
+        # 无障碍名里，供识别与自动化取用。素材缺席时退回这四个字。
+        self._title = QLabel(_TITLE_TEXT, self)
+        self._title.setObjectName("screen-ask-title")
+        self._title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._title.setAccessibleName(_TITLE_TEXT)
+        self._title_src = QPixmap()       # logo 原图（DPR 变化时按它重出）
+        self._title_scaled = None         # 最近一次出图（测试可核对 DPR/物理尺寸）
+        self._title_screen_wired = False  # screenChanged 一次性接线标记
+        header.addWidget(self._title)
         note = QLabel("点「发送」才会把图发给你配置的 AI 服务", self)
         note.setObjectName("screen-ask-note")
         note.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -251,6 +267,8 @@ class ScreenAskDialog(QFrame):
             }}
             QPushButton#screen-ask-close:hover {{ color: {colors["text"]}; }}
         """)
+        # 标题栏 logo 先按构建时的 DPR 出一张（真实落点由 showEvent 按最终屏重出）
+        self._refresh_title_icon()
 
     # ---------------------------------------------------------------- 对外
 
@@ -297,6 +315,35 @@ class ScreenAskDialog(QFrame):
         self.raise_()
         self.activateWindow()
         self._input.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+
+    def _on_title_screen_changed(self, _screen) -> None:
+        """拖到不同缩放比的屏：按新屏 DPR 重出同一张 logo（只重出，不换素材）。"""
+        self._refresh_title_icon()
+
+    def _refresh_title_icon(self, dpr: float | None = None) -> None:
+        """按当前屏 DPR 出标题栏 logo（固定 DS logo，见 ``brand_icons``）。
+
+        窗口落在哪块屏由 showEvent/选区定位决定，所以真实落点会再出一次；
+        拖到不同缩放屏时经 screenChanged 重出——只重出图，不换素材。
+        素材缺席时退回那四个字（标识不许变成空白洞）。``dpr`` 是测试注入缝
+        （offscreen 恒 1.0），生产缺省读窗口真实 DPR。
+        """
+        src = load_ds_whale()
+        if src.isNull():
+            self._title_src = QPixmap()
+            self._title_scaled = None
+            self._title.setText(_TITLE_TEXT)
+            return
+        dpr = self.devicePixelRatioF() if dpr is None else float(dpr)
+        scaled = src.scaled(
+            int(_TITLE_LOGO_BOX * dpr), int(_TITLE_LOGO_BOX * dpr),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+        scaled.setDevicePixelRatio(dpr)
+        self._title.setPixmap(scaled)   # setPixmap 会清掉文字：两态不并存
+        self._title_src = src
+        self._title_scaled = scaled     # 出图留档：测试可直接核对 DPR/物理尺寸
+        #（QLabel.pixmap() 在 offscreen 下会归一化 DPR，读它验不了 HiDPI）
 
     def send_current(self) -> bool:
         """发送当前输入（空输入走默认问法）。发送中/无会话时拒收，返回是否受理。"""
@@ -386,6 +433,14 @@ class ScreenAskDialog(QFrame):
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
         super().showEvent(event)
+        # 标题栏 logo 按最终落点的屏 DPR 重出（构建时不知道会落哪块屏）；
+        # 并一次性接上换屏信号——拖到不同缩放比的屏只重出图，不换素材。
+        self._refresh_title_icon()
+        if not self._title_screen_wired:
+            handle = self.windowHandle()
+            if handle is not None:
+                handle.screenChanged.connect(self._on_title_screen_changed)
+                self._title_screen_wired = True
         if self._user_size is not None:
             self.resize(self._user_size)
         if self._user_pos is not None:

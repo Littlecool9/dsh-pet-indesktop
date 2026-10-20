@@ -27,6 +27,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$ROOT"
+"$PYTHON_BIN" scripts/verify_bundle_tts.py --environment
 
 # 仅当要构建 gif 变体时才生成 GIF 素材（convert_to_gif 默认幂等：只转换
 # 缺失/过期的，CI 只构建 webm 变体时不会触发；与 build_macos.sh 一致）。
@@ -107,14 +108,27 @@ RAPIDOCR_HIDDEN=(--hidden-import pet.screen_capture.ocr --hidden-import pet.scre
 for variant in "${variant_list[@]}"; do
     case "$variant" in
         webm-chat)  entry="packaging/pet_entry.py";            assets="assets/characters";       excludes="" ;;
-        webm)       entry="packaging/pet_entry_no_chat.py";    assets="assets/characters";       excludes="pet.chat,keyring" ;;
+        webm)       entry="packaging/pet_entry_no_chat.py";    assets="assets/characters";       excludes="pet.chat" ;;
         gif-chat)   entry="packaging/pet_entry.py";            assets="assets/characters_gif";   excludes="" ;;
-        gif)        entry="packaging/pet_entry_no_chat.py";    assets="assets/characters_gif";   excludes="pet.chat,keyring" ;;
+        gif)        entry="packaging/pet_entry_no_chat.py";    assets="assets/characters_gif";   excludes="pet.chat" ;;
         *) echo "未知变体: $variant" >&2; exit 1 ;;
     esac
     name="dsh-pet-standalone-$variant"
     printf "VARIANT = '%s'\n" "$variant" > packaging/build_variant.py
 
+    # 运行期图标（窗口/标题栏）也要进包：Linux 上 PyInstaller 忽略 --icon，图标只能
+    # 靠这一份——pet/application_icon.py 从 <_MEIPASS>/assets/icon.ico 读。漏掉这一行
+    # 不会有任何报错（只有源文件不存在时 PyInstaller 才会挡下），因此由
+    # tests/test_application_icon.py 的打包契约测试守着。
+    #
+    # keyring（2026-10-17）：四个变体都收集。no-chat 变体排掉了 pet.chat，静态分析因此
+    # 摸不到 keyring（chat 的 SecretStore 是它原来的唯一入口），而语音报时的收费后端
+    # （pet/tts/mimo、pet/tts/doubao）照旧收 API Key——少了它，凭据只能留在写它的进程
+    # 内存里，设置页（独立进程）报「已保存」而主程序永远读不到。
+    #
+    # LICENSE / THIRD_PARTY_NOTICES.md：assets/sounds 下的内置点击音是 MeteorNOX 的
+    # MIT 素材，许可正文写在仓根 THIRD_PARTY_NOTICES.md 第 1 节。只打素材不打声明，
+    # 等于分发复制件却不带许可正文。两份落在产物根（Linux 的 _MEIPASS 就是产物根）。
     args=(
         --noconfirm
         --clean
@@ -128,14 +142,18 @@ for variant in "${variant_list[@]}"; do
         --collect-all PySide6.QtMultimedia
         --collect-all edge_tts
         --collect-all psutil
+        --collect-all keyring
         --add-binary "$FCITX5_PLUGIN:PySide6/Qt/plugins/platforminputcontexts"
         --add-data "$assets:$assets"
         --add-data "assets/sounds:assets/sounds"
         --add-data "assets/chat:assets/chat"
+        --add-data "assets/icon.ico:assets"
         --add-data "assets/big_blue_fat_fish:assets/big_blue_fat_fish"
         --add-data "pet/menu_templates:pet/menu_templates"
         --add-data "pet/persona_presets:pet/persona_presets"
         --add-data "integrations:integrations"
+        --add-data "LICENSE:."
+        --add-data "THIRD_PARTY_NOTICES.md:."
         --add-data "resources/rapidocr_models:resources/rapidocr_models"
         --add-data "$RAPIDOCR_DIR/config.yaml:rapidocr"
         --add-data "$RAPIDOCR_DIR/default_models.yaml:rapidocr"
@@ -143,7 +161,6 @@ for variant in "${variant_list[@]}"; do
     )
     # 设置页样式表：已在 modern_settings_dialog.py 内联（_settings_stylesheet）
     if [[ "$name" == *-chat ]]; then
-        args+=(--collect-all keyring)
         args+=(--add-data "pet/chat/legacy_styles.qss:pet/chat")
         args+=(--add-data "pet/chat/modern_styles.qss:pet/chat")
     fi
@@ -161,6 +178,7 @@ for variant in "${variant_list[@]}"; do
     # （pet.screen_capture.ocr，动态 seam 的目标，只有 --hidden-import 能把它拉进包）
     # 与 rapidocr 的两份配置数据。三者缺一「截图提取文字」都不可用，所以一并判。
     "$PYTHON_BIN" scripts/verify_rapidocr_models.py --app-dir "$DIST_DIR/$name"
+    "$PYTHON_BIN" scripts/verify_bundle_tts.py --app-dir "$DIST_DIR/$name"
     # 中文编码自检（issue #26）：字节码/资源/文件名被编码污染即中止。
     "$PYTHON_BIN" scripts/check_bundle_encoding.py --dir "$DIST_DIR/$name"
     # Bridge 零依赖防线（2026-09 事故：缺 @deepseek-ai/dsh-llm 导致用户整个

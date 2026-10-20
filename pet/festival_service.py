@@ -191,6 +191,11 @@ class FestivalReminderService:
         而节日提醒是用户主动关注的事件（一天只有一两次），此时退到桌宠气泡位
         直接展示，避免"弹一下就没了"；两者都不可用时再退到系统通知。
 
+        气泡**没上屏**是另一回事：``show_bubble`` 返回 False，最常见的原因是审批/
+        问题提醒正占着气泡位（普通气泡让路）。那类弹窗是用户要回答的东西，绝不
+        抢占——改道系统通知并留一条 warning。旧写法只看"调用没抛异常"就 return，
+        于是气泡没出、通知没发、日志也没有，这一天的节日问候整条消失。
+
         飞行期是唯一的例外：这是**瞬时**状态（鱼被撞飞几秒），此时连直写也
         禁掉（鱼飞行过程中不弹气泡），也不排队、不改道系统通知——一次性播报
         丢弃即可，落地后正常。判据统一走 ``window_alerts`` 的门禁助手（惰性
@@ -210,31 +215,42 @@ class FestivalReminderService:
         if win is not None and win.isVisible():
             if window_alerts.sprite_in_flight(win):
                 return
-            suppressed = window_alerts.bubble_blocked(win)
-            if not suppressed:
-                try:
-                    win.show_bubble(text, duration_ms=self.BUBBLE_DURATION_MS)
+            if window_alerts.bubble_blocked(win):
+                if self._bubble_in_slot(win, text):
                     return
+            else:
+                try:
+                    if win.show_bubble(text, duration_ms=self.BUBBLE_DURATION_MS):
+                        return
                 except Exception:
                     logger.exception("节日提醒气泡展示失败")
-            try:
-                bubble = getattr(win, "_speech_bubble", None)
-                rect = win.visible_content_rect()
-                scale = getattr(win, "scale", 1.0)
-                if bubble is not None and rect is not None:
-                    bubble.show_text(
-                        text,
-                        rect,
-                        self.BUBBLE_DURATION_MS,
-                        pet_scale=scale,
-                        subtitle="",
-                    )
-                    return
-            except Exception:
-                logger.exception("节日提醒气泡降级展示失败")
+                logger.warning("节日提醒气泡未上屏（多半是提醒占着气泡位），改道桌面通知：%s", text)
         notify = getattr(app, "system_notify", None)
         if callable(notify):
             try:
                 notify("节日提醒", text)
             except Exception:
                 logger.exception("节日提醒桌面通知失败")
+
+    def _bubble_in_slot(self, win, text: str) -> bool:
+        """设置页抑制期直写桌宠气泡位（绕过 show_bubble 的抑制门禁）。
+
+        抑制期是"设置页开着、普通气泡一律让路"的长时用户意图，而节日提醒是用户
+        主动关注的事件，故照旧直写；写不进去返回 False，由调用方改道桌面通知。
+        """
+        try:
+            bubble = getattr(win, "_speech_bubble", None)
+            rect = win.visible_content_rect()
+            scale = getattr(win, "scale", 1.0)
+            if bubble is not None and rect is not None:
+                bubble.show_text(
+                    text,
+                    rect,
+                    self.BUBBLE_DURATION_MS,
+                    pet_scale=scale,
+                    subtitle="",
+                )
+                return True
+        except Exception:
+            logger.exception("节日提醒气泡降级展示失败")
+        return False

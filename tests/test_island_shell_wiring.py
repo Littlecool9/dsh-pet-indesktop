@@ -248,9 +248,16 @@ class _IslandOverlayHost:
     （tick 档位的 kinetic 去路，可为 None = 未起 tick）。这里给足这四个面，
     ``attach_island`` 直接用 ``OverlayShell`` 的真实实现（不是记录入参的假件），
     碰撞世界也是真实对象——墙成员的注册/注销走真实产品路径。
+
+    多屏宿主面（``_main_host`` / ``host_for_screen``）按"只有一块屏"的最小形态补齐：
+    岛墙挂到岛当前所在屏的宿主，本桩里那块屏就是唯一一块。岛换屏必然经
+    ``_rebind_island_host``（桥的 ``on_sync`` 挂点），故它和 ``_island_screen_host``
+    一样必须取真实实现——本桩的 ``host_for_screen`` 恒回同一宿主，重绑是 no-op。
     """
 
     def __init__(self):
+        import types
+
         from pet.overlay_shell import OverlayShell
         from pet.overlay_window import OverlayWindow
         from pet.sprite_collision import SpriteCollisionWorld
@@ -260,7 +267,23 @@ class _IslandOverlayHost:
         self._sound = None
         self.driver = None
         self.island_bridge = None
+        self._island = None
+        self._island_host = None
+        host = types.SimpleNamespace(
+            screen=None, overlay=self.overlay, collision=self.collision,
+            is_main=True, probe=None, throw_egg=None)
+        self._hosts = [host]
         self.attach_island = OverlayShell.attach_island.__get__(self)
+        self._island_screen_host = OverlayShell._island_screen_host.__get__(self)
+        self._rebind_island_host = OverlayShell._rebind_island_host.__get__(self)
+
+    @property
+    def _main_host(self):
+        return self._hosts[0]
+
+    def host_for_screen(self, screen):
+        # 单屏最小形态：这台"机器"只有一块屏，岛也在这块屏上
+        return self._hosts[0]
 
     def icon_pixmap(self, _size):
         return None

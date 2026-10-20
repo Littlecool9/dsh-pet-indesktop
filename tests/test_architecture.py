@@ -251,9 +251,52 @@ WINDOW_PY_LINE_BUDGET = 4671
 # 布局、SECTION_GUIDE 描述表）全在 pet/settings_page_guide.py，本文件只做接线。
 # 2026-10-09 上调到 2501（bug 狩猎修复批，两批叠加）：即时音效开关的 reload 防陈旧
 # 快照守卫（+7，B04）+ 子宠页读写路由的配置入口一行与 harness 置灰摘除（+3，F2）。
-# 按文件约定预算只随实测校准，不为达标压缩行宽/合并语句；拆分仍是待办。
-# 2026-10-15 focus: import + section assembly + save delegation; implementation lives in settings_focus.py.
-MODERN_SETTINGS_DIALOG_PY_LINE_BUDGET = 2504
+# 2026-10-14 上调到 2505（TTS provider 化）：语音报时与节日提醒不再按「一组行」收进
+# 「语音」域（页面容器会散架、分组标题会丢），改由各自页面自建卡片交给本域——域装配
+# 处多出一层容器、两次行序刷新与搜索折叠展开的接线（净 +4）。
+# 2026-10-14 再上调到 2508：节日页的行从构造起就挂在页面自己的持有容器里（无父的
+# SettingRow 一旦 setVisible 就是顶层窗口，会闪小窗），于是它们的行**也要**在域装配
+# 前登记进 claimed，否则会掉进「待分类（开发期）」（+3）。
+# 2026-10-16 上调到 2515（设置页外观打磨分批，本文件净 +14）：窗口图标两处接线（import
+# +1、setWindowIcon 与注释 +3）、侧栏容器换成按字体算宽的 SettingsSidebarPane（-1，主体
+# 在 pet/settings_widgets.py）与两处行距下调（配对注释 +5）、常规域的高级组装配（+1 与其
+# 分层口径注释 +5）。控件本体、宽度计算与组描述分别落在 settings_widgets /
+# settings_page_guide，本文件只留装配与接线。**同批第二轮把预算内余量用掉、回到 2515**：
+# 「光标隐藏时自动穿透」从高级组移回「窗口与系统」、高级组只剩「直播捕获兼容」、默认最大
+# 阅读宽度换成 CONTENT_READING_MAX_WIDTH（import +1）、开机自启的范围声明改由
+# settings_pet_controls 的作用域 pass 拆成行内标注（-2），其余靠收掉几处重复注释对齐。
+# 2026-10-16 上调到 2526（允许桌宠跨屏开关，本文件净 +11）：常规域「窗口与系统」
+# 多一行（行装配 8 行 + claim 表加一个 id + 保存回写 2 行）。控件本体与两条说明
+# 文案落在 settings_pet_controls（`CROSS_SCREEN_HINT` 与作用域登记），本文件只留
+# 装配与接线；行内文案表仍是唯一来源。按文件约定预算只随实测校准，不为达标压缩
+# 行宽/合并语句；拆分仍是待办。
+# 2026-10-17 累计校准到 2535：main 上 PR267 落地后实测 2533（2526 + TTS provider 化的净 +7），
+# 本支的每日一签接线再 +2，合并树实测正是 2535。抽签的页装配不在本文件——它作为「互动」
+# 域第四个页内标签由 settings_interaction 挂载（与天气同口径），避免这个"上帝对话框"再涨。
+# 仍按文件约定只随实测校准。
+# 2026-10-18 上调到 2539（待办语音播报，本文件净 +4）：待办提醒分区多一行
+# `SettingRow("todo_reminder_speak", ...)`（行装配 3 行 + 保存回写 1 行；claim 表那行
+# 只是多一个 id，不增行）。控件本体在 settings_pet_controls，文案只有行内这一份来源。
+# 仍按文件约定只随实测校准，不为达标压缩行宽/合并语句；拆分仍是待办。
+# 2026-10-18 上调到 2561（自言自语内容项显隐解耦，本文件净 +22）：周期气泡的细项
+# 显隐拆成「节奏项只跟周期开关」+「内容项（显示时间/候选内容/图片目录/配图概率）
+# 跟周期或点击任一开启」——新增 `_update_self_talk_content_controls`（含 docstring）
+# 与 `_update_self_talk_controls` / `_update_click_self_talk_controls` 两处调用的接线，
+# 行数即这两个函数的净增。显隐规则必须贴着这两处开关的 toggled 接线（拆成外部函数
+# 反而把"哪一档跟哪个开关"这条唯一契约切散），故按文件约定校准到实测值。
+# 2026-10-18 上调到 2563（互动域新增「快捷键」页内标签，本文件净 +2：一行 import
+# + 保存路径一行 `save_hotkey_settings`）。行的装配在 settings_hotkeys（新模块），
+# 本文件只留接线——这是既定口径（settings_quiet/weather/divination 同形）。
+# 2026-10-18 上调到 2580（Ctrl+F 聚焦搜索框 + 搜索索引纳入「更新」页作者行，本文件
+# 净 +17：两条 import、`_focus_search_box` 槽与其接线、索引来源多一类候选）。
+# 2026-10-19 上调到 2594（搜索框 ↑/↓ 逐条翻命中，本文件净 +14：`_search_settings`
+# 改成 `advance: int` 步长并补 docstring、`eventFilter` 四键映射）。这一改只动键盘
+# 交互，没有新页面/新控件组可拆，按「拆不动则校准到实测」处理。
+# 2026-10-19 上调到 2600（同一处再 +6：`eventFilter` 加修饰键闸门——只拦裸键/小键盘键，
+# 带 Ctrl/Alt/Shift 的 ↑↓ 透传，避免抢走输入法候选导航）。仍是键盘边界，同上处理。
+# 2026-10-19 合并专注模式与上游 v4.3.4：保留 settings_focus 的 import、
+# 分区装配和保存接线（上游基础上 +3），预算按合并树实测校准。
+MODERN_SETTINGS_DIALOG_PY_LINE_BUDGET = 2603
 
 
 def _read(name: str) -> str:
@@ -300,6 +343,33 @@ def test_decode_fanout_does_not_depend_on_window_or_player():
     for banned in ("pet.window", "pet.webm_clip", "from .window", "from .webm_clip",
                    "import window", "import webm_clip"):
         assert banned not in src, f"decode_fanout 反向依赖 {banned}，破坏单向依赖"
+
+
+# TTS provider 层（pet/tts/）的机器化守卫（2026-10-17 加入）：provider 是可被第三方
+# 照抄的模板（docs/ADDING-A-TTS-PROVIDER.md），两条红线写在 pet/tts/base.py 的模块
+# 文档里——① 顶层不得 import Qt；② 可选/重量级依赖（edge_tts、aiohttp…）只能延迟到
+# synth() 里 import。违反的代价是「每个用户白付这笔 import」或「无 Qt 环境测不了」，
+# 所以这里把它守住：只扫模块顶层（不含函数体内的延迟 import）。
+_PET_TTS_TOP_LEVEL_BANNED = (
+    "PySide6", "PyQt",            # provider 是纯逻辑 + 一层 IO，不许碰 Qt
+    "edge_tts", "aiohttp", "requests",  # 可选/重量级依赖：必须延迟到 synth() 内
+)
+
+
+def test_tts_providers_keep_top_level_imports_light():
+    providers = sorted((PET_DIR / "tts").glob("*.py"))
+    assert providers, "pet/tts/ 下应当有 provider 模块（别把守卫扫空了还不自知）"
+    offenders: list[str] = []
+    for path in providers:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.startswith(("import ", "from ")):
+                continue  # 只扫顶层：函数体内的延迟 import 缩进了，不在此列
+            if any(banned in line for banned in _PET_TTS_TOP_LEVEL_BANNED):
+                offenders.append(f"pet/tts/{path.name}:{number}: {line.strip()}")
+    assert not offenders, (
+        "pet/tts/*.py 顶层引入了 Qt 或重量级/可选依赖（见 pet/tts/base.py 的写 provider 红线）：\n"
+        + "\n".join(offenders)
+    )
 
 
 # 多进程多宠退役层（PHASE4_DESIGN.md §3 T6 清单，4.4a 停用 / 4.4b 删除）。

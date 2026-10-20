@@ -599,3 +599,39 @@ def test_classify_bounds_huge_stderr():
     state, reason = gf.classify_backend_failure(12, "\n".join(["x" * 500] * 50))
     assert state == gf.STATE_ERROR
     assert len(reason) <= gf.MAX_REASON_CHARS
+
+
+def test_parse_session_names_takes_first_column():
+    """``logman query -ets`` 的输出里只认本应用前缀的会话名（每行首列）。"""
+    import pet.game_fps as gf
+
+    output = (
+        "\nData Collector Set                      Type                          Status\n"
+        "-------------------------------------------------------------------------------\n"
+        "NT Kernel Logger                        Trace                         Running\n"
+        "dsh-pet-fps-15520-37-b4e46ca9           Trace                         Running\n"
+        "Eventlog-Security                       Trace                         Running\n"
+        "dsh-pet-fps-31060-20-c4294783           Trace                         Running\n"
+    )
+    assert gf.parse_session_names(output) == [
+        "dsh-pet-fps-15520-37-b4e46ca9",
+        "dsh-pet-fps-31060-20-c4294783",
+    ]
+
+
+def test_stale_session_names_excludes_the_current_session():
+    """残留清理只针对**不是本次**的会话，且绝不碰别人前缀的采集。"""
+    import pet.game_fps as gf
+
+    output = (
+        "dsh-pet-fps-15520-37-b4e46ca9  Trace  Running\n"
+        "dsh-pet-fps-99999-1-aaaaaaaa   Trace  Running\n"
+        "NVIDIA-Nsight-Etw              Trace  Running\n"
+        "dsh-pet-fps-other-tool-x       Trace  Running\n"
+    )
+    keep = "dsh-pet-fps-99999-1-aaaaaaaa"
+    assert gf.stale_session_names(output, keep=keep) == [
+        "dsh-pet-fps-15520-37-b4e46ca9",
+        "dsh-pet-fps-other-tool-x",
+    ]
+    assert gf.stop_session_args("dsh-pet-fps-a") == ["logman", "stop", "dsh-pet-fps-a", "-ets"]

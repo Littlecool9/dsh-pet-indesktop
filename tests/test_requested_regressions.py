@@ -41,6 +41,7 @@ def test_modern_message_card_opacity_is_configurable_and_persisted(tmp_path, mon
     dialog.ai_page.message_card_opacity.setValue(65)
     dialog._save()
 
+    config.reload()  # #271：写盘走路由视图另建的主配置，传入对象需重读才可见
     assert config.get("modern_chat_card_opacity") == 65
     assert "rgba(255, 255, 255, 166)" in build_modern_custom_overlay_qss(
         "#3994ff", 65
@@ -180,6 +181,78 @@ def test_readme_harness_autostart_paragraph_matches_the_launch_gates():
     assert "例外" in para and "探测期间" in para, (
         "必须写明「拉起探测期间关掉开关会立刻收掉刚拉起的实例」这一例外"
     )
+
+
+def _readme_text():
+    from pathlib import Path
+
+    return (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+
+
+def test_readme_documents_the_new_global_hotkey_section():
+    """README 必须登记 v4.3.4 的「互动 → 快捷键」（做了就要说）。
+
+    依据：`pet/settings_interaction.py` 的第五个页内标签 `hotkeys` →
+    `pet/settings_hotkeys.build_hotkey_rows`（三个动作、默认空、必须有修饰键、
+    非 Windows 只存不注册）。此前 `grep 快捷键 README.md` 一条都搜不到。
+    """
+    readme = _readme_text()
+    assert "设置 → 互动 → 快捷键" in readme, "入口要按真实路径写（域 + 页内标签）"
+    lines = readme.splitlines()
+    start = next(
+        (index for index, line in enumerate(lines)
+         if line.startswith("#") and "全局快捷键" in line), None)
+    assert start is not None, "README 缺少「全局快捷键」小节"
+    end = next(
+        (index for index in range(start + 1, len(lines))
+         if lines[index].startswith("# ") or lines[index].startswith("## ")),
+        len(lines))
+    body = "\n".join(lines[start:end])
+    for phrase, why in (
+        ("默认全空", "默认不绑是这一版的行为基线（不绑 = 与旧版逐位相同）"),
+        ("修饰键", "单个字母的全局键会抢走系统级打字，录入时就被拒"),
+        ("只有 Windows", "其它平台能存不注册，用户必须知道"),
+        ("AI 对话", "三个动作要逐一点名"),
+        ("看看屏幕", "三个动作要逐一点名"),
+        ("截图提问", "三个动作要逐一点名"),
+    ):
+        assert phrase in body, f"快捷键小节必须写「{phrase}」：{why}"
+
+
+def test_readme_ai_config_path_matches_the_real_ui():
+    """README 的 AI 配置路径要能真的走通（用户第一步就撞墙的那条）。
+
+    依据：右键菜单模板 `pet/menu_templates/modern-default-v1.json` 里**没有**
+    `ai_settings` 节点（只有 `chat`=AI 对话、`modern_settings`=桌宠设置）；「AI 设置」
+    只存在于**托盘**菜单（`pet/app.py` 的 `add_tray_action(menu, 'AI 设置', ...)`）。
+    设置窗里那一页叫「AI 与对话」，保存按钮是侧栏的「保存并退出」（AI 页没有存档
+    按钮，`pet/settings_widgets.sidebar_save_button`）。
+    """
+    readme = _readme_text()
+    assert "设置 → AI 与对话" in readme, "零基础配置必须写真实路径"
+    assert "保存并退出" in readme, "AI 页没有「保存」按钮，存档只有侧栏这一个入口"
+    for line in readme.splitlines():
+        if "AI 设置" in line:
+            assert "托盘" in line, (
+                f"「AI 设置」只存在于托盘菜单，提到它必须写明托盘，否则用户会去右键菜单找：{line}"
+            )
+
+
+def test_readme_lists_the_settings_that_are_not_effective_immediately():
+    """「关闭即自动保存并立即生效」必须带例外清单，且与代码同口径。
+
+    三个例外各有出处：`settings_pet_controls.CROSS_SCREEN_HINT`（重启级）、
+    `STREAM_CAPTURE_RESTART_HINT`（重启级）、`settings_network` 的「帧率采集权限」行
+    （加入 `Performance Log Users` 后要重新登录，令牌才换）。
+    """
+    readme = _readme_text()
+    assert "少数几项要重启或重新登录才生效" in readme, "快速开始里要指向例外清单"
+    exceptions = next(
+        (line for line in readme.splitlines() if "三个例外" in line), None)
+    assert exceptions is not None, "「立即生效」旁边必须有例外清单"
+    for name in ("允许桌宠跨屏", "直播捕获兼容", "帧率采集权限"):
+        assert f"`{name}`" in exceptions, f"例外清单缺「{name}」"
+    assert "重启" in exceptions and ("注销" in exceptions or "重新登录" in exceptions)
 
 
 def test_harness_target_desktop_disabled_and_never_saved_on_unsupported_platform(tmp_path, monkeypatch):
@@ -342,7 +415,10 @@ def test_harness_target_row_hint_is_the_helper_output(tmp_path, monkeypatch, des
         row = dialog.findChild(settings_mod.SettingRow, "settingRow_harness_launch_target")
         assert row is not None, "自启目标行必须在"
         rendered = row.hint_label.text().split("默认：", 1)[0].rstrip("\n")
-        assert rendered == harness_target_hint(desktop_available)
+        # 作用域那句已从说明末尾拆成行内独立标注（见 SettingRow.set_scope_note）；
+        # 两者拼起来仍必须逐字等于 helper 的输出——文案来源没有第二份。
+        assert rendered + row.scope_note.text() == harness_target_hint(desktop_available)
+        assert row.scope_note.text() == "此设置影响所有桌宠。"
     finally:
         dialog.close()
         app.processEvents()
@@ -396,7 +472,12 @@ def test_click_sound_path_is_linked_to_enable_toggle_and_persisted(tmp_path, mon
     dialog.click_sound_picker.set_pack({"kind": "file", "id": "custom", "path": "/tmp/my-click.wav"})
     dialog._save()
 
-    assert config.get("click_sound_pack") == {"kind": "file", "id": "custom", "path": "/tmp/my-click.wav"}
+    # #271：空身份会话按 slot0 分流，音效包是每宠键——真值在 config-slot-0.json，
+    # 传入的空身份对象读的是主配置，从档案读回。
+    from pet import pet_profiles
+
+    assert pet_profiles.read_slot_profile(config.dir, 0).value("click_sound_pack") == {
+        "kind": "file", "id": "custom", "path": "/tmp/my-click.wav"}
     dialog.close()
     app.processEvents()
 
@@ -419,7 +500,13 @@ def test_click_sound_path_row_hidden_initially_when_toggle_disabled(tmp_path, mo
         lambda *args, **kwargs: None,
     )
     config = Config(tmp_path)
-    config.set("click_sound_enabled", False)
+    # #271：空身份会话按 slot0 分流，每宠键的真值在 config-slot-0.json——
+    # 内存预置对话框读不到，必须落盘（先建主配置/落种档案，再写该槽偏好）。
+    config.save()
+    from pet import pet_profiles
+
+    assert pet_profiles.write_profile_settings(
+        config.dir, 0, {"click_sound_enabled": False}).ok
     dialog = settings_mod.ModernSettingsDialog(config, include_ai=True)
     row = dialog.findChild(
         settings_mod.SettingRow, "settingRow_click_sound_pack"
@@ -558,11 +645,15 @@ def test_settings_save_preserves_custom_font_before_selector_is_opened(tmp_path,
     appearance = dict(config.get("context_menu_appearance"))
     appearance["ui_font"] = "Regression Custom Font"
     config.set("context_menu_appearance", appearance)
+    # #271：空身份会话按 slot0 分流，全局键读路由视图另建的主配置（初值只取盘）
+    # ——预置必须落盘。
+    assert config.save() is True
 
     dialog = settings_mod.ModernSettingsDialog(config, include_ai=False)
     assert dialog._menu_fonts_populated is False
     assert dialog.menu_font_select.currentData() == "Regression Custom Font"
     dialog._save()
+    config.reload()  # 写盘走另一份主配置对象，传入对象需重读才可见
     assert config.get("context_menu_appearance")["ui_font"] == "Regression Custom Font"
     app.processEvents()
 
@@ -1180,6 +1271,7 @@ def test_modern_settings_save_writes_autostart_wanted(tmp_path, monkeypatch):
     dialog = settings_mod.ModernSettingsDialog(config, include_ai=True)
     dialog.autostart_check.setChecked(True)
     dialog._save()
+    config.reload()  # #271：写盘走路由视图另建的主配置，传入对象需重读才可见
     assert config.get("autostart_wanted") is True
     dialog.close()
     app.processEvents()
@@ -1378,7 +1470,11 @@ def test_modern_settings_escape_closes_when_save_succeeds(tmp_path, monkeypatch)
     app.processEvents()
 
     assert finished == [int(QDialog.DialogCode.Rejected)], "保存成功时 Esc 必须关窗"
-    assert config.get("self_talk_bubble_style") == "breath_bubble", "关窗前必须落盘"
+    # #271：气泡样式是每宠键——真值在 config-slot-0.json，从档案读回。
+    from pet import pet_profiles
+
+    assert pet_profiles.read_slot_profile(config.dir, 0).value(
+        "self_talk_bubble_style") == "breath_bubble", "关窗前必须落盘"
 
 
 def test_settings_stylesheet_has_dark_overrides(monkeypatch):
@@ -1409,6 +1505,9 @@ def test_settings_window_uses_the_explicit_dark_appearance_on_a_light_system(
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     config = Config(tmp_path)
     config.set("context_menu_appearance", {"theme": "dark"})
+    # #271：空身份会话按 slot0 分流，全局键读路由视图另建的主配置（初值只取盘）
+    # ——预置必须落盘。
+    assert config.save() is True
 
     dialog = settings_mod.ModernSettingsDialog(config, include_ai=False)
     assert "QDialog { background: #202024" in dialog.styleSheet()
@@ -1470,12 +1569,15 @@ def test_modern_settings_finished_refreshes_even_on_rejected(tmp_path, monkeypat
 
     owner.win = FakeWin()
     owner.config = Config(tmp_path)
+    # 真实壳恒有 config（应用链末尾无条件走一次台词预缓存，入口自己按开关收敛）
+    owner.shell.config = owner.config
     owner.shell._apply_balance_timer = lambda: None
     owner.shell._sync_dynamic_island = lambda: None
     # Phase 1 门控后 todo 服务走 _sync_todo_service（懒启停）；测试只测桌宠刷新
     owner.shell._sync_todo_service = lambda: None
     owner.shell._sync_chime_service = lambda: None  # 语音报时同样懒启停，本用例只测桌宠刷新
     owner.shell._sync_festival_service = lambda: None  # 节日提醒同样懒启停（其内部会连带同步报时通道）
+    owner.shell._sync_divination_service = lambda: None  # 每日一签同属懒启停族（无定时器，仍按开关建/释放）
     owner._refresh_chat_windows = lambda: None
     owner._sync_animation_prewarm = lambda: None
     monkeypatch.setattr(app_mod, "_mac_set_dock_icon_visible", lambda *a, **k: None)
@@ -1560,6 +1662,7 @@ def test_modern_settings_close_applies_autostart(tmp_path, monkeypatch):
     dialog.close()  # X 关闭，不点「保存并退出」
     app.processEvents()
     assert applied == [True]
+    config.reload()  # #271：写盘走路由视图另建的主配置，传入对象需重读才可见
     assert config.get("autostart_wanted") is True
     dialog.close()
     app.processEvents()

@@ -503,9 +503,14 @@ class _Win:
 
     def __init__(self) -> None:
         self.bubbles: list[str] = []
+        # 气泡位被审批提醒占着：普通气泡让路（真宿主此时返回 False）
+        self.occupied = False
 
-    def show_bubble(self, text: str, duration_ms: int | None = None) -> None:
+    def show_bubble(self, text: str, duration_ms: int | None = None) -> bool:
+        if self.occupied:
+            return False
         self.bubbles.append(text)
+        return True
 
     def isVisible(self) -> bool:  # noqa: N802 - 对齐 Qt API
         return True
@@ -530,9 +535,13 @@ class _App:
         self.config = config
         self.win = _Win()
         self._channel = channel
+        self.notices: list[tuple[str, str]] = []
 
     def ensure_audio_channel(self):
         return self._channel
+
+    def system_notify(self, title: str, message: str, **_kw) -> None:
+        self.notices.append((title, message))
 
 
 def _service(config, channel=None):
@@ -599,6 +608,34 @@ def test_service_stays_silent_when_speak_disabled(tmp_path):
 
     assert channel.spoken == []
     assert len(app.win.bubbles) == 1, "不出声也必须有气泡"
+
+
+def test_bubble_taken_by_alert_still_reaches_the_user(tmp_path, caplog):
+    """审批提醒占着气泡位时，节日文案不得静默丢弃。
+
+    旧行为：``show_bubble`` 在有提醒展示时让路并返回 False，调用侧不看返回值就
+    ``return``——气泡没了、通知也没发，这天唯一的节日问候整条消失。新契约：没上屏
+    就改道桌面通知并留 warning，且绝不直写气泡位去抢占审批弹窗。
+    """
+    service, app = _service(_cfg_with(tmp_path, festival_reminder_speak=False))
+    service.apply_config()
+    app.win.occupied = True
+    clobbered: list[str] = []
+
+    class _AlertBubble:
+        def show_text(self, text, *_args, **_kwargs):
+            clobbered.append(text)
+
+    app.win._speech_bubble = _AlertBubble()
+    app.win.visible_content_rect = lambda: object()
+
+    with caplog.at_level("WARNING", logger="pet.festival_service"):
+        service._bubble("今天是春节。")
+
+    assert app.win.bubbles == [], "宿主让路（前置）"
+    assert clobbered == [], "不得抢占正在展示的审批气泡"
+    assert app.notices == [("节日提醒", "今天是春节。")], "没上屏必须送达"
+    assert any("春节" in record.getMessage() for record in caplog.records), "被占要有留痕"
 
 
 def test_startup_catch_up_suppresses_same_minute_scheduled_slot(tmp_path):
@@ -726,12 +763,18 @@ def _page(tmp_path):
 
 
 def test_settings_page_has_preview_row_with_button(tmp_path):
-    from pet.modern_settings_dialog import SettingRow
+    """试听行必须存在且包在 SettingRow 里（历史事故：没包进行里就不会被域收集搬运）。
 
+    2026-10-14 起本页的行**不再挂在页面上**：它们由 ``build_domain_page`` 现造卡片
+    收走（页面容器会在域装配时散架）。所以这里按页面自己的行表断言，而不是
+    ``page.findChildren(SettingRow)``——独立构造时那些行还没被域接走。
+    """
     page = _page(tmp_path)
-    rows = {r.objectName() for r in page.findChildren(SettingRow)}
-    assert "settingRow_festival_preview" in rows
+    assert page.preview_row.objectName() == "settingRow_festival_preview"
+    assert page.preview_row.control is page.preview_btn
     assert page.preview_btn.text() == "立即试听"
+    # 试听行属于「少用项」折叠组，必须被折叠编排登记在册
+    assert page.preview_row in page._festival_panel.rows()
 
 
 def test_preview_click_emits_signal_and_writes_config(tmp_path):

@@ -199,4 +199,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip
-          generate_release_notes: true
+          # 草稿：构建完只挂附件，发布由维护者核对后手动 publish；
+          # generate_release_notes 必须关——否则会覆盖维护者写的发布正文。
+          draft: true
+          generate_release_notes: false

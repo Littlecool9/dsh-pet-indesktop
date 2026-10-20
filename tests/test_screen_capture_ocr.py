@@ -746,7 +746,12 @@ def test_shared_engine_is_a_single_instance():
 
 
 def test_module_level_recognize_joins_blocks_in_reading_order():
-    """切片 3 的 seam 契约：``ocr.recognize(QImage) -> str``（同步、纯本地、不联网）。"""
+    """切片 3 的 seam 契约：``ocr.recognize(QImage) -> str``（同步、纯本地、不联网）。
+
+    行内接续（2026-10-17 修）：``左`` 的 y 段 14..44 与 ``右`` 的 10..40 竖向重叠
+    过半 ⇒ 同一视觉行 ⇒ 按 x 顺序接成一句（中文相邻不插空格），不再是「一块一行」。
+    旧口径把同一行拆成两行，正是截图翻译逐词译文的成因（"Working / on / two …"）。
+    """
     body = _FAKE_HEAD + _results(
         {"text": "第二行", "score": 0.9, "box": [[10, 60], [70, 60], [70, 90], [10, 90]]},
         {"text": "右", "score": 0.9, "box": [[120, 10], [180, 10], [180, 40], [120, 40]]},
@@ -756,7 +761,7 @@ def test_module_level_recognize_joins_blocks_in_reading_order():
     original = ocr.shared_engine
     ocr.shared_engine = lambda: engine
     try:
-        assert ocr.recognize(_blank()) == "左\n右\n第二行"
+        assert ocr.recognize(_blank()) == "左右\n第二行"
     finally:
         ocr.shared_engine = original
 
@@ -947,3 +952,70 @@ def test_the_real_worker_recognizes_with_the_network_blocked():
 
     assert process.returncode == ocr_worker.EXIT_NO_TEXT, process.stderr.decode("utf-8", "replace")
     assert b'"blocks"' in process.stdout
+
+
+# ------------------------------------------------- 行结构与文本视图（2026-10-17）
+#
+# 检测器给的块是**词/片段级**的：一行正文常常是好几块。文本视图要按行把它们接成
+# 一句——一块一行会把整句拆成碎片，下游截图翻译照行对译就得到逐词译文
+# （"Working / on / two / of / fthese" → "正在 / 处理 / 这些 / 中的 / 两个"）。
+
+#: 一行三个词 + 另一行两个词。这是真实的块形态，不是构造极端。
+_ROW_BLOCKS = (
+    {"text": "Working", "score": 0.9, "box": [[1, 2], [60, 2], [60, 12], [1, 12]]},
+    {"text": "on", "score": 0.9, "box": [[70, 2], [88, 2], [88, 12], [70, 12]]},
+    {"text": "two", "score": 0.9, "box": [[98, 2], [120, 2], [120, 12], [98, 12]]},
+    {"text": "of", "score": 0.9, "box": [[1, 20], [20, 20], [20, 30], [1, 30]]},
+    {"text": "these", "score": 0.9, "box": [[30, 20], [80, 20], [80, 30], [30, 30]]},
+)
+
+
+def _text_blocks(items) -> list[TextBlock]:
+    return [
+        TextBlock(item["text"], item["score"], [(p[0], p[1]) for p in item["box"]])
+        for item in items
+    ]
+
+
+def test_reading_lines_keeps_the_words_of_one_visual_row_together():
+    lines = ocr.reading_lines(_text_blocks(_ROW_BLOCKS))
+
+    assert [[block.text for block in line] for line in lines] == [
+        ["Working", "on", "two"],
+        ["of", "these"],
+    ]
+    # 扁平视图（契约主接口）不变：仍是同一批块、同一个阅读顺序。
+    assert [block.text for block in reading_order(_text_blocks(_ROW_BLOCKS))] == [
+        "Working", "on", "two", "of", "these",
+    ]
+
+
+def test_the_text_view_joins_one_row_into_a_sentence_not_one_line_per_block(monkeypatch):
+    engine, _ = _engine(_FAKE_HEAD + _results(*_ROW_BLOCKS) + "sys.exit(0)\n")
+    monkeypatch.setattr(ocr, "shared_engine", lambda: engine)
+
+    assert ocr.recognize(_blank()) == "Working on two\nof these"
+
+
+def test_cjk_neighbours_on_one_row_are_joined_without_spaces(monkeypatch):
+    cjk = (
+        {"text": "正在处理", "score": 0.9, "box": [[1, 2], [80, 2], [80, 12], [1, 12]]},
+        {"text": "这两件事", "score": 0.9, "box": [[90, 2], [170, 2], [170, 12], [90, 12]]},
+    )
+    engine, _ = _engine(_FAKE_HEAD + _results(*cjk) + "sys.exit(0)\n")
+    monkeypatch.setattr(ocr, "shared_engine", lambda: engine)
+
+    assert ocr.recognize(_blank()) == "正在处理这两件事"
+
+
+def test_the_engine_exposes_rows_while_the_flat_view_stays_flat():
+    engine, _ = _engine(_FAKE_HEAD + _results(*_ROW_BLOCKS) + "sys.exit(0)\n")
+
+    lines = engine.recognize_lines(_blank())
+    assert [[block.text for block in line] for line in lines] == [
+        ["Working", "on", "two"],
+        ["of", "these"],
+    ]
+    assert [block.text for block in engine.recognize(_blank())] == [
+        "Working", "on", "two", "of", "these",
+    ]

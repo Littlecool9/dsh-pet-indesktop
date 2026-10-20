@@ -164,7 +164,10 @@ class NetworkInfoDialog(QDialog):
             value = QLabel(_LOADING, self.card)
             value.setProperty("role", "value")
             value.setWordWrap(True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+            value.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
             card_layout.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
             card_layout.addWidget(value, row, 1)
             self.value_labels[key] = value

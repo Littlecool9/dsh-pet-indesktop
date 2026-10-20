@@ -6,6 +6,13 @@ PySide6>=6.5; sys_platform != "linux"
 imageio-ffmpeg>=0.6
 Pillow>=10.3
 keyring>=25
+# keyring 的 **Windows 后端**实现依赖（import 名 `win32ctypes`，PyPI 名 pywin32-ctypes）。
+# 显式声明 + 构建脚本里 `--collect-all win32ctypes` 是**打包加固**，不是"不改就必然
+# 不可用"：PyInstaller 自带的 hook 通常收得到它（实测 4.3.3 / 4.3.4 的 exe 内嵌 PYZ
+# 里 `win32ctypes.*` 都在），且 `keyring.backends.Windows` 在 ImportError 时还会回退到
+# pywin32 的 `pywintypes`/`win32cred`。加固的理由：那条收集是隐式的，与 keyring 版本
+# 失配时会静默丢，症状（凭据只活在写它的进程内存里、界面仍显示"已保存"）用户侧看不见。
+pywin32-ctypes>=0.2.0; platform_system == "Windows"
 certifi>=2024.0.0
 pycaw>=0.0.13; platform_system == "Windows"
 tzdata>=2024.1
@@ -23,7 +30,7 @@ lunar-python>=1.4.8
 # 打包版用户无法自行 pip 安装——所以在此声明为运行时依赖，并在三个构建
 # 脚本里配 --collect-all edge_tts（它用 importlib.metadata 取版本、子模块
 # 存在动态导入，PyInstaller 静态分析收不全）。
-edge-tts>=6.1.10
+edge-tts>=7.3.1,<8
 
 # —— 歌词显示（可选）——
 # 「显示歌词」功能靠 Windows 系统媒体控制（SMTC）读取当前播放的曲目。

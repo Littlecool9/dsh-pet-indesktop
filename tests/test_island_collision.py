@@ -604,3 +604,49 @@ def test_refresh_hooks_is_noop_when_stopped(tmp_path):
     finally:
         island.hide()
         island.deleteLater()
+
+
+def test_body_without_island_never_blocks_movement(tmp_path):
+    """岛没启用（``island=None``）时的墙：**绝不抛、也绝不拦移动**。
+
+    issue #311 附带的真实崩溃路径：配置里岛关着、``collision_enabled`` 仍是 true
+    时，AppShell 照样建碰撞体并给每只宠挂 ``_island_clamp_body``。``_wall_active``
+    里 ``self._island.isVisible()`` 对 ``None`` 抛 AttributeError，而异常发生在
+    ``move_window_towards`` 内部、``host.move()`` 之前——位置永不更新，表现为
+    「拖不动、也不漫游」，且窗口化冻结程序把槽内异常吞掉，日志一个字都没有。
+    """
+    _qapp()
+    body = IslandCollisionBody(None, None)
+    try:
+        body.start()
+        assert body.has_local_island is False
+        win = WallWin(1000, 1000, 200, 100)
+        body._pets_provider = lambda: [win]   # 钩子照挂（AppShell 的既有行为）
+        body.refresh_hooks()
+
+        window_placement.move_window_towards(win, 300, 420)
+
+        assert win.x() == 300 and win.y() == 420, "没有岛就不该有任何墙"
+    finally:
+        body.stop()
+
+
+def test_no_collision_body_is_built_when_the_island_is_disabled(monkeypatch):
+    """岛没启用时 AppShell 不建碰撞体：不挂钩子、也不打「碰撞体已启动」。"""
+    from pet import app as app_module
+
+    _qapp()
+    built: list = []
+
+    class _Stub:
+        island = None
+        island_collision = None
+        _overlay_shell = None
+
+        def _sync_island_collision(self, cfg):
+            return app_module.AppShell._sync_island_collision(self, cfg)
+
+    monkeypatch.setattr(app_module, "IslandCollisionBody",
+                        lambda *a, **k: built.append(a) or object(), raising=False)
+    _Stub()._sync_island_collision({"collision_enabled": True})
+    assert built == [], "没有岛就没有墙可建"

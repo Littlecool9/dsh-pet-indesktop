@@ -3323,6 +3323,9 @@ def test_crop_merge_uses_disk_latest_via_host_reload(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     cfg = Config(tmp_path)
     cfg.set("modern_chat_background", "builtin:whale")
+    # #271：空身份会话按 slot0 分流，全局键的读源是路由视图另建的主配置（初值只取盘）
+    # ——"当前背景是 whale"必须落盘，否则设置页看到的是盘上的空背景、裁切无处可落。
+    assert cfg.save() is True
     dialog = settings_mod.ModernSettingsDialog(cfg, include_ai=True)
     page = dialog.ai_page
 
@@ -3668,3 +3671,203 @@ def test_close_during_typewriter_drain_saves_reply_and_resets(tmp_path):
     assert window.status.text() == "就绪"
     window.close()
     app.processEvents()
+
+
+class _FailBackend:
+    """keyring 的"没有可用后端"占位实现（`keyring.backends.fail.Keyring` 同形）。"""
+
+    def get_password(self, service, ref):
+        raise RuntimeError("NoKeyringError")
+
+    def set_password(self, service, ref, value):
+        raise RuntimeError("NoKeyringError")
+
+
+def test_secret_store_counts_a_missing_backend_as_unavailable(caplog):
+    """`import keyring` 成功但**后端不可用**时，`available` 必须是 False。
+
+    两种占位后端的失败方式不一样：`keyring.backends.fail.Keyring` 的
+    `get_password` / `set_password` 抛 ``NoKeyringError``；`null` 那个不抛异常、
+    只是什么都不记（读回 ``None``）。两者都等于"存不了凭据"。
+    此前 `available` 只看"模块 import 成功"，于是界面说"已保存"、重启后读空。
+    """
+    import logging as _logging
+
+    from pet.chat import models as chat_models
+
+    store = chat_models.SecretStore()
+
+    class _FakeKeyring:
+        @staticmethod
+        def get_keyring():
+            return type("Keyring", (), {"__module__": "keyring.backends.fail"})()
+
+        @staticmethod
+        def set_password(*_a, **_k):
+            raise RuntimeError("NoKeyringError")
+
+    store._keyring = _FakeKeyring
+    store._usable = None
+    with caplog.at_level(_logging.WARNING):
+        assert store.available is False
+        assert store.set("k", "v") is False
+        assert store.get("k") == ""
+    assert any("凭据存储不可用" in r.getMessage() for r in caplog.records), (
+        "不可用要留一条日志（静默降级就是这个 bug 的成因）")
+
+
+def test_secret_store_reports_a_working_backend_as_available():
+    from pet.chat import models as chat_models
+
+    store = chat_models.SecretStore()
+    written = {}
+
+    class _FakeKeyring:
+        @staticmethod
+        def get_keyring():
+            return type("Keyring", (), {"__module__": "keyring.backends.Windows"})()
+
+        @staticmethod
+        def set_password(service, ref, value):
+            written[ref] = value
+
+        @staticmethod
+        def get_password(service, ref):
+            return written.get(ref, "")
+
+    store._keyring = _FakeKeyring
+    store._usable = None
+    assert store.available is True
+    assert store.set("k", "v") is True
+    assert store.get("k") == "v"
+
+
+def test_secret_store_keeps_a_third_party_backend_whose_name_mentions_fail():
+    """类名里带 `fail` 的**合法第三方后端**不许被判成"没有钥匙串"（astra 第 13 轮）。
+
+    旧判据扫名字子串（`"fail" not in low and "null" not in low`），于是一个叫
+    `company.failover.Keyring` 的**可写**后端会被判成不可用——能存凭据的环境被
+    判死，API Key 从此每次重启都要重填。判据只该认 keyring 自己的两个占位类。
+    """
+    from pet.chat import models as chat_models
+
+    store = chat_models.SecretStore()
+    written = {}
+
+    class _ThirdPartyKeyring:
+        @staticmethod
+        def get_keyring():
+            return type("Keyring", (), {"__module__": "company.failover"})()
+
+        @staticmethod
+        def set_password(service, ref, value):
+            written[ref] = value
+
+        @staticmethod
+        def get_password(service, ref):
+            return written.get(ref, "")
+
+    store._keyring = _ThirdPartyKeyring
+    store._usable = None
+    assert store.available is True
+    assert store.set("k", "v") is True
+    assert store.get("k") == "v"
+
+
+def test_secret_store_rejects_the_null_backend():
+    """`keyring.backends.null.Keyring` 写进去不记任何东西，必须判不可用。
+
+    它不抛异常、也不叫 `fail`——只按"能不能存"来判断会漏掉这一档。
+    """
+    from pet.chat import models as chat_models
+
+    store = chat_models.SecretStore()
+
+    class _NullKeyring:
+        @staticmethod
+        def get_keyring():
+            return type("Keyring", (), {"__module__": "keyring.backends.null"})()
+
+    store._keyring = _NullKeyring
+    store._usable = None
+    assert store.available is False
+
+
+@pytest.mark.parametrize("module,name", [
+    ("keyring.backends.Windows", "WinVaultKeyring"),
+    ("keyring.backends.macOS", "Keyring"),
+    ("keyring.backends.SecretService", "Keyring"),
+    ("keyring.backends.kwallet", "DBusKeyring"),
+    ("keyring.backends.libsecret", "Keyring"),
+])
+def test_secret_store_accepts_every_real_platform_backend(module, name):
+    """三平台常见后端都必须是"可用"（别把判据收紧成只认 Windows）。
+
+    注意这只证明**名称判据**不误杀，不证明各平台钥匙串实际可用——那要真机真后端。
+    """
+    from pet.chat import models as chat_models
+
+    store = chat_models.SecretStore()
+
+    class _PlatformKeyring:
+        @staticmethod
+        def get_keyring():
+            return type(name, (), {"__module__": module})()
+
+    store._keyring = _PlatformKeyring
+    store._usable = None
+    assert store.available is True
+
+
+def test_secret_store_rejects_a_subclass_of_the_fail_backend():
+    """`fail.Keyring` 的**子类**也要判不可用（类身份分支，不是全名分支）。
+
+    keyring 的占位后端可能被继承/重导出到别的模块路径：全名匹配只看
+    `keyring.backends.fail.Keyring`，换成 `myplugin.backends.FallbackKeyring` 就漏了。
+    这一条走的是 `isinstance` 那条判据。
+    """
+    from keyring.backends import fail as fail_backend
+
+    from pet.chat import models as chat_models
+
+    subclass = type("FallbackKeyring", (fail_backend.Keyring,), {"__module__": "myplugin.backends"})
+    store = chat_models.SecretStore()
+
+    class _SubclassKeyring:
+        @staticmethod
+        def get_keyring():
+            return subclass()
+
+    store._keyring = _SubclassKeyring
+    store._usable = None
+    assert store.available is False
+
+
+def test_secret_store_keeps_working_when_placeholder_modules_cannot_be_imported(monkeypatch):
+    """用于比对的 keyring 占位模块导入不了时，不许顺手把合法后端判死。
+
+    `_is_placeholder_backend` 在 import 失败时 `continue`，随后返回 False（非占位）——
+    这条分支要钉住：反过来写成 "import 失败就当占位"，等于让所有环境都存不了凭据。
+    """
+    import importlib
+
+    from pet.chat import models as chat_models
+
+    real_import = importlib.import_module
+
+    def _broken(name, *a, **kw):
+        if name.startswith("keyring.backends."):
+            raise ImportError("simulated missing placeholder module")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(chat_models.importlib, "import_module", _broken)
+    store = chat_models.SecretStore()
+
+    class _ThirdParty:
+        @staticmethod
+        def get_keyring():
+            return type("Keyring", (), {"__module__": "acme.keyring"})()
+
+    store._keyring = _ThirdParty
+    store._usable = None
+    assert store.available is True

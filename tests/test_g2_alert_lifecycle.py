@@ -32,6 +32,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
+from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import pet.window as window_mod  # noqa: E402
@@ -52,7 +53,13 @@ QUEUE_LIMIT_BASELINE = 64
 # ---------------------------------------------------------------- 脚手架
 @pytest.fixture
 def probes(monkeypatch):
-    """记录全部 ``show_text``（含时长）与全部音效播放。"""
+    """记录全部 ``show_text``（含时长）与全部音效播放。
+
+    音效统计**只算本用例自己提交的**：``SpriteSoundPlayer`` 把播放推迟到下一轮
+    事件循环（``QTimer.singleShot(0)``，见 ``_submit``），而音效池是进程级的，
+    上一条用例撞出来的那一声会落在本用例的事件循环里。先冲一次事件循环再清表，
+    "迁移不得出声"这条断言测的才是本用例的动作。
+    """
     shown: list[dict] = []
     sounds: list[object] = []
     original = PetSpeechBubble.show_text
@@ -65,6 +72,8 @@ def probes(monkeypatch):
     monkeypatch.setattr(PetSpeechBubble, "show_text", recording_show_text)
     monkeypatch.setattr(click_sound.ClickSoundPool, "play_sound",
                         lambda self, path, volume=1.0: sounds.append(path) or True)
+    app.processEvents()          # 冲掉上一条用例延后提交的播放
+    sounds.clear()
     return shown, sounds
 
 
@@ -444,8 +453,8 @@ def test_full_queue_preemption_stays_bounded_and_keeps_screen_busy(tmp_path, pro
         _cleanup(shell)
 
 
-def test_screen_migration_rehangs_alert_and_resolve_by_id_works(tmp_path, probes):
-    """屏迁移（跟随器重建）后提醒重挂，且按 ID 能分别收 current 与排队条目。"""
+def test_screen_migration_keeps_alert_and_resolve_by_id_works(tmp_path, probes):
+    """换家后提醒仍挂在承载宠那道气泡上，且按 ID 能分别收 current 与排队条目。"""
     shown, _sounds = probes
     shell, _cfg = _make_slot_shell(tmp_path)
     try:
@@ -463,12 +472,11 @@ def test_screen_migration_rehangs_alert_and_resolve_by_id_works(tmp_path, probes
         assert _copies(shell, ALERT_TEXT) == [_bubble_of(shell, child)]
         assert [item["id"] for item in shell._alert_queue] == ["q1"]
 
-        shell._migrate_to_screen(app.primaryScreen())
+        shell._migrate_to_screen(QGuiApplication.primaryScreen())
         app.processEvents()
 
-        assert shell._bubble_followers.get(child) is not follower_before, \
-            "只有子宠（slot0 已关闭）时迁移也必须重建气泡跟随器：否则子宠气泡留在" \
-            "已关闭的旧 overlay 上（不再跟随、提醒副本停在旧位置）"
+        assert shell._bubble_followers.get(child) is follower_before, \
+            "单窗：换家不重建跟随器（它记的窗口对象还是同一个）"
         assert _copies(shell, ALERT_TEXT) == [_bubble_of(shell, child)], \
             "屏迁移后提醒副本必须重挂到承载宠的新气泡上"
         assert shell._alert_current["id"] == "c1"
@@ -481,7 +489,8 @@ def test_screen_migration_rehangs_alert_and_resolve_by_id_works(tmp_path, probes
         assert not shell._alert_queue
         assert len(_copies(shell, QUEUED_TEXT)) == 1
 
-        assert _shown_count(shown, ALERT_TEXT) >= 2, "前提：迁移确实重挂过一次"
+        assert _shown_count(shown, ALERT_TEXT) == 1, (
+            "单窗换家不重挂提醒：同一条只显示一次（不会出现第二份副本）")
         shell.resolve_alert("q1")
         app.processEvents()
         assert shell._alert_current is None
@@ -538,7 +547,7 @@ def test_carrier_bubble_hidden_wired_once_across_rebinds(tmp_path, probes):
         app.processEvents()
         assert shell._alert_current["id"] == "n1"
 
-        shell._migrate_to_screen(app.primaryScreen())
+        shell._migrate_to_screen(QGuiApplication.primaryScreen())
         app.processEvents()
         assert shell._alert_current["id"] == "n1"
         assert _copies(shell, QUEUED_TEXT) == [_bubble_of(shell, child)]

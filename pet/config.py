@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import catalog, island_segments
+from . import catalog, island_segments, music_players
 from .focus_mode import normalize_focus_config
 
 
@@ -576,14 +576,16 @@ def _bool_or_default(value, default):
 def _clean_music_player_paths(value) -> dict:
     """手动指定的播放器可执行文件路径 {播放器键: 路径}。
 
-    键只认 music_players.PLAYERS 里的两个播放器（其余键丢弃，避免手改配置塞进
-    任何多余东西）；值必须是字符串路径，空串/非字符串一律丢弃。限长与其它路径键
-    同规（500 字符），只做配置面清洗，不碰文件系统——路径是否存在由消费方判定。
+    键只认 music_players 的注册表 ``PLAYERS``（网易云/QQ音乐/酷狗/汽水；其余键
+    丢弃，避免手改配置塞进任何多余东西），键集与右键菜单、设置页同源——新增播放器
+    只改注册表一处，这里不再抄一份固定键表。值必须是字符串路径，空串/非字符串一律
+    丢弃。限长与其它路径键同规（500 字符），只做配置面清洗，不碰文件系统——路径
+    是否存在由消费方判定。
     """
     if not isinstance(value, dict):
         return {}
     cleaned = {}
-    for key in ("netease", "qqmusic"):
+    for key in music_players.PLAYERS:
         raw = value.get(key)
         if not isinstance(raw, str):
             continue
@@ -1135,6 +1137,10 @@ class Config:
             "anim_menu_stay_open": False,
             "quick_launch_apps": [dict(item) for item in DEFAULT_QUICK_LAUNCH_APPS],
             "auto_hide_fullscreen": True,  # 全屏应用自动隐藏（Windows）
+            # 允许桌宠跨屏（全局键、重启级）：开启后每块有桌宠的屏各一张合成窗，
+            # 拖动可以跨显示器；关闭时全部桌宠只留在启动时那块屏。默认关 =
+            # 单显示器用户与旧行为逐位相同（见 overlay_shell._cross_screen_allowed）。
+            "allow_cross_screen": False,
             # 免打扰（issue #208）：右键菜单四档时长的默认档 + 全屏应用时自动等效
             # 免打扰。二者只描述**偏好**，当前是否在免打扰是运行态、不落盘。
             "quiet_minutes_default": DEFAULT_QUIET_MINUTES,
@@ -1173,7 +1179,7 @@ class Config:
             # 空 = 自动：不猜歌名/歌手顺序（见 pet/music_title.py）。出厂默认值随
             # 版本与主题变化，没有稳定契约，所以做成可配置而不是硬编码一份。
             "foobar_title_format": "",
-            # 手动指定播放器路径 {netease|qqmusic: exe 路径}：自动搜索找不到时的
+            # 手动指定播放器路径 {播放器键（网易云/QQ音乐/酷狗/汽水）: exe 路径}：自动搜索找不到时的
             # 逃生口，也能在「设置 → 桌宠 → 播放器路径（高级）」里改（
             # settings_music.build_music_player_rows），空 = 走自动搜索。
             "music_player_paths": {},
@@ -1252,6 +1258,9 @@ class Config:
             "system_notifications_enabled": True,  # 对话完成/失败/需要授权时弹桌面系统通知
             "todo_reminder_enabled": True,  # 待办提醒总开关
             "todo_reminder_lead_minutes": 5,  # 待办提前提醒分钟数（0~60，0=不提前）
+            # 待办语音播报：复用语音报时服务的音频通道（音色/语速/音调/音量同报时），
+            # 故不新增独立的语音参数键。默认关闭（主动打扰型能力）。
+            "todo_reminder_speak": False,  # 待办提醒是否语音播报
             # 语音报时（edge-tts 在线 TTS + 台词/歌词每天整套换新、日内顺序轮换）
             "voice_chime_enabled": False,  # 语音报时总开关（默认关闭：主动打扰型功能，用户显式开启）
             "voice_chime_schedule": "hourly",  # hourly / every_30 / every_15 / every_5 / every_minute / custom
@@ -1264,6 +1273,22 @@ class Config:
             "voice_chime_show_quote": True,  # 台词/歌词开关
             "voice_chime_custom_quotes_zh": "",  # 自定义中文台词/歌词（一行一条，留空回退内置库）
             "voice_chime_custom_quotes_en": "",  # 自定义英文台词/歌词（一行一条，留空回退内置库）
+            # 合成后端：edge（edge-tts，免 Key）/ mimo（小米 MiMo TTS，OpenAI 兼容接口，
+            # API Key 存系统钥匙串）/ sapi（Windows 本地语音）/ doubao（豆包 2.0）；
+            # 主后端失败时按 fallback 自动回退另一个。
+            # 默认 edge（2026-10-13 改，原为 mimo）：面向公众发包时，陌生人装上就要能听见
+            # 声音——mimo / doubao 都要用户自备 API Key，拿它们当默认等于新装即静音；
+            # edge 不需要任何凭据，且失败照走既有自动回退。只改仓库默认值，不动任何人
+            # 本机 config.json 里的显式取值。
+            "voice_chime_tts_backend": "edge",  # edge / mimo / sapi / doubao
+            "voice_chime_tts_fallback": True,  # 主后端失败自动回退 edge
+            "voice_chime_mimo_model": "mimo-v2.5-tts",  # 或 mimo-v2.5-tts-voicedesign
+            "voice_chime_mimo_voice": "冰糖",  # 内置音色 id（中文名即 id）
+            "voice_chime_mimo_style": "",  # 风格指令（自然语言，留空用模型默认）
+            "voice_chime_sapi_voice": "",  # SAPI5 本地音色（留空＝自动挑中文音色）
+            "voice_chime_sapi_rate": 0,  # SAPI5 语速 −10..10（0 为系统默认）
+            "voice_chime_doubao_speaker": "zh_female_peiqi_uranus_bigtts",  # 豆包 2.0 音色
+            "voice_chime_doubao_pitch": 15,  # 豆包本地变调百分比（0–30）
             # 节日提醒（农历/24 节气/西方节日；命中当日用气泡告知并附氛围匹配文案）。
             # 总开关默认关闭：属"主动打扰"型功能，升级后不应突然冒出来，由用户显式开启。
             "festival_reminder_enabled": False,  # 节日提醒总开关
@@ -1277,13 +1302,33 @@ class Config:
             # 节日语音播报：复用语音报时服务的音频通道（音色/语速/音调/音量同报时），
             # 故不新增独立的语音参数键。默认关闭。开启后同一分钟由节日让报时让位。
             "festival_reminder_speak": False,  # 节日提醒是否语音播报
+            "festival_reminder_animation": True,  # 节日提醒是否播匹配动画
+            # 生日进「动态节日」：命中当天排最前，不进 FESTIVALS 静态表（见 festival_animations）。
+            # 默认空串＝没填，非法/不存在的日期静默落空（clean_birthday 整串 fullmatch 校验）。
+            "festival_birthday": "",
             "festival_custom_quotes_cn": "",  # 自定义中文文案（一行一条，追加到内置库）
             "festival_custom_quotes_west": "",  # 自定义西文文案（一行一条，追加到内置库）
+            # 每日一签（设置页在「互动 · 趣味」标签）。**纯日期驱动、零个人信息**：签只跟
+            # 日期有关，不碰生日/坐标这类字段，因此不需要隐私守卫（见 DEV-HANDOVER 的隐私铁律）。
+            # 总开关**默认开**：与报时/节日不同，它是用户主动拉取的（不点不出声、
+            # 不主动冒泡），默认关只会让第一次点击撞上一句"功能已关闭"（天气同口径）。
+            "divination_enabled": True,
+            "divination_speak": False,  # 抽签时念解曰（复用报时服务的音频通道）
+            "divination_hint": True,  # 当天没看时，第一次点桌宠冒一行提示
+            # 运行时状态：今天抽到几号 / 本轮抽过哪些 / 签册。放一个键里，
+            # 免得为"今天抽了什么"新增四个顶层键。
+            "divination_state": {},
             # 天气（右键菜单「查看天气」/「天气城市」，issue #209）。**默认开**：
             # 与报时/节日不同，它是纯拉取型——不点不发请求、不主动冒泡，默认关掉
             # 只会让第一次点击撞上一句"功能已关闭"。默认**不猜城市**：气泡永远会
             # 把城市名报出来，与其猜一个大概率不对的城市，不如给一句可执行的引导
             # （"还没选天气城市：右键菜单 → 天气城市 → 添加城市…"）。
+            # 全局快捷键（进程级，不随每宠不同）：空串 = 未绑定。
+            # 三个动作见 pet/hotkeys.py 的 ACTIONS；写进来时按 hotkey_spec 收成
+            # 规范形式，不认识的一律清空（配置里不存脏值）。
+            "hotkey_open_chat": "",
+            "hotkey_look_screen": "",
+            "hotkey_screen_capture": "",
             "weather_enabled": True,  # 天气功能总开关
             "weather_city": "",  # 当前城市（空 = 还没选，菜单会引导去添加）
             "weather_city_list": [],  # 城市清单（全局，上限 12，见 weather.MAX_CITIES）
@@ -1476,6 +1521,7 @@ class Config:
             "harness_autostart",
             "harness_launch_target",
             "stream_capture_mode",
+            "allow_cross_screen",
             "pnpm_bin",
             "music_sing_enabled",
             "music_sing_grace_seconds",
@@ -1509,6 +1555,7 @@ class Config:
             "system_notifications_enabled",
             "todo_reminder_enabled",
             "todo_reminder_lead_minutes",
+            "todo_reminder_speak",
             "voice_chime_enabled",
             "voice_chime_schedule",
             "voice_chime_custom_times",
@@ -1520,6 +1567,15 @@ class Config:
             "voice_chime_show_quote",
             "voice_chime_custom_quotes_zh",
             "voice_chime_custom_quotes_en",
+            "voice_chime_tts_backend",
+            "voice_chime_tts_fallback",
+            "voice_chime_mimo_model",
+            "voice_chime_mimo_voice",
+            "voice_chime_mimo_style",
+            "voice_chime_sapi_voice",
+            "voice_chime_sapi_rate",
+            "voice_chime_doubao_speaker",
+            "voice_chime_doubao_pitch",
             "festival_reminder_enabled",
             "festival_reminder_cn",
             "festival_reminder_solar_terms",
@@ -1529,8 +1585,14 @@ class Config:
             "festival_reminder_times",
             "festival_reminder_show_quote",
             "festival_reminder_speak",
+            "festival_reminder_animation",
+            "festival_birthday",
             "festival_custom_quotes_cn",
             "festival_custom_quotes_west",
+            "divination_enabled",
+            "divination_speak",
+            "divination_hint",
+            "divination_state",
             "weather_enabled",
             "weather_city",
             "weather_city_list",
@@ -1558,6 +1620,9 @@ class Config:
             "ffmpeg_recycle_minutes",
             "experimental_shared_decode",
             "settings_process_isolation",
+            "hotkey_open_chat",
+            "hotkey_look_screen",
+            "hotkey_screen_capture",
         ):
             if key not in raw:
                 continue
@@ -1865,6 +1930,7 @@ class Config:
         self.data["animation_gap_seconds"] = _float_or_default(self.data.get("animation_gap_seconds"), DEFAULT_ANIMATION_GAP_SECONDS, 0.0, 3600.0)
         self.data["self_talk_voice_precache_enabled"] = _bool_or_default(self.data.get("self_talk_voice_precache_enabled"), False)
         self.data["cursor_hidden_passthrough"] = _bool_or_default(self.data.get("cursor_hidden_passthrough"), True)
+        self.data["allow_cross_screen"] = _bool_or_default(self.data.get("allow_cross_screen"), False)
         self.data["spawn_inherit_size"] = _bool_or_default(self.data.get("spawn_inherit_size"), True)
         self.data["spawn_scale"] = _float_or_default(self.data.get("spawn_scale"), catalog.DEFAULT_SCALE, 0.1, 4.0)
         self.data["spawn_inherit_dynamic_island"] = _bool_or_default(self.data.get("spawn_inherit_dynamic_island"), False)
@@ -1876,6 +1942,12 @@ class Config:
         self.data["anim_menu_stay_open"] = _bool_or_default(
             self.data.get("anim_menu_stay_open"), False)
         self.data["quick_launch_apps"] = _clean_quick_launch_apps(self.data.get("quick_launch_apps"))
+        # 全局快捷键：收成规范形式（顺序/大小写统一），不认识/残缺 → 空串。
+        # 归一化放在这里而不是只靠设置页，是因为配置文件可能被手改。
+        from . import hotkey_spec as _hotkey_spec
+        for _hotkey_key in ("hotkey_open_chat", "hotkey_look_screen",
+                            "hotkey_screen_capture"):
+            self.data[_hotkey_key] = _hotkey_spec.normalize(self.data.get(_hotkey_key))
         # 枚举键必须先 str() 再判成员：直接 `x not in {...}` 遇到 list/dict 抛
         # TypeError: unhashable type（json 合法脏值），Config() 构造失败 → 启动崩、
         # 连独立设置页都进不去。同族写法一律抄这一行。
@@ -1935,6 +2007,7 @@ class Config:
         # 待办提醒：开关同规防字符串布尔误开；提前量钳到 [0, 60] 分钟（0=不提前）。
         self.data["todo_reminder_enabled"] = _bool_or_default(self.data.get("todo_reminder_enabled"), True)
         self.data["todo_reminder_lead_minutes"] = int(_float_or_default(self.data.get("todo_reminder_lead_minutes"), 5.0, 0.0, 60.0))
+        self.data["todo_reminder_speak"] = _bool_or_default(self.data.get("todo_reminder_speak"), False)
         # 免打扰（issue #208）：默认时长归一到一个合法档位（手改成 7 分钟不该让
         # 菜单里一个勾选项都对不上）；布尔键同族同规，防手改字符串布尔误开。
         self.data["quiet_minutes_default"] = normalize_quiet_minutes(
@@ -2023,7 +2096,7 @@ class Config:
             _float_or_default(self.data.get("music_lyric_cache_limit"), 2000.0, 1.0, 100000.0)
         )
         # 手动播放器路径：此前只有消费方读、没有 schema 登记，手改 config.json 会
-        # 被 reload() 静默丢弃（交付前审查 P1-3）。清洗成 {netease|qqmusic: 路径}。
+        # 被 reload() 静默丢弃（交付前审查 P1-3）。清洗成 {注册表里的播放器键: 路径}。
         self.data["music_player_paths"] = _clean_music_player_paths(self.data.get("music_player_paths"))
         prewarm = str(self.data.get("media_prewarm", "balanced") or "balanced").strip().lower()
         self.data["media_prewarm"] = prewarm if prewarm in {"full", "balanced", "minimal"} else "balanced"
@@ -2157,6 +2230,7 @@ class Config:
             "todo_reminder_enabled",
             "todo_reminder_lead_minutes",
             "focus_mode",
+            "todo_reminder_speak",
             "quiet_minutes_default",
             "quiet_also_on_fullscreen",
             "music_sing_enabled",

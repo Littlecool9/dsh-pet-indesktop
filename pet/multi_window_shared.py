@@ -397,8 +397,8 @@ class SharedProactiveWatcher(ProactiveScreenWatcher):
     全局语义」一致。
     """
 
-    def __init__(self, proxy: MultiWindowProxy, config) -> None:
-        super().__init__(proxy, config)
+    def __init__(self, proxy: MultiWindowProxy, config, identity_provider=None) -> None:
+        super().__init__(proxy, config, identity_provider=identity_provider)
 
     def pause(self) -> None:
         pass
@@ -535,7 +535,10 @@ class SharedSubsystems:
                                      if hasattr(shell, "_chat_identity_config") else shell.config,
                                      parent=QCoreApplication.instance())
         self.agent_link = SharedAgentLinkManager(self.proxy, shell.config)
-        self.proactive = SharedProactiveWatcher(self.proxy, shell.config)
+        # 共享 watcher 的 cfg 是**进程级**配置（开关/白名单/额度/密钥都是全局面），
+        # 只有宠物名要跟随当前身份：角色身份由壳的每宠视图给（见 pet_name）。
+        self.proactive = SharedProactiveWatcher(
+            self.proxy, shell.config, identity_provider=shell._identity_config)
         self.fs = SharedFullscreenWatcher(shell)
         self.fs.fullscreen_changed.connect(shell._on_shared_fullscreen)
         self.fs.cursor_visibility_changed.connect(shell._on_shared_cursor)

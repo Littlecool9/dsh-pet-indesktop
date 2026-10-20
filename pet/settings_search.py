@@ -112,6 +112,38 @@ ROW_ALIASES: dict[str, tuple[str, ...]] = {
     # 同一取舍：行文案里确实含着这个词（关键词本来就命中），但它指向哪一行是**语义**
     # 决定的——文案改写一次关键词路径就可能断，别名把"用户指的就是这一行"钉下来。
     "帧数": ("island_fps",),
+    # 2026-10-18 用户视角实测的 0 命中词。分三类：
+    # ① 新功能的叫法：行标题只写「AI 对话 / 看看屏幕 / 截图提问」，说明里写「组合键」，
+    #    用户张口就是「快捷键」「热键」——整个设置页文本里没有这两个词。三个动作是三
+    #    行，别名必须**全指**：只指一行等于替用户挑了一个动作。
+    "快捷键": ("hotkey_open_chat", "hotkey_look_screen", "hotkey_screen_capture"),
+    "热键": ("hotkey_open_chat", "hotkey_look_screen", "hotkey_screen_capture"),
+    # ② 「跨屏」说明里的词是「显示器 / 那块屏」，用户说的是「副屏」「多屏」——单字
+    #    「屏」在不收之列（会把「屏幕」类行全灌进来），两个词都指向唯一那张跨屏开关。
+    "副屏": ("cross_screen",),
+    "多屏": ("cross_screen",),
+    # ③ **域名的搜索**：侧栏 10 个域的名字不进索引（`SETTINGS_DOMAIN_NAV` 是导航标签，
+    #    不是行文案），于是照着侧栏念域名的人 0 命中。每个域名指到该域里最有代表性的
+    #    那一行，理由逐条写：
+    #    桌面组件 = 灵动岛主开关（该域 25 行里 21 行是岛的外观与指标、3 行游戏帧率采集、
+    #    1 行延迟探测，主开关是唯一能当入口的那一行）；
+    "桌面组件": ("dynamic_island_enabled",),
+    #    AI 与对话 = 「API 列表」（该域首行，也是「模型与连接」组的抬头，落在域的最上方，
+    #    同时避开已由「密钥」占着的 `api_key`）；域名里的「对话」半边由「对话窗口」行兜住。
+    #    键写小写：查询在 ``find_matches`` 里已 lowered，别名表按小写比对（同 ``dry-run``）。
+    "ai 与对话": ("provider_list", "chat_ui_style"),
+    #    自动化与联动 = 「开启主动识屏」（该域里最大的一块自动化，也是它的主开关；
+    #    待办提醒、免打扰、编程助手提示音都是并列的配角，选谁当落点都不如它代表"自动"）。
+    #    **但「主动识屏」页只在 Windows 建**（`modern_settings_dialog.py` 的
+    #    `sys.platform == "win32" and include_ai` 闸门），macOS/Linux 上那一行根本不存在、
+    #    查询会 0 命中。所以并列补上该域第一组「待办提醒」作跨平台落点。
+    "自动化与联动": ("proactive_enabled", "todo_reminder_enabled"),
+    #    文件识别 = 「拖文件后询问解读」（该域只有 2 行，它就是整个域的功能本体，
+    #    「进度汇报间隔」是它的从属参数）。
+    "文件识别": ("file_interpret_enabled",),
+    # 「检查更新」**有意不收**：它是「更新」页上的按钮（`pet/update_settings.py` 的
+    # `check_button`），不是 `SettingRow`——命令类控件不进搜索候选集（与侧栏的
+    # 「恢复默认设置 / 保存并退出」同一口径）。要让它可搜得先给按钮建落点，另一件事。
 }
 
 _ROW_PREFIX = "settingRow_"
@@ -156,8 +188,15 @@ def _own_fold_title(widget) -> str:
 
 
 def _row_text(row: SettingRow) -> str:
-    """既有索引口径：行 label + hint + objectName（小写，供子串匹配）。"""
-    return f"{row.label.text()} {row.hint_label.text()} {row.objectName()}".lower()
+    """既有索引口径：行 label + hint + objectName（小写，供子串匹配）。
+
+    **作用域标注也算进来**（``scope_note``，「影响所有桌宠」这类）：它原本拼在 hint
+    末尾、因此本来就在索引里（搜「所有桌宠」能命中那几行），拆成独立标注只是换了呈现
+    位置，不该从搜索里掉出去。标注不存在时是空串，索引口径逐字不变。
+    """
+    note = getattr(row, "scope_note", None)
+    note_text = note.text() if note is not None else ""
+    return f"{row.label.text()} {row.hint_label.text()} {note_text} {row.objectName()}".lower()
 
 
 def _alias_targets(query: str) -> set[str]:

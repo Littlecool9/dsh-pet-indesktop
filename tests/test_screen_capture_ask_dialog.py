@@ -28,7 +28,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QEvent, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QKeyEvent, QPainter  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from pet.chat.models import ProviderConfig  # noqa: E402
 from pet.screen_capture.ask_dialog import ScreenAskDialog, _Bubble  # noqa: E402
@@ -683,4 +683,120 @@ def test_a_stale_failure_does_not_unlock_the_new_sessions_send(qapp):
     dialog._sending = True                # 新会话的发送进行中
     dialog._on_error(first_gen, "旧会话的网络超时")   # 旧代号 → 不动发送锁
     assert dialog._sending is True, "旧回执解开了新会话的发送锁"
+    dialog.close()
+
+
+# ------------------------------------------------------- 标题栏品牌标识（DS logo）
+
+
+def _pin_whale(monkeypatch, *, missing: bool = False):
+    """把标题栏 logo 的来源钉成 DS logo（``missing=True`` 钉成素材缺席，验回退）。"""
+    import pet.screen_capture.ask_dialog as ask_mod
+    from pet.screen_capture import brand_icons
+    from PySide6.QtGui import QPixmap
+
+    src = (lambda: QPixmap()) if missing else brand_icons.load_ds_whale
+    monkeypatch.setattr(ask_mod, "load_ds_whale", lambda: src())
+    return src()
+
+
+def test_the_title_bar_shows_the_ds_logo_instead_of_the_words(qapp, monkeypatch):
+    """标题栏就是品牌标识本身：原来的「截图问答」四字被固定 DS logo 直接顶掉。
+
+    文字旁边**不许**再挂一个图标——那是两件东西各说各话。
+    """
+    whale = _pin_whale(monkeypatch)
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+
+    assert dialog._title.text() == "", "logo 没有顶掉标题文字"
+    assert dialog._title_src is whale, "标题栏挂的必须是 DS logo"
+    assert dialog._title_scaled is not None and dialog._title_scaled.isNull() is False
+    assert dialog._title.pixmap().isNull() is False, "标题栏没有把 logo 画出来"
+    assert dialog.findChildren(QLabel, "screen-ask-egg") == [], "文字旁又冒出一个图标位"
+    dialog.close()
+
+
+def test_the_title_bar_keeps_the_window_title_and_accessible_name(qapp, monkeypatch):
+    """logo 顶掉的是画面，不是身份：窗口标题与无障碍名照旧可识别。"""
+    _pin_whale(monkeypatch)
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+
+    assert dialog.windowTitle() == "截图问答"
+    assert dialog._title.accessibleName() == "截图问答"
+    dialog.close()
+
+
+def test_opening_the_dialog_never_rolls_the_title(qapp, monkeypatch):
+    """不随机标题：开一次问答窗一次骰子都不掷（鲸蛙只在加载动画里出场）。"""
+    import random
+
+    _pin_whale(monkeypatch)
+    rolls: list[float] = []
+    monkeypatch.setattr(random, "random", lambda: rolls.append(1.0) or 0.5)
+
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+    dialog.close()
+    dialog.start_with_image(_image())
+
+    assert rolls == [], "开窗时掷了骰子——标题会被随机换掉"
+    dialog.close()
+
+
+def test_the_title_logo_stays_the_same_across_opens(qapp, monkeypatch):
+    """固定 logo：换图开新会话（窗口复用）也不换标识。"""
+    _pin_whale(monkeypatch)
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+    first = dialog._title_src
+
+    dialog.close()
+    dialog.start_with_image(_image())
+
+    assert dialog._title_src is first
+    assert dialog._title.text() == ""
+    dialog.close()
+
+
+def test_the_title_bar_falls_back_to_the_words_when_the_asset_is_missing(qapp, monkeypatch):
+    """素材缺席：退回那四个字（窗口照常开，标识不许变成空白洞）。"""
+    _pin_whale(monkeypatch, missing=True)
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+
+    assert dialog._title.text() == "截图问答"
+    assert dialog._title_src.isNull() is True
+    assert dialog._title_scaled is None
+    assert dialog.isVisible() is True
+    assert dialog.windowTitle() == "截图问答"
+    dialog.close()
+
+
+def test_the_title_logo_follows_device_pixel_ratio(qapp, monkeypatch):
+    """logo 按 DPR 出物理像素（offscreen 恒 1.0，走注入缝验证）。"""
+    _pin_whale(monkeypatch)
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+    dialog._refresh_title_icon(dpr=2.0)
+    pix = dialog._title_scaled
+    assert pix.devicePixelRatio() == 2.0
+    assert pix.width() == 48
+    dialog.close()
+
+
+def test_the_title_logo_is_rescaled_on_screen_change_without_changing_material(qapp, monkeypatch):
+    """换屏只按新 DPR 重出同一张 logo，不换素材。"""
+    _pin_whale(monkeypatch)
+    dialog = _dialog()
+    dialog.start_with_image(_image())
+    first_src, first_scaled = dialog._title_src, dialog._title_scaled
+
+    handle = dialog.windowHandle()
+    assert handle is not None
+    handle.screenChanged.emit(dialog.screen())
+
+    assert dialog._title_scaled is not first_scaled, "换屏要按新 DPR 重出"
+    assert dialog._title_src is first_src, "换屏换了素材"
     dialog.close()

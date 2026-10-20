@@ -16,7 +16,7 @@
 宿主面（``cfg`` / ``show_bubble`` / ``proactive_watcher`` / ``screen_capture_island``），
 两条宿主各自只挂一个零参回调。整个文件不 import 任何窗口模块。
 
-五条纪律（每条都有对应用例）：
+六条纪律（每条都有对应用例）：
 
 1. **隐私红线**：提取文字/复制图像纯本地（不联网）；问答的像素只在用户在问答浮窗里
    亲手点「发送」时才离开本机——浮窗本身即确认面（发送与否、发送什么内容都由用户
@@ -34,6 +34,13 @@
    ``.scratch/screen-capture/probe_ocr_subprocess.txt``）；收口处这一次调用因此
    是一道**兜底清扫**：真取消/失败时把还在跑的识别子进程杀掉，不留孤儿。所有出口
    都汇到 ``_finish()``，清扫只挂在那里一处。
+6. **上下文随操作走 + 展示归属只有一处**：一次操作的**图 / 选区 / 轮次身份**在**发起
+   那一刻**捕获（:class:`_OpContext`），此后收口只读这份快照，绝不回头读"最近一次"的
+   状态——用户在等待期间又截一张图，不会把新那张的图配到旧那张的原文上（跨截图串用，
+   见 ``_retranslate`` 与 ``_on_translate_done``）。四条链路共用的展示面（岛 / 气泡 /
+   结果面板）由**落点**一处判归属，且判在通知与面板**之前**：被顶下去的旧卡片整张跳过
+   ——不发通知、不覆写正文、不碰新一轮还在跑的加载动画（见
+   :meth:`ScreenCapturePresenter._claims_display`）。
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ from __future__ import annotations
 import functools
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Signal
@@ -81,6 +89,24 @@ ACTIONS = (ACTION_OCR, ACTION_TRANSLATE, ACTION_ASK, ACTION_COPY)
 TITLE_OCR = "截图提取文字"
 TITLE_TRANSLATE = "截图翻译"
 TITLE_ASK = "截图问答"
+
+
+@dataclass(frozen=True)
+class _OpContext:
+    """一次用户操作的上下文快照：**发起时**捕获，此后收口只读它。
+
+    跨截图串用（返修 P1）的根因就是"收口时回头读最近一次状态"：A 的翻译结果摆着 →
+    用户切语言触发重翻 → 重翻还在路上，用户又截了第二张图。``_last_image`` /
+    ``_last_selection`` 在第二次采集落地那一刻就换成第二张的了，而旧回调是在**收口
+    那一刻**现读它们——于是 A 的原文配上了 B 的图，「继续提问」把 A 的文字交给 B 的图。
+
+    归属（``round_key``，同时也是展示归属判据 `Presenter._claims_display` 认的那份身份）、
+    图（``image``）、选区（``selection``）三件上下文在这里定下来，随回调闭包走完全程。
+    """
+
+    round_key: object
+    image: object = None
+    selection: object = None
 
 #: 引擎缺席时的如实说明（不是"暂时没有数据"，也不摆假结果）。文案的真值在
 #: ``pet/screen_capture/reasons.py``——菜单里那两条置灰 tooltip 用的是同一份
@@ -316,6 +342,18 @@ class ScreenCapturePresenter:
     ``style`` 是结果浮层的主题（``None`` = 跟着宿主调色板现判）。默认那一条由
     ``ScreenCaptureActions`` 从宿主配置里读出来（与菜单同一个键），所以浅色宿主
     上不会再弹出一块写死深色的浮层。
+
+    **展示归属在这里，且只有这一处**（:meth:`_claims_display`）：四条链路共用岛 /
+    气泡 / 同一块结果面板，所以"谁有权改这些面"必须是一个判据，并且在**任何展示
+    之前**判——短结果虽然不上面板，照样会覆写岛/气泡的那行文案，一样要判。判据曾经
+    设在面板里，两条毛病：① 判在 ``_notify`` **之后**（旧终态照样刷掉新轮次的岛/
+    气泡文案），② 只挡"上面板"的那条路（短结果绕开面板、无人可挡）。放在这里之后，
+    ``show`` 的第一行就判，拦下的轮次一个字都不写、连通知都不发。
+
+    归属状态只有一份：已经放行的**最高轮次编号**（生产里就是 ``actions._op_seq``
+    这个单调整数），O(1)、不按身份记历史（旧实现按身份登记进面板的字典，进程内
+    永不清理＝每次操作漏 ≈85 B）；也**不做淘汰**——被淘汰掉的旧身份会重新"看起来
+    最新"，让旧回调复活，那比内存增长更不可接受。
     """
 
     def __init__(self, *, island=None, bubble=None,
@@ -330,20 +368,43 @@ class ScreenCapturePresenter:
         self._continue_ask = continue_ask   # 「继续提问」回调 (image, text)；None=不提供
         self._language_change = language_change  # 翻译语言行回调 (target)；None=不提供
         self._panel: ScreenResultPanel | None = None
+        #: 展示归属的**唯一**状态：已经放行的最高轮次编号（``None`` ＝ 还没有任何
+        #: 带编号的轮次到过）。生产里轮次身份就是 ``actions._op_seq`` 那个单调递增
+        #: 整数，所以一份 O(1) 状态足够——不按身份记历史，也不淘汰（见类文档）。
+        self._accepted_round: int | None = None
 
     # ------------------------------------------------------------ 对外
     def status(self, text: str) -> None:
-        """过程状态（"正在识别…"）：只借岛的动效/消息槽，不上面板。"""
+        """过程状态（"正在识别…"）：只借岛的动效/消息槽，不上面板。
+
+        （这条通道不带轮次身份：它的调用点都在**当前会话**内——`已取消`/`已复制`/
+        `第几步失败`——按 `_busy` 与后台槽位的代号已经排除了旧会话，不属于展示归属
+        判的对象。）
+        """
         self._notify(str(text), "generic")
 
-    def show(self, result: ScreenResult, below=None) -> ScreenResultPanel | None:
+    def show(self, result: ScreenResult, below=None,
+             round_key: object = None) -> ScreenResultPanel | None:
         """结果落地：岛永远拿到一句短文案；长结果/双语结果/强制件再开面板。
 
         ``below``：采集选区——面板落在选区正下方（实机反馈：角落要来回跳视线）。
 
+        ``round_key``：这张卡片所属的轮次身份（编排层给的）——过程态靠它决定抽不抽、
+        终态靠它决定收的是不是自己那一轮（见 ``result_panel._LoadingFish``），**展示
+        归属也靠它**（见 :meth:`_claims_display`）。
+
+        **归属先于一切展示**：第一行就先判这张卡片/这条文案能不能动展示面，判不过
+        直接返回 ``None``——岛/气泡的那条通知**不发**，面板的正文/译文/状态行/语言行
+        **不写**，新一轮还在跑的加载动画**不碰**。短结果也走这一步（它虽然不上面板，
+        但会覆写岛/气泡的文案；把判据放进面板就会漏掉这条路）。
+
         例外：过程态卡片（``result.loading``）**不往岛/气泡推**——它没有内容可推，
         推过去就是一条空消息把岛上正在说的话刷没（round 3 实机观感修正）。
         """
+        if not self._claims_display(round_key):
+            log.debug("快速识屏：丢弃已经被更新的那一轮顶下去的卡片 (round_key=%r)",
+                      round_key)
+            return None
         if not result.loading:
             self._notify(result.summary or result.status, "reply")
         long_text = len(result.primary.strip()) > SHORT_RESULT_LIMIT
@@ -354,8 +415,51 @@ class ScreenCapturePresenter:
             return None
         panel.show_result(result, self.island_widget(),
                           on_continue_ask=self._continue_ask, below=below,
-                          on_language_change=self._language_change)
+                          on_language_change=self._language_change,
+                          round_key=round_key)
         return panel
+
+    def _claims_display(self, round_key: object) -> bool:
+        """这张卡片（或它带来的那条通知）能不能动展示面：只有"最新到过的那一轮"能。
+
+        状态只有一份（``_accepted_round``），判据分三类：
+
+        - **整数身份**（生产里唯一的形态：``actions._op_seq`` 单调递增）：不小于水位
+          的放行并推进水位；**小于**水位的＝已经被顶下去的那一轮，返回 ``False``。
+          水位从"还没有任何编号到过"（``None``）起，所以**第一个到场的编号必然放行**
+          （哪怕它是 0 或负数——落点不假设调用方从 1 开始发号）；
+        - ``None``：**匿名**，不参与归属、照旧放行（不按编号发号的调用方/测试替身用的
+          就是这条；落点不假设调用方一定带编号）；
+        - 其它类型：没有可比大小的身份＝排不了序，同样放行且**不推进水位**。这类身份
+          一律不记（"不接任意可哈希身份的历史"），所以既不会让状态长起来，也不会
+          出现"谁把谁顶下去"的错觉——记录面绝不许成为吞掉一张卡片的理由。
+
+        不记历史也**不做淘汰**：一旦淘汰，被忘掉的旧身份会重新"看起来最新"，旧回调
+        复活来覆写屏上那张新卡片——那比内存增长坏得多。水位只涨不降（进程内），所以
+        "迟到很久的旧终态"照样能被认出来。
+        """
+        if round_key is None or not isinstance(round_key, int):
+            return True
+        accepted = self._accepted_round
+        if accepted is not None and round_key < accepted:
+            return False
+        self._accepted_round = round_key
+        return True
+
+    def end_loading(self, round_key: object = None) -> bool:
+        """显式收口一轮加载（失败 / 取消这类没有终态内容的出口）；返回是否真的收了口。
+
+        面板还没造出来就没有轮次可收——这里**不懒造面板**（不为一条空通知造窗）。
+
+        收口**不走**上面的归属水位：它收的是加载动画那一轮，判据是**身份相等**（面板
+        的 ``_LoadingFish`` 只认自己那一轮），旧轮次照样收不掉新一轮还在跑的表。收口
+        也不改任何展示内容，所以不需要（也不能）借水位——让一个早被顶下去的轮次去
+        推进水位，等于把它重新抬成"最新"。
+        """
+        panel = self._panel
+        if panel is None:
+            return False
+        return panel.end_loading(round_key)
 
     def panel(self) -> ScreenResultPanel | None:
         """当前面板（懒造；造不出来返回 None，绝不阻断动作本身）。"""
@@ -471,12 +575,19 @@ class ScreenCaptureActions(QObject):
         # 不带代号的话先回来的旧结果会拿走别人的回调（盲审 M1：译文被当成 OCR
         # 结果展示、OCR 子进程被误杀、真结果被静默丢）。
         self._stage_seq = 0
+        # 加载轮次的身份：一次用户操作一个（见 ``result_panel._LoadingFish``）。
+        # 采集链路与重翻链路**各有各的**：共用一块面板，但收口只许收自己那一轮
+        # （重翻的收口不许把采集还在跑的轮连动画一起收掉，反之亦然）。
+        self._op_seq = 0
+        self._capture_round: object = None     # 采集会话（busy 那条链路）的轮次身份
+        self._retranslate_round: object = None  # 重翻链路的轮次身份
         # 重翻的独立槽位：与采集链路的 ``_pending`` 互不覆盖（盲审 M1——重翻挤占
         # 采集槽会把在跑的 OCR 结果静默吞掉并把会话卡死在 busy）。
         self._pending_retranslate: tuple[int, Callable, Callable] | None = None
-        self._last_image = None   # 最近一次截下的选区图（「继续提问」的上下文）
-        self._last_selection = None   # 选区位置（结果面/问答窗跟到选区下方）
         self._last_ocr_source = ""    # 最近一次翻译链路的原文（语言行切换直接重翻）
+        #: 与 ``_last_ocr_source`` **同源**的那次操作的上下文快照：重翻吃的是"这段原文
+        #: 那次采集"的图与选区，不取"最近一次"（那时可能已经换成用户新截的那张了）。
+        self._last_source_context: _OpContext | None = None
         self._stage_done.connect(self._on_stage_done)
         self._retranslate_done.connect(self._on_retranslate_done)
         # 两处连接的**判据**不同，别混着读（2026-10-13 交叉审查 nit 要的就是这条区分）：
@@ -511,6 +622,10 @@ class ScreenCaptureActions(QObject):
             return False
 
         self._busy = True
+        # 一次用户操作＝一个轮次身份：窗口/面板都是复用件，"这次操作"只能由这里划出
+        # 边界（见 ``_show_progress`` 与 ``_finish``）。
+        self._op_seq += 1
+        self._capture_round = self._op_seq
         self._watcher_gate.pause()
         try:
             started = bool(self._controller.start())
@@ -533,22 +648,24 @@ class ScreenCaptureActions(QObject):
 
     # ------------------------------------------------------------ 采集回调
 
-    def _on_captured(self, image, _selection, action) -> None:
+    def _on_captured(self, image, selection, action) -> None:
         if not self._busy:
             log.debug("快速识屏：忽略迟到的采集结果")
             return
         # 采集期到这一刻结束：窗口已还原、冻结帧已裁出，watcher 可以回岗。
         self._watcher_gate.restore()
-        self._last_image = image   # 「继续提问」要把它带进问答浮窗（纯内存）
-        self._last_selection = _selection   # 结果面/问答窗落在选区下方
+        # 上下文在这一刻定下来（图 / 选区 / 本轮的轮次身份），随这次操作的回调走完全程：
+        # 用户在等待期间又截一张，也不会串到这一张上来（见 _OpContext）。
+        context = _OpContext(round_key=self._capture_round, image=image,
+                             selection=selection)
         if action == ACTION_OCR:
-            self._run_ocr(image)
+            self._run_ocr(context)
         elif action == ACTION_TRANSLATE:
-            self._run_translate(image)
+            self._run_translate(context)
         elif action == ACTION_COPY:
-            self._run_copy(image)
+            self._run_copy(context)
         else:
-            self._run_ask(image)
+            self._run_ask(context)
 
     def _on_cancelled(self, reason) -> None:
         if not self._busy:
@@ -568,7 +685,7 @@ class ScreenCaptureActions(QObject):
 
     # ---------------------------------------------------------------- 四条链路
 
-    def _run_copy(self, image) -> None:
+    def _run_copy(self, context: _OpContext) -> None:
         """复制图像：纯本地，裁出的选区图进系统剪贴板。
 
         剪贴板同时塞 PNG 字节与 Qt 图像：``setImage`` 单写在 Windows 上只落
@@ -576,6 +693,7 @@ class ScreenCaptureActions(QObject):
         Electron 系应用（Kimi/微信/浏览器）对 DIB 的转换常出软化/偏色；显式带一份
         ``image/png`` 让它们优先取无损 PNG——PixPin 等工具粘出来清晰靠的就是这条。
         """
+        image = context.image
         self._finish()
         try:
             from PySide6.QtCore import QBuffer, QIODevice
@@ -601,79 +719,83 @@ class ScreenCaptureActions(QObject):
             return
         self.status("已复制到剪贴板")
 
-    def _run_ocr(self, image) -> None:
+    def _run_ocr(self, context: _OpContext) -> None:
         engine = self._ocr if self._ocr is not None else resolve_ocr_engine()
         if engine is None:
             self._finish()
             self._emit_result(ScreenResult(
                 title=TITLE_OCR, status=OCR_PENDING_REASON, force_panel=True,
-            ))
+            ), context)
             return
         # 秒级等待不能白屏：先把卡片弹出来摆着"正在识别"（实机反馈：中间什么都没
         # 有像在卡死）。过程态只占位、不发 result_ready、不收 busy。
         self._show_progress(ScreenResult(
             title=TITLE_OCR, force_panel=True, loading=True,
-            image=self._last_image,
-        ))
-        self._submit(lambda: engine(image),
-                     self._on_ocr_done,
+            image=context.image,
+        ), context)
+        self._submit(lambda: engine(context.image),
+                     lambda text: self._on_ocr_done(text, context),
                      functools.partial(self._on_stage_error, stage="本地识别"))
 
-    def _on_ocr_done(self, text) -> None:
+    def _on_ocr_done(self, text, context: _OpContext) -> None:
         self._finish()
         value = str(text or "").strip()
         if not value:
-            self._emit_result(ScreenResult(title=TITLE_OCR, status="没有识别到文字"))
+            self._emit_result(ScreenResult(title=TITLE_OCR, status="没有识别到文字"),
+                              context)
             return
         self._emit_result(ScreenResult(
             title=TITLE_OCR, primary=value, force_panel=True,
             status=f"本地识别 · {len(value)} 字",
-            image=self._last_image,
-        ))
+            image=context.image,
+        ), context)
 
-    def _run_translate(self, image) -> None:
+    def _run_translate(self, context: _OpContext) -> None:
         ocr = self._ocr if self._ocr is not None else resolve_ocr_engine()
         translator = self._translator if self._translator is not None else self._build_translator()
         self._show_progress(ScreenResult(
             title=TITLE_TRANSLATE, force_panel=True, loading=True,
-            image=self._last_image,
-        ))
+            image=context.image,
+        ), context)
 
         def work_ocr() -> str:
-            return str(ocr(image) or "").strip() if ocr is not None else ""
+            return str(ocr(context.image) or "").strip() if ocr is not None else ""
 
         self._submit(
             work_ocr,
-            lambda source: self._on_translate_source(source, translator, image),
+            lambda source: self._on_translate_source(source, translator, context),
             functools.partial(self._on_stage_error, stage="翻译"),
         )
 
-    def _on_translate_source(self, source: str, translator, image) -> None:
+    def _on_translate_source(self, source: str, translator, context: _OpContext) -> None:
         """原文到手：先摆上面板（等待不再白屏），再发翻译请求。"""
         source = str(source or "").strip()
         if not source:
             self._finish()
             self._emit_result(ScreenResult(
                 title=TITLE_TRANSLATE, status="没有识别到文字，无可翻译",
-                force_panel=True, image=self._last_image,
-            ))
+                force_panel=True, image=context.image,
+            ), context)
             return
+        # 原文与它那次采集的上下文一起留档：语言行重翻吃的是**这段原文**的图与选区
         self._last_ocr_source = source   # 语言行切换时拿它直接重翻，不重跑 OCR
+        self._last_source_context = context
         if translator is None:
             self._finish()
             self._emit_result(ScreenResult(
                 title=TITLE_TRANSLATE, primary=source, force_panel=True,
                 status=TRANSLATION_UNAVAILABLE_REASON, primary_label="原文",
-                image=self._last_image,
-            ))
+                image=context.image,
+            ), context)
             return
         self._show_progress(ScreenResult(
             title=TITLE_TRANSLATE, primary=source, primary_label="原文",
-            force_panel=True, loading=True, image=self._last_image,
-        ))
+            force_panel=True, loading=True, image=context.image,
+        ), context)
         self._submit(
-            lambda: str(translator(image, source) or "").strip(),
-            lambda translated: self._on_translate_done((source, translated), translator=True),
+            lambda: str(translator(context.image, source) or "").strip(),
+            lambda translated: self._on_translate_done(
+                (source, translated), translator=True, context=context),
             functools.partial(self._on_stage_error, stage="翻译"),
         )
 
@@ -682,14 +804,28 @@ class ScreenCaptureActions(QObject):
 
         注入优先：测试/宿主给了 ``translator`` 替身就走它（``translator(None,
         source)``——替身不接 target 语义），缺省走 ``translate_text`` 的 target 路。
+
+        上下文取 ``_last_source_context``——**这段原文那次采集**的图与选区，不取
+        "最近一次"状态：用户在重翻路上又截一张时，"最近一次"已经是新那张的了，
+        用它就会把 A 的原文配到 B 的图上（跨截图返修 P1）。
         """
         source = self._last_ocr_source
         if not source or self._busy or self._config is None:
             return
+        # 重翻也是一次独立的用户操作＝独立的一轮：它自己抽、自己收（收口只认这一轮的
+        # 身份，绝不碰采集链路还在跑的那一轮）。
+        self._op_seq += 1
+        self._retranslate_round = self._op_seq
+        origin = self._last_source_context
+        context = _OpContext(
+            round_key=self._retranslate_round,
+            image=None if origin is None else origin.image,
+            selection=None if origin is None else origin.selection,
+        )
         self._show_progress(ScreenResult(
             title=TITLE_TRANSLATE, primary=source, primary_label="原文",
-            force_panel=True, loading=True, image=self._last_image,
-        ))
+            force_panel=True, loading=True, image=context.image,
+        ), context)
         config = self._config
         injected = self._translator
         if injected is not None:
@@ -702,18 +838,20 @@ class ScreenCaptureActions(QObject):
             work,
             lambda translated: self._on_translate_done(
                 (source, str(translated or "").strip()),
-                translator=True, from_retranslate=True),
+                translator=True, from_retranslate=True, context=context),
             # 重翻失败也别走 _on_stage_error 的 _finish（同上：不占别人的会话）——
-            # 直接在面板上把原文摆回来 + 一句人话
+            # 直接在面板上把原文摆回来 + 一句人话。上下文必须是**重翻这一轮**的：
+            # 带采集链路的身份会把采集还在跑的那一轮连图一起收掉（终态也是收口），
+            # 而现读"最近一次"的图则会把别人的图摆到这段原文上。
             lambda message: self._emit_result(ScreenResult(
                 title=TITLE_TRANSLATE, primary=source, primary_label="原文",
                 status=f"翻译失败：{message}", force_panel=True,
-                image=self._last_image, language_selector=True,
-            )),
+                image=context.image, language_selector=True,
+            ), context),
             channel="retranslate",
         )
 
-    def _on_translate_done(self, value, *, translator: bool,
+    def _on_translate_done(self, value, *, translator: bool, context: _OpContext,
                            from_retranslate: bool = False) -> None:
         # 重翻不占采集会话：不调 _finish（那会清掉别人正忙着的 busy 位、还会把
         # 正在跑的 OCR 子进程当"本链路的引擎"杀掉——盲审 M1 的时序二）。
@@ -733,11 +871,11 @@ class ScreenCaptureActions(QObject):
         self._emit_result(ScreenResult(
             title=TITLE_TRANSLATE, primary=source, secondary=translated,
             force_panel=True, status=status, primary_label="原文" if translated else "",
-            image=self._last_image,
+            image=context.image,
             language_selector=bool(translated),
-        ))
+        ), context)
 
-    def _run_ask(self, image) -> None:
+    def _run_ask(self, context: _OpContext) -> None:
         """截图问答：打开问答浮窗（图进输入栏），发送与否由用户在浮窗里决定。
 
         采集会话到这里就收口了——浮窗是独立生命周期的对话面，不占 busy 位；
@@ -749,15 +887,15 @@ class ScreenCaptureActions(QObject):
             self._emit_result(ScreenResult(
                 title=TITLE_ASK, status="AI 对话通道不可用（未配置或已关闭）",
                 force_panel=True,
-            ))
+            ), context)
             return
         try:
-            dialog.start_with_image(image, below=self._last_selection)
+            dialog.start_with_image(context.image, below=context.selection)
         except Exception as exc:
             log.exception("快速识屏：问答浮窗打开失败")
             self._emit_result(ScreenResult(
                 title=TITLE_ASK, status=f"问答窗没能打开（{exc}）", force_panel=True,
-            ))
+            ), context)
 
     def _on_stage_error(self, message, *, stage: str) -> None:
         self._finish()
@@ -840,6 +978,11 @@ class ScreenCaptureActions(QObject):
     def _finish(self) -> None:
         self._busy = False
         self._pending = None
+        # 会话收口＝本轮加载也收口：失败/取消这种出口只有一个"失败理由"、没有终态
+        # 结果可摆到面板上，不显式收口的话加载卡会一直转，下一独立操作还会接着上一轮
+        # 的脸（抽签失灵）。收口带**本会话的轮次身份**——重翻那一轮不是我的，收不得
+        # （它自己也走不到这里：重翻链路刻意不调本方法，见 _on_translate_done）。
+        self._presenter.end_loading(self._capture_round)
         # 「用完就丢」的调用点：本方法是**所有**出口的唯一收口（成功交付 / 取消 /
         # 失败 / 引擎缺席），所以这里放一次就覆盖了全部终态，不必在每条链路上
         # 各写一遍（漏一处就是"识别子进程在后台一直活着"）。
@@ -873,23 +1016,42 @@ class ScreenCaptureActions(QObject):
         except Exception:
             log.exception("快速识屏：释放本地 OCR 资源失败（不影响本次结果）")
 
-    def _emit_result(self, result: ScreenResult) -> None:
-        self._presenter.show(result, below=self._last_selection)
+    def _emit_result(self, result: ScreenResult, context: _OpContext) -> None:
+        """终态结果落地。
+
+        ``context`` 是这条结果所属操作的上下文快照（**发起那一刻**定下的轮次身份、
+        图、选区）。终态是一次收口，带错身份会把另一条链路还在跑的那轮连图一起收掉；
+        现读"最近一次"的图/选区则会把别人的图摆到这段文字上（跨截图 P1）。所以这里
+        不给缺省值——每条终态都必须说清自己属于哪一次操作。
+        """
+        self._presenter.show(result, below=context.selection, round_key=context.round_key)
         self.result_ready.emit(result)
 
-    def _show_progress(self, result: ScreenResult) -> None:
+    def _show_progress(self, result: ScreenResult, context: _OpContext) -> None:
         """过程态也上面板（识别/翻译这种秒级等待不许白屏干等）。
 
         与 ``_emit_result`` 的区别：不占 busy、不发 ``result_ready``（不是结果，
         是"正在跑"的占位卡片，最终结果来了原地换内容——面板是复用件）。
+
+        ``context`` 同样是**发起时**捕获的那一份：**同一次操作的两张卡片同身份**
+        （``_run_translate`` 先"正在识别"再"正在翻译"），换身份才是新的一轮。
         """
-        self._presenter.show(result, below=self._last_selection)
+        self._presenter.show(result, below=context.selection, round_key=context.round_key)
 
     def status(self, text: str) -> None:
         self._presenter.status(text)
 
-    def _continue_ask(self, image, recognized_text: str) -> None:
-        """结果面板的「继续提问…」：结果面板关掉，图（+ 已识别文字）带进问答浮窗。"""
+    def _continue_ask(self, image, recognized_text: str, below=None) -> None:
+        """结果面板的「继续提问…」：结果面板关掉，图（+ 已识别文字）带进问答浮窗。
+
+        ``below`` 是**这张卡片自己**的选区（面板随卡片交下来的，见
+        ``result_panel.ScreenResultPanel._continue_ask``）：它必须随卡片走，不能回头
+        问"最近一次采集的选区"——那张卡的图与文字都可能来自更早的一次操作。
+        """
+        # 这一次点击也是一次用户操作：它的失败卡片要占一个**新**的轮次身份——借上一次
+        # 采集的身份会被展示归属判成旧轮次（用户点了却什么都看不到）。
+        self._op_seq += 1
+        context = _OpContext(round_key=self._op_seq, image=image, selection=below)
         panel = self._presenter.panel()
         if panel is not None:
             panel.close_panel()   # 实机反馈：续聊开始后结果卡不该还挂着
@@ -898,16 +1060,15 @@ class ScreenCaptureActions(QObject):
             self._emit_result(ScreenResult(
                 title=TITLE_ASK, status="AI 对话通道不可用（未配置或已关闭）",
                 force_panel=True,
-            ))
+            ), context)
             return
         try:
-            dialog.start_with_image(image, context_text=recognized_text,
-                                    below=self._last_selection)
+            dialog.start_with_image(image, context_text=recognized_text, below=below)
         except Exception as exc:
             log.exception("快速识屏：问答浮窗打开失败")
             self._emit_result(ScreenResult(
                 title=TITLE_ASK, status=f"问答窗没能打开（{exc}）", force_panel=True,
-            ))
+            ), context)
 
     # ---------------------------------------------------------------- 依赖
 

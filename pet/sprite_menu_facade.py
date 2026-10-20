@@ -151,7 +151,7 @@ class SpriteMenuFacade:
 
     @property
     def no_move(self) -> bool:
-        return bool(getattr(self._shell.behavior, "no_move", False))
+        return bool(getattr(self._behavior(), "no_move", False))
 
     @property
     def drag_physics(self) -> bool:
@@ -279,7 +279,7 @@ class SpriteMenuFacade:
 
     # ---------------------------------------------------------------- 素材清单（动画分类建造器）
     def _cats(self) -> dict:
-        return self._shell.behavior._categories(self.sprite.library)
+        return self._behavior()._categories(self.sprite.library)
 
     @property
     def idles(self) -> list:
@@ -450,17 +450,38 @@ class SpriteMenuFacade:
     def on_toggle_festival(self):
         return _first_callable(self._hosts(), ("toggle_festival_reminder",))
 
+    @property
+    def on_divination_draw(self):
+        """「抽支签」：``AppShell.trigger_divination_draw``。
+
+        **必须在 facade 上存在**：注册表的可用性判定是
+        ``callable(getattr(pet, "on_divination_draw", None))``，门面不代理这个属性，
+        overlay 菜单就会**静默少一项**（语音报时/节日四项同样依赖各自的代理）。
+        """
+        return _first_callable(self._hosts(), ("trigger_divination_draw",))
+
+    def _behavior(self, sprite=None):
+        """该 sprite **所在宿主**的行为控制器。
+
+        多窗（混合缩放）下每个宿主各持一份：写主窗那份，被点的副屏宠根本不知道
+        ——实机表现是"副屏选动画/移动没反应、过一拍被覆盖"。
+        """
+        shell = self._shell
+        target = self.sprite if sprite is None else sprite
+        host = shell.host_for_sprite(target) if target is not None else None
+        return host.behavior if host is not None else shell.behavior
+
     # ---------------------------------------------------------------- 动画/速率
     def switch_clip(self, name: str) -> None:
         """播放指定动画（一次性，播完回掷骰链——window.py switch_clip 语义）。
 
         作用对象 = 被点的那一只（旧版一窗一宠 ``self`` 的等价物）。
         """
-        self._shell.behavior.play_once(self.sprite, name)
+        self._behavior().play_once(self.sprite, name)
 
     def trigger_move(self, name: str) -> bool:
         """以指定移动素材触发一次移动（window.py trigger_move 语义）。"""
-        return self._shell.behavior.play_move_once(self.sprite, name)
+        return self._behavior().play_move_once(self.sprite, name)
 
     def set_playback_speed(self, value: float) -> bool:
         value = float(value)
@@ -493,7 +514,9 @@ class SpriteMenuFacade:
         return True
 
     def set_no_move(self, on: bool) -> None:
-        self._shell.behavior.no_move = bool(on)
+        # 全局开关：所有宿主都要同步，否则副屏那只照旧乱走
+        for host in getattr(self._shell, "hosts", lambda: [])():
+            host.behavior.no_move = bool(on)
         self.cfg.set("no_move", bool(on))
         self._save()
 
@@ -725,7 +748,8 @@ class SpriteMenuFacade:
     def reopen_context_menu(self, menu) -> None:
         """按原位立即重开右键菜单（window.py ``reopen_context_menu`` 的 overlay
         等价物：壳层关旧菜单 + 延迟重开）。"""
-        window = getattr(self._shell, "overlay", None)
+        host = self._shell.host_for_sprite(self.sprite) if self.sprite is not None else None
+        window = host.overlay if host is not None else getattr(self._shell, "overlay", None)
         reopen = getattr(window, "reopen_context_menu", None)
         if callable(reopen) and menu is not None:
             reopen(menu)

@@ -176,6 +176,9 @@ def test_standalone_save_merges_external_disk_change(tmp_path):
         external.set("pnpm_bin", "C:/tools/pnpm.cmd")
         assert external.save()
         assert dialog._write_config()
+        # #271：空身份会话按 slot0 分流，写盘走路由视图**另建的**主配置对象，
+        # 传入的那份对象内存不更新——读回必须先重读磁盘。
+        config.reload()
         assert config.get("pnpm_bin") == "C:/tools/pnpm.cmd"
         on_disk = json.loads(Path(config.path).read_text(encoding="utf-8"))
         assert on_disk["pnpm_bin"] == "C:/tools/pnpm.cmd"
@@ -537,6 +540,9 @@ def test_modern_settings_finished_delegates_to_shell_apply_chain(tmp_path):
     owner = PetInstance.__new__(PetInstance)
     owner.shell = AppShell.__new__(AppShell)
     owner.shell._instances = []
+    # 真实壳恒有 config（_modern_settings_finished 末尾无条件走一次台词预缓存，
+    # 那条入口自己按开关收敛，壳上没有 config 只可能是测试桩少给了）
+    owner.shell.config = Config(base=tmp_path)
     calls = []
     owner.shell._apply_external_config_change = lambda: calls.append(1)
     owner.modern_settings_dialog = object()
@@ -573,6 +579,24 @@ def test_standalone_preview_uses_local_channel(tmp_path, monkeypatch):
     finally:
         dialog.deleteLater()
         inproc.deleteLater()
+
+
+def test_frozen_standalone_missing_tts_points_to_app_update(tmp_path, monkeypatch):
+    import pet.settings_standalone as standalone_mod
+    from pet.modern_settings_dialog import ModernSettingsDialog
+
+    _qapp()
+    dialog = ModernSettingsDialog(Config(base=tmp_path), include_ai=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(standalone_mod, "_edge_tts_available", lambda: False)
+    try:
+        standalone_mod.install_standalone_hooks(dialog)
+        button = dialog.voice_chime_page.preview_btn
+        assert not button.isEnabled()
+        assert "更新" in button.toolTip()
+        assert "pip install" not in button.toolTip()
+    finally:
+        dialog.deleteLater()
 
 
 def test_standalone_festival_preview_shows_notice_without_speech(tmp_path, monkeypatch):

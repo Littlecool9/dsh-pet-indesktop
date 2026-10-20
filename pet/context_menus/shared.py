@@ -1380,7 +1380,11 @@ def add_music_lyric_align(menu: QMenu, pet, *, icons: bool = True):
 
 
 def _music_player_builder(player_key: str):
-    """生成"打开某播放器并播放"的 builder（两个播放器共用一套逻辑）。"""
+    """生成"打开某播放器并播放"的 builder（四个播放器共用一套逻辑）。
+
+    新增播放器只加一个 ``add_music_open_<key>`` 转发（见文件末尾四个），路径解析、
+    冷缓存乐观启用、后台预热、负缓存置灰、手填路径失效提示全部由这里一次性给出。
+    """
 
     def build(menu: QMenu, pet, *, icons: bool = True):
         from .. import music_players
@@ -1417,6 +1421,14 @@ def add_music_open_netease(menu: QMenu, pet, *, icons: bool = True):
 
 def add_music_open_qqmusic(menu: QMenu, pet, *, icons: bool = True):
     return _music_player_builder("qqmusic")(menu, pet, icons=icons)
+
+
+def add_music_open_kugou(menu: QMenu, pet, *, icons: bool = True):
+    return _music_player_builder("kugou")(menu, pet, icons=icons)
+
+
+def add_music_open_soda(menu: QMenu, pet, *, icons: bool = True):
+    return _music_player_builder("soda")(menu, pet, icons=icons)
 
 
 def add_agent_cost(menu: QMenu, pet, *, icons: bool = True):

@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+import importlib
+import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -128,19 +131,85 @@ class ChatSession:
     def title(self, value):
         self.custom_title = str(value or '')
 
+# keyring 的"没有可用后端"占位实现：**全名精确匹配**，不扫名字子串。
+# 扫子串（原来的 `"fail" not in low`）会误杀合法第三方后端——一个名为
+# `company.failover.Keyring` 的可写后端会被判成不可用，等于把本来能存凭据的环境
+# 判死（astra 第 13 轮）。这类判据只该认 keyring 自己的两个占位类。
+_PLACEHOLDER_BACKENDS = frozenset({
+    "keyring.backends.fail.Keyring",
+    "keyring.backends.null.Keyring",
+})
+
+
+def _is_placeholder_backend(backend) -> bool:
+    """这个后端只是"这台机器没有钥匙串"的占位实现（`fail` / `null`）吗？"""
+    backend_type = type(backend)
+    if f"{backend_type.__module__}.{backend_type.__name__}" in _PLACEHOLDER_BACKENDS:
+        return True
+    # 全名对不上时再看**类身份**：占位实现可能被继承/包装，或在别的模块路径下重导出。
+    # 只比类、不猜名字，所以仍然不会误杀第三方后端。
+    for module_name in ("keyring.backends.fail", "keyring.backends.null"):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:  # noqa: BLE001 - 子系统不在就是"没有可比对的对象"
+            continue
+        placeholder = getattr(module, "Keyring", None)
+        if isinstance(placeholder, type) and isinstance(backend, placeholder):
+            return True
+    return False
+
+
 class SecretStore:
     def __init__(self,service_name='dsh-pet-standalone'):
         self.service_name=service_name
         try: import keyring
         except Exception: keyring=None
         self._keyring=keyring
+        self._usable=None   # 惰性探测一次（后端在进程生命周期内不会换）
+
+    def _backend_usable(self) -> bool:
+        """**后端**真的能用吗（不只是 `import keyring` 成功）。
+
+        模块在、后端不可用时写凭据会失败（`fail` 后端抛 ``NoKeyringError``，
+        `null` 后端不抛但什么都不记）：界面说"已保存"、重启后主进程读到空串。
+        **这是"读取为空"的成因，不是"服务端拒绝"的成因**——服务端回 401 并显示
+        具体 key 尾号，只说明发出去的是非空凭据，具体为什么无效（key 失效 / 填错 /
+        provider 不匹配 / 选错了旧的凭据条目）需要另查，别把两者混为一谈。
+        """
+        if self._keyring is None:
+            return False
+        try:
+            backend = self._keyring.get_keyring()
+        except Exception:
+            return False
+        return not _is_placeholder_backend(backend)
+
     @property
-    def available(self): return self._keyring is not None
+    def available(self):
+        """可用 = 模块在 **且** 后端可用（两者缺一都是"存不了凭据"）。"""
+        if self._usable is None:
+            self._usable = self._backend_usable()
+            if not self._usable:
+                logging.getLogger("dsh-pet-standalone").warning(
+                    "凭据存储不可用（系统钥匙串没有可用后端）：API Key 只能留在内存里，"
+                    "重启后需要重新填写。打包版可能是 keyring 的 Windows 后端依赖"
+                    "（pywin32-ctypes / win32ctypes）没随包进来，也可能只是这台机器的"
+                    "系统钥匙串没启用/被策略禁用。")
+        return self._usable
+
     def get(self,ref):
-        if not self._keyring or not ref: return ''
+        if not self.available or not ref: return ''
         try: return str(self._keyring.get_password(self.service_name,ref) or '')
-        except Exception: return ''
+        except Exception as exc:
+            logging.getLogger("dsh-pet-standalone").warning(
+                "读取凭据失败（%s）：%s", ref, type(exc).__name__)
+            return ''
+
     def set(self,ref,value):
-        if not self._keyring or not ref: return False
+        if not self.available or not ref: return False
         try: self._keyring.set_password(self.service_name,ref,value); return True
-        except Exception: return False
+        except Exception as exc:
+            # 失败不能静默：界面会显示"已保存"，用户下次启动就发现 Key 没了
+            logging.getLogger("dsh-pet-standalone").warning(
+                "保存凭据失败（%s）：%s", ref, type(exc).__name__)
+            return False

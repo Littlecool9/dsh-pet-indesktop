@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, updater
+from .settings_about import build_author_section
 
 
 class UpdatePage(QWidget):
@@ -103,11 +104,15 @@ class UpdatePage(QWidget):
         self.notes_label.setObjectName("updateNotes")
         self.notes_label.setWordWrap(True)
         self.notes_label.setTextInteractionFlags(
-            self.notes_label.textInteractionFlags() | Qt.TextInteractionFlag.TextSelectableByMouse
+            self.notes_label.textInteractionFlags()
+            | Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
+        self.notes_label.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         notes_layout.addWidget(notes_title)
         notes_layout.addWidget(self.notes_label)
         layout.addWidget(notes_card)
+        layout.addWidget(build_author_section(self))
         layout.addStretch(1)
 
     def check_for_updates(self) -> None:

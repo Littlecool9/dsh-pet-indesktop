@@ -181,12 +181,16 @@ class TextBlock:
         return (left + width / 2, top + height / 2)
 
 
-def reading_order(blocks: Iterable[TextBlock]) -> list[TextBlock]:
-    """按阅读顺序重排文本块：先按行自上而下，行内自左而右。
+def reading_lines(blocks: Iterable[TextBlock]) -> list[list[TextBlock]]:
+    """按阅读顺序**分行**：行自上而下，行内自左而右。
 
     分行的判据是**竖向重叠比**（重叠高度 > 较短一方高度的一半）。用固定阈值去比
     上沿坐标会散架：同一行里字号/基线略有差别的两块（正文与行内代码、中英文混排）
     上沿本来就不齐，按阈值切会把一行拆成两行，输出读起来就是乱的。
+
+    行结构必须保留：检测器给的块是**词/片段级**的，一行正文常常是好几块。把分组
+    在这里拍平，调用方就只能按块拼字符串，于是"Working on two of these"会变成
+    五个各自成行的碎片（翻译按行对译 → 逐词译文）。
     """
     ordered = sorted(blocks, key=lambda block: block.bounds[1])
     if not ordered:
@@ -207,10 +211,18 @@ def reading_order(blocks: Iterable[TextBlock]) -> list[TextBlock]:
         lines.append([block])
         spans.append((top, bottom))
 
-    result: list[TextBlock] = []
-    for index in sorted(range(len(lines)), key=lambda i: (spans[i][0], min(b.bounds[0] for b in lines[i]))):
-        result.extend(sorted(lines[index], key=lambda block: block.bounds[0]))
-    return result
+    return [
+        sorted(lines[index], key=lambda block: block.bounds[0])
+        for index in sorted(
+            range(len(lines)),
+            key=lambda i: (spans[i][0], min(b.bounds[0] for b in lines[i])),
+        )
+    ]
+
+
+def reading_order(blocks: Iterable[TextBlock]) -> list[TextBlock]:
+    """按阅读顺序重排文本块（扁平视图；行的分组见 :func:`reading_lines`）。"""
+    return [block for line in reading_lines(blocks) for block in line]
 
 
 # ---------------------------------------------------------------- 像素 → PNG
@@ -408,8 +420,8 @@ def parse_result(stdout) -> list[dict]:
     return blocks
 
 
-def blocks_from_payload(raw: Iterable) -> list[TextBlock]:
-    """原始块字典 → 阅读顺序的 :class:`TextBlock` 列表（形状不对就报故障）。"""
+def _parse_blocks(raw: Iterable) -> list[TextBlock]:
+    """原始块字典 → :class:`TextBlock` 列表（形状不对就报故障；不排序）。"""
     blocks: list[TextBlock] = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
@@ -423,7 +435,17 @@ def blocks_from_payload(raw: Iterable) -> list[TextBlock]:
         except (TypeError, ValueError, IndexError) as exc:
             raise OcrRecognitionError(f"本地 OCR 结果第 {index} 块的坐标/置信度不可用：{exc}") from exc
         blocks.append(TextBlock(text, score, box))
-    return reading_order(blocks)
+    return blocks
+
+
+def lines_from_payload(raw: Iterable) -> list[list[TextBlock]]:
+    """原始块字典 → 阅读顺序的**行**（行内已按 x 排序）。"""
+    return reading_lines(_parse_blocks(raw))
+
+
+def blocks_from_payload(raw: Iterable) -> list[TextBlock]:
+    """原始块字典 → 阅读顺序的扁平 :class:`TextBlock` 列表（形状不对就报故障）。"""
+    return reading_order(_parse_blocks(raw))
 
 
 #: 退出码 → 异常类型（**成功码不在这里**，见 :func:`interpret`）。
@@ -526,6 +548,15 @@ class OcrEngine:
         空图在**起进程之前**就被拒掉：起一次进程要付几百毫秒到几秒，而空图是
         调用方的 bug，不该罚用户等。
         """
+        return [block for line in self.recognize_lines(image) for block in line]
+
+    def recognize_lines(self, image: QImage) -> list[list[TextBlock]]:
+        """同 :meth:`recognize`，但**保留行结构**（行内已按 x 排序）。
+
+        检测器给的块常常是词/片段级，一行正文有好几块。扁平视图的调用方只能一块
+        一行地拼字符串，于是 "Working on two of these" 变成五个碎片——翻译按行
+        对译就得到逐词译文。行的信息在这一层留着。
+        """
         if not isinstance(image, QImage):
             raise TypeError(f"recognize() 需要 QImage，收到 {type(image).__name__}")
         if image.isNull() or image.width() <= 0 or image.height() <= 0:
@@ -558,7 +589,7 @@ class OcrEngine:
                 "这次本地识别已被中止（会话已收口或宿主正在释放），没有结果"
             )
         _, blocks = interpret(process.returncode, stdout, stderr)
-        return blocks_from_payload(blocks)
+        return lines_from_payload(blocks)
 
     def _exchange(self, process, frame: bytes) -> tuple[bytes, bytes]:
         """把**已经按协议拼好的一帧**喂进去、把两条输出读回来（超时即杀进程并报人话）。
@@ -625,16 +656,44 @@ def release_engine() -> bool:
 # -------------------------------------------------------------- 同包 seam
 
 
+def _is_cjk(ch: str) -> bool:
+    """是否中日韩文字/全角标点（决定行内接续要不要插空格）。"""
+    return (
+        "\u4e00" <= ch <= "\u9fff"
+        or "\u3400" <= ch <= "\u4dbf"
+        or "\uf900" <= ch <= "\ufaff"
+        or "\u3000" <= ch <= "\u303f"
+        or "\uff00" <= ch <= "\uffef"
+    )
+
+
+def _join_inline(blocks: Iterable[TextBlock]) -> str:
+    """同一视觉行里的多个块接成一句：CJK 相邻不插空格，其余用单个空格。"""
+    text = ""
+    for block in blocks:
+        piece = block.text.strip()
+        if not piece:
+            continue
+        if text and not (_is_cjk(text[-1]) and _is_cjk(piece[0])):
+            text += " "
+        text += piece
+    return text
+
+
 def recognize(image: QImage) -> str:
     """模块级入口：``recognize(QImage) -> str``——切片的接入点。
 
-    这是同一功能面向 UI 的一层薄壳：结果按阅读顺序用换行拼成一段纯文本，没有文字
-    返回空串，失败抛 :class:`OcrError`（``str(exc)`` 直接展示给用户）。
+    这是同一功能面向 UI 的一层薄壳：结果按阅读顺序**按行**拼成一段纯文本——同一
+    视觉行里的多个块接成一句（CJK 相邻不插空格，其余用空格），行与行之间用换行；
+    没有文字返回空串，失败抛 :class:`OcrError`（``str(exc)`` 直接展示给用户）。
     ``pet/screen_capture/actions.py`` 就是按这个契约解析同包入口的
     （``OCR_MODULE = "ocr"`` / ``OCR_ENTRY = "recognize"``，同步、纯本地、不联网）。
+
+    按块拼换行是错的口径：检测器的块是词/片段级，一块一行会把整句拆成
+    ``Working / on / two / of / these`` 这种碎片，下游翻译照行对译就成了逐词译文。
 
     要**结构化**结果（每块的置信度与框坐标）请用 :meth:`OcrEngine.recognize`：
     那一层是契约测试钉死的主接口，本函数只是它的文本视图。
     """
-    blocks = shared_engine().recognize(image)
-    return "\n".join(block.text for block in blocks)
+    rendered = [_join_inline(line) for line in shared_engine().recognize_lines(image)]
+    return "\n".join(chunk for chunk in rendered if chunk)

@@ -271,6 +271,40 @@ def backend_state(path: Any = None) -> tuple[str, str]:
     return "", ""
 
 
+def parse_session_names(output: str) -> list[str]:
+    """从 ``logman query -ets`` 的输出里取会话名（每行第一列）。
+
+    表头/本地化说明行会被前缀过滤挡掉，所以这里只做"取首列"，不猜列名。
+    """
+    names: list[str] = []
+    for line in str(output or "").splitlines():
+        parts = line.split()
+        if parts and parts[0].startswith(SESSION_NAME_PREFIX):
+            names.append(parts[0])
+    return names
+
+
+def stale_session_names(output: str, keep: str = "") -> list[str]:
+    """本应用前缀、但**不是本次会话**的残留 ETW 会话名。
+
+    残留来自异常退出（进程被强杀/崩溃时走不到 ``--terminate_existing_session``）。
+    Windows 对同时存在的 trace 会话有上限，积累十几个之后新会话启动直接报
+    ``error 1450``（系统资源不足）——实机就是这样：整段 FPS 不出数，日志里只有
+    一行 1450，而用户以前单屏玩游戏是能出数的（权限没变，是会话被自己攒满了）。
+    """
+    own = str(keep or "").strip()
+    return [name for name in parse_session_names(output) if name != own]
+
+
+def stop_session_args(name: str) -> list[str]:
+    """``logman stop <名字> -ets``：停掉**自己前缀**的残留会话。
+
+    只按名精确停自己那一场，绝不用通配/固定名去抢别人的采集（同
+    :func:`new_session_name` 的纪律）。实测不需要管理员权限即可停本用户的会话。
+    """
+    return ["logman", "stop", str(name), "-ets"]
+
+
 def new_session_name() -> str:
     """每次采集唯一的 ETW 会话名（``dsh-pet-fps-<pid>-<seq>-<rand>``）。
 

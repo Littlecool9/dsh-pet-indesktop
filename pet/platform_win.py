@@ -41,6 +41,9 @@ _SWP_NOSIZE = 0x0001
 _SWP_NOMOVE = 0x0002
 _SWP_NOACTIVATE = 0x0010
 
+# ---- Win32：Shell「不是全屏应用」豁免用属性名 ----
+_NON_RUDE_PROP = "NonRudeHWND"
+
 
 class _WinRect(ctypes.Structure):
     _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
@@ -113,6 +116,33 @@ def _set_windows_topmost(hwnd: int, on: bool, user32=None) -> bool:
         0, 0, 0, 0,
         _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE,
     ))
+
+
+def _set_windows_non_rude_hwnd(hwnd: int, user32=None) -> bool:
+    """告诉 Shell「本窗不是全屏应用」：任务栏不再被压到 z 序底部。
+
+    背景（issue #296）：Shell 的 "rude window manager" 按几何判定全屏应用——
+    铺满整块显示器的窗口会让任务栏移到 z 序底部，用户观感是「任务栏被所有
+    悬浮窗挡住」。overlay 合成窗铺满 ``screen.geometry()``（含任务栏），
+    4.3.0 默认 overlay 后高概率复现；4.2.1 的 legacy 小窗不受影响。
+
+    MS 文档（``ITaskbarList2::MarkFullscreenWindow`` Remarks）：自 Windows 7
+    起，``SetProp(hwnd, L"NonRudeHWND", HANDLE(TRUE))`` 可豁免该判定；它与
+    ``MarkFullscreenWindow(FALSE)`` 的差别是 Shell **不会**回落到自动检测。
+
+    **必须在窗口显示之前调用**（本机探针：Qt ``showEvent`` 时原生窗
+    ``IsWindowVisible=False``，满足前置条件）。属性挂在 HWND 上：
+    ``setWindowFlag`` 重建原生窗后丢失，靠下一次 ``showEvent`` 重放。
+
+    ``user32=None`` 时取真实 user32 并声明 argtypes——64 位下 HWND/HANDLE 是
+    指针，不声明会被 ctypes 默认 int32 截断成无效句柄（同
+    ``_set_windows_topmost`` 的 6ebfd2b 口径）。返回 API 是否成功。
+    """
+    if user32 is None:
+        user32 = ctypes.windll.user32
+        user32.SetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.HANDLE]
+        user32.SetPropW.restype = wintypes.BOOL
+    return bool(user32.SetPropW(hwnd, _NON_RUDE_PROP, ctypes.c_void_p(1)))
 
 
 class WindowsPerPixelInputController:
@@ -405,3 +435,36 @@ def _fg_fullscreen_win32() -> bool:
         return _fg_fullscreen_probe()[0]
     except Exception:
         return False
+
+
+def _register_windows_hotkey(hotkey_id: int, modifiers: int, vk: int,
+                             hwnd: int = 0, user32=None) -> bool:
+    """注册一个**系统级**热键：``RegisterHotKey(hwnd, id, modifiers, vk)``。
+
+    ``hwnd=0`` 表示绑到本线程的消息队列——本进程的 Qt 消息循环会把它转成
+    ``WM_HOTKEY`` 送给原生事件过滤器（见 ``pet/hotkeys.py``）。
+
+    为什么必须走 Win32：桌宠的合成窗是「不接受焦点」的置顶窗，Qt 的
+    ``QShortcut``/``QKeySequence`` 只在窗口有焦点时有效，对桌宠等于永远不触发。
+    返回 API 是否成功：``False`` 绝大多数情况是**这个组合已被别的程序占用**
+    （Windows 的全局热键表是独占的），要如实报给用户，不能静默。
+
+    ``user32=None`` 时取真实 user32 并声明 argtypes——口径同
+    :func:`_set_windows_topmost`（64 位下 HWND 不声明会被截断）。
+    """
+    if user32 is None:
+        user32 = ctypes.windll.user32
+        user32.RegisterHotKey.argtypes = [
+            wintypes.HWND, ctypes.c_int, ctypes.c_uint, ctypes.c_uint,
+        ]
+        user32.RegisterHotKey.restype = wintypes.BOOL
+    return bool(user32.RegisterHotKey(hwnd, int(hotkey_id), int(modifiers), int(vk)))
+
+
+def _unregister_windows_hotkey(hotkey_id: int, hwnd: int = 0, user32=None) -> bool:
+    """注销热键：``UnregisterHotKey(hwnd, id)``（幂等，未注册时返回 False）。"""
+    if user32 is None:
+        user32 = ctypes.windll.user32
+        user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.UnregisterHotKey.restype = wintypes.BOOL
+    return bool(user32.UnregisterHotKey(hwnd, int(hotkey_id)))

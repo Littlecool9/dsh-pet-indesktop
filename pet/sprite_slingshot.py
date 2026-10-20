@@ -39,6 +39,11 @@ sprite 侧只走公有交互协议（``interaction_state`` / ``set_pos`` /
 config 热读：``enabled`` 每次进入判定前读 ``config.get("slingshot_enabled", True)``
 ——设置页开关即时生效，不缓存；沿用既有键，不新增
 （docs/SETTINGS-CHANGE-GATES.md「准入」）。
+
+坐标所有者：多窗（混合缩放下每块屏一张合成窗）时同一个控制器被所有窗共享，但
+每张窗只有**自己那套局部坐标**。会话因此显式记下接住输入的那张窗（``owner``，
+由调用方在进入时传入）：只有它能画瞄准 UI，别的窗画出来只会是错位的幽灵弹弓；
+Esc 取消也要路由回它——取消会话只是状态，源窗的 grab/按下状态得由它自己收。
 """
 
 from __future__ import annotations
@@ -112,8 +117,9 @@ class SlingshotController:
 
     生命周期（全部由 overlay 事件侧驱动，见 pet/overlay_window.py 的四路调和）：
 
-    - ``maybe_enter_on_right_press(grab_sprite, cursor)``：拖拽中右键 → 进瞄准；
-      已在瞄准 → 取消（就地恢复拖拽）。返回「本次右键是否被消费」。
+    - ``maybe_enter_on_right_press(grab_sprite, cursor, owner=...)``：拖拽中右键 →
+      进瞄准；已在瞄准 → 取消（就地恢复拖拽）。返回「本次右键是否被消费」。
+      ``owner`` = 接住这次输入的窗口（多窗时只有它画瞄准 UI、只有它的 grab 要收）。
     - ``update_pull(pos)``：瞄准中移动 → 拉拽矢量/进度。
     - ``fire(cursor)``：松左键 → 写初速 + "thrown"。
     - ``cancel()`` / ``cancel(resume_drag=True)``：Esc / 再点右键。
@@ -129,6 +135,7 @@ class SlingshotController:
         self._config = config
         self._default_scale = float(scale)
         self._sprite = None
+        self._owner = None
         self._anchor = QPointF()
         self._anchor_cursor = QPointF()
         self._cursor = QPointF()
@@ -168,6 +175,15 @@ class SlingshotController:
     def sprite(self):
         """被瞄准的 sprite（未瞄准为 None）。"""
         return self._sprite
+
+    @property
+    def owner(self):
+        """接住这次会话的那个窗口（未瞄准 / 直调控制器的裸用例为 None）。
+
+        多窗共用一个控制器时，它就是"哪张窗负责画 + 哪张窗的 grab 要收"的唯一
+        回答；单窗下恒等于唯一的 overlay。
+        """
+        return self._owner
 
     @property
     def anchor(self) -> QPointF:
@@ -222,14 +238,22 @@ class SlingshotController:
             self._pull.x(), self._pull.y(), self.progress())
 
     # ---------------------------------------------------------------- 会话进入/退出
-    def maybe_enter_on_right_press(self, grab_sprite, cursor_pos=None) -> bool:
+    def maybe_enter_on_right_press(self, grab_sprite, cursor_pos=None, *,
+                                   owner=None) -> bool:
         """拖拽中收到右键按下：进瞄准（已在瞄准 = 取消并就地恢复拖拽）。
 
         返回 True = 本次右键被弹弓消费（overlay 不再合成 release / 不弹菜单）；
         False = 不消费，调用方维持既有行为（V-13 合成 release）。
 
+        ``owner`` = 接住这次输入的那张窗（多窗时 ctx 不同）；它只回答"谁画、谁
+        收 grab"，不参与会话状态。裸控制器（无窗）传 None，绘制照常。
+
         不消费的情形：``slingshot_enabled`` 为假（每次判定前热读）且当前
         **没有**会话；grab 对象不具备最小公有协议（假 sprite 替身）。
+
+        "本次按下算不算拖拽"不在这里判：进入资格（确有拖拽资格 / 已在瞄准）由
+        overlay 事件侧判定（``_grab_drag_qualified``），本方法只认"给了 grab +
+        开关允许"，锁定位 / 未按 SHIFT 的点击候选根本走不到这里。
 
         已在瞄准时**先**判会话再判 config：瞄准期间设置页把开关关掉，右键
         取消手势仍然必须有效（否则会话会失去退出路径）。
@@ -244,6 +268,7 @@ class SlingshotController:
             return False
         cursor = self._resolve_cursor(grab_sprite, cursor_pos)
         self._sprite = grab_sprite
+        self._owner = owner
         self._anchor = QPointF(grab_sprite.pos)
         self._anchor_cursor = QPointF(cursor)
         self._cursor = QPointF(cursor)
@@ -502,6 +527,7 @@ class SlingshotController:
     # ---------------------------------------------------------------- 内部
     def _clear_session(self) -> None:
         self._sprite = None
+        self._owner = None
         self._anchor = QPointF()
         self._anchor_cursor = QPointF()
         self._cursor = QPointF()

@@ -11,6 +11,9 @@ AIGC:
 
 # onedir 打包流水线（绿色版 zip + Inno Setup 安装包）
 
+Android 原生测试包使用独立 Gradle 工程，共用角色素材；其工具链、资源导出和
+验收见 [Android 悬浮桌宠](ANDROID.md)，不使用下述 PyInstaller 流程。
+
 目标：**运行期零解压**——不再产生 `C:\...\Temp\_MEIxxxxxx` 缓存。
 
 - onefile：每次启动把全部素材解压到系统临时目录；崩溃/强杀/断电残留；启动慢（GIF 版 800MB 每次全解压）
@@ -19,7 +22,8 @@ AIGC:
 ## 一、构建 onedir + zip 绿色版
 
 应用图标由待机封面帧生成（`python scripts/make_icon.py` → `assets/icon.ico`），
-exe 与安装包共用；换形象后重新生成即可。
+exe、运行期窗口图标与安装包共用同一份；换形象后重新生成即可（见下面
+[运行期应用图标](#运行期应用图标assetsiconico三端都带)）。
 
 ```powershell
 # 全部变体：
@@ -36,6 +40,19 @@ dist-onedir\dsh-pet-standalone-webm-chat-portable.zip
 
 绿色版用法：解压 zip 到任意盘（E:\、D:\、U 盘均可），双击 exe 即用；无安装、无缓存。
 
+### 语音依赖门禁（4.3.1）
+
+4.3.1 的语音依赖门禁在三端构建中均强制执行：构建前运行
+`python scripts/verify_bundle_tts.py --environment`，要求已安装的 edge-tts 满足
+`requirements.txt` 的 `>=7.3.1,<8`；冻结后运行同脚本的 `--app-dir` 检查，
+同时核对模块闭包、包内发行元数据和构建环境版本。旧版本、缺元数据或版本不一致
+均中止打包。环境依赖可用 `python -m pip install -r requirements.txt` 更新。
+不能只在系统 Python 升级：必须用实际运行 PyInstaller 的解释器安装和检查。
+协议变更的旧版 403 对照及真实试听证据见
+[4.3.1 交付报告](PR-REPORT-DESKTOP-431-2026-10-16.md)。
+**`--app-dir` 那一份清单从 2026-10-17 起还要求 `keyring`**（收费后端的凭据存储，
+四个变体都要有；理由见下方第四节「`keyring` 四个变体都带」）。
+
 ### 包体瘦身（默认开启，`-SkipSlim` 可关闭）
 
 构建在 Qt runtime 复制之后、中文编码自检之前自动执行 `python scripts\slim_bundle.py`：
@@ -51,6 +68,53 @@ dist-onedir\dsh-pet-standalone-webm-chat-portable.zip
   产品变体下次出包时应该顺手量一遍并回填这里，而不是继续引用 2026-09 的数字；
 - 后续需要完整 Qt 栈（例如启用 QML 界面）时加 `-SkipSlim`；
 - 冒烟建议：把配置切到 `voice_chime_schedule=every_minute` 启动 exe，确认 `%APPDATA%\dsh-pet-standalone-<variant>\voice_chime_cache` 新增 mp3（edge-tts 合成落盘），验证完恢复配置。
+
+### 运行期应用图标：`assets/icon.ico`（三端都带）
+
+`--icon assets/icon.ico`（Windows）/ `--icon assets/icon.icns`（macOS）只决定
+**可执行文件 / `.app` 的图标资源**；窗口标题栏那一个图标是运行期由
+`pet/application_icon.py::load_application_icon()` 从 `<_MEIPASS>/assets/icon.ico`
+读出来的（源码运行时取仓库根的同一相对路径）。所以这一份本身**也必须进包**，
+三个构建脚本各有一行：
+
+| 脚本 | 那一行 |
+|---|---|
+| `scripts/build_onedir.ps1` | `--add-data "assets\icon.ico;assets"` |
+| `scripts/build_macos.sh` | `--add-data "assets/icon.ico:assets"` |
+| `scripts/build_linux.sh` | `--add-data "assets/icon.ico:assets"` |
+
+- **为什么 `--icon` 不算数**：它写的是**文件图标**，冻结进程里窗口图标读的是
+  `_MEIPASS` 布局；而**漏掉这一行不会有任何构建报错**——包照出、图标静默没有。
+  （反过来，源文件**不存在**时 PyInstaller 会直接报 `Unable to find '<源>'` 并中止
+  构建：本机实测 6.22.2，文件源与目录源都是这个行为。所以这里不需要再加一道存在性
+  门，要守的是"这一行在不在、指向对不对"。）
+- **真机实测的落点**：`--add-data "assets/icon.ico;assets"` 在冻结进程里就是
+  `<_MEIPASS>/assets/icon.ico`（onedir 的 `_MEIPASS` = 安装目录里的 `_internal`；
+  本机用只带这一行的最小 onedir 探针包实测：产物 `_internal/assets/icon.ico`
+  419 110 字节，冻结进程里 `is_file()` 为真）。
+- **macOS 上它同样在 `_MEIPASS` 里看得见（源码级推断，未在 Mac 上跑）**：
+  PyInstaller 6 把**数据**目录放 `Contents/Resources`，再把整个目录交叉链接（符号
+  链接）回 `Contents/Frameworks`，而 `sys._MEIPASS` 就是 `Contents/Frameworks`
+  ——两条规则写在同一段源码注释里（`PyInstaller/building/osx.py`，本机装的是
+  6.22.2）。`verify_rapidocr_models.py` 找产物时同时试
+  `Contents/Resources/<rel>` 与 `Contents/Frameworks/<rel>`，正是同一机制的既有证据。
+  Linux 无此层，`_MEIPASS` 就是产物根。
+- **Linux 上更要靠它**：PyInstaller 在 Linux 忽略 `--icon`（见 `build-linux.yml`
+  的说明），窗口/任务栏图标只能来自这条 `--add-data`。
+- **图标本体是构建期生成的**：`scripts/make_icon.py` 从待机封面帧出
+  `assets/icon.ico`（Windows 构建第 [0/3] 步；macOS 另跑 `--icns` 出 `.icns`；
+  Linux 不重生成，随包用的就是入库的那一份）。入库的是**多尺寸** ICO（实测 10 档：
+  256/128/96/64/48/40/32/24/20/16，419 110 字节），只为保证干净克隆与 CI 能构建
+  （`.gitignore` 里是白名单）。
+- **安装包不用额外条目**：`packaging/dsh-pet.iss` 的 `[Files]` 递归拷整个 onedir
+  目录，`SetupIconFile` 另用同一份 ICO 作安装包图标。
+- **契约测试**：`tests/test_application_icon.py` 钉住三件事——三端脚本里的
+  `--add-data` 真的挂在 PyInstaller 调用上、目标目录等于产品常量
+  `pet/application_icon.py::APPLICATION_ICON_RELATIVE_PATH`（`("assets", "icon.ico")`，
+  唯一真相源，脚本里不抄第二份路径）、多尺寸与生成器 `make_icon.ICON_SIZES` 一致；
+  顺带钉住"没有 Qt GUI 应用时不许构造 QIcon"（真实崩溃形态：无应用时
+  `QIcon(<文件>)` 让进程以退出码 127 死掉，空的 `QIcon()` 无碍）与
+  "缺件/坏件只回退成空图标、不抛异常"。
 
 ### 随包分发的第三方二进制：`resources/presentmon/`
 
@@ -147,6 +211,33 @@ dist-onedir\dsh-pet-standalone-webm-chat-portable.zip
   `MODEL_SHA256`、本节的表格与 `THIRD_PARTY_NOTICES.md` 第 7 节。文件名自带版本号
   （`PP-OCRv6_*`）就是为了不让「同名不同版」成为静默替换。
 
+### 随包的许可与声明：`LICENSE` + `THIRD_PARTY_NOTICES.md`（2026-10-17）
+
+三个构建脚本各加两行 `--add-data`（`build_onedir.ps1` 是 `"LICENSE;."` 与
+`"THIRD_PARTY_NOTICES.md;."`，两个 shell 脚本用 `:` 分隔），落在**包的数据根**——
+onedir 里就是 `_internal/`，安装包整目录拷贝即随分发：
+
+| 文件 | 为什么必须随包 |
+|---|---|
+| `LICENSE` | 项目自身的 MIT 许可全文 |
+| `THIRD_PARTY_NOTICES.md` | 第 1 节是内置点击音（`assets/sounds/duck/Ya1.mp3` / `Ya2.mp3`，MeteorNOX）的**完整 MIT 正文**；其余各节是角色素材署名限制、PresentMon / OCR 模型 / lunar-python 等随包第三方组件的许可与来源 |
+
+- **为什么不能只靠源码仓库**：`assets/sounds` 一直在打（`--add-data "assets\sounds;assets\sounds"`），
+  而许可正文只在仓根那份文档里。产物是独立分发的复制件，MIT 要求许可正文随复制件一起走，
+  「见源码仓库的 THIRD_PARTY_NOTICES.md」对拿到 zip / 安装包 / APK 的用户不成立。
+- **漏了不报错**：`--add-data` 在源文件存在时静默拷贝，删掉这两行不会有任何构建错误，
+  只是产物里少两份声明（同 `assets/icon.ico` 那类失败模式）。守卫是
+  [`tests/test_packaging_keyring_notices.py`](../tests/test_packaging_keyring_notices.py)：
+  三端脚本里那两行必须真的挂在 `--add-data` 上、目标目录是本节的 `.`。
+- **本机实测的落点**：`_internal/LICENSE` 与 `_internal/THIRD_PARTY_NOTICES.md`
+  （`_MEIPASS` 指向 `_internal`，探针源码 `probe_frozen.py` 与原始输出见
+  `.scratch/packaging-final-20261017/evidence.txt`；最小探针，不是产品变体）。
+- **Android 侧同一件事**：`scripts/export_android_assets.py::copy_notices` 把
+  `android/NOTICE.txt`、`android/LICENSE-APACHE-2.0.txt` 与仓根
+  `THIRD_PARTY_NOTICES.md` 一起拷进 APK 资产根（见 [Android 文档](ANDROID.md)）。
+- **新增/替换随包素材或第三方二进制时**：同步维护 `THIRD_PARTY_NOTICES.md` 的对应小节
+  （换版本要同时改产品侧常量与本节表格，见各条目的「升级路径」）。
+
 ### 游戏帧率的采集权限（不随包分发任何提权组件）
 
 PresentMon 的 ETW 会话只对管理员或 `Performance Log Users`（SID `S-1-5-32-559`）成员
@@ -213,13 +304,61 @@ E:\tools\InnoSetup6\ISCC.exe /DMyAppShortName=dsh-pet-standalone-gif /DMyAppExeN
 8. **FPS 开关打开、当前账户不在 `Performance Log Users` 组时**：岛上那段不显示任何数字，
    而是采集链路自己的权限原文；设置页帧率段出现「授予采集权限…」按钮
    （本机没有验证过真实加组后的采集，见上面「游戏帧率的采集权限」）
+9. `_internal\assets\icon.ico` 在包里（419 110 字节、10 档尺寸），启动后窗口标题栏
+   是桌宠图标而不是系统通用图标。缺了这一件产品不崩、构建也不报错，只是图标静默
+   消失，所以接线由 `tests/test_application_icon.py` 的打包契约测试守住
+   （见上面「运行期应用图标」）。
+   **本机实测**（真实 `windows` 平台插件，非 offscreen）：`setWindowIcon(load_application_icon())`
+   之后 `WM_GETICON(ICON_BIG)` 拿到真实 HICON 句柄，不调那一行时 big/small 都返回 0
+   （= 系统通用图标）；标题栏截图见 `.scratch/appicon/titlebar.png`。
+10. `_internal\LICENSE` 与 `_internal\THIRD_PARTY_NOTICES.md` 在包里，后者含内置点击音的
+   完整 MIT 正文。同样是"缺了不报错"的一类，见上面「随包的许可与声明」。
+   **本机实测**（最小 onedir 探针，非产品变体）：`_MEIPASS/LICENSE` 与
+   `_MEIPASS/THIRD_PARTY_NOTICES.md` 都在，MIT 正文逐字命中；原始输出见
+   `.scratch/packaging-final-20261017/evidence.txt`。
+11. **no-chat 变体的收费 TTS 凭据能存住**：`_internal` 里有 `keyring` 包，冻结进程里
+   `keyring.get_keyring()` 解析出真实后端（Windows = WinVaultKeyring）。少了它，
+   MiMo / 豆包这类要 API Key 的后端在 no-chat 包里**永远**自报「没配 Key」，而设置页
+   还会报「已保存」。**本机实测**同上（同一次探针；消融对照：修复前参数的同类探针
+   `import keyring` 直接 `ModuleNotFoundError`，而**构建阶段不报任何错**）。现在这一条由
+   产物侧清单兜住：`verify_bundle_tts.py --app-dir` 的 `MINIMUM_MODULES` 含 `keyring`，
+   真产物实测"修复前参数判缺、修复后不缺"（同 `evidence.txt`）；构建期以退出码 4 中止。
 
 ## 四、无 Chat 变体兼容性
 
 无 Chat 入口使用 `packaging/pet_entry_no_chat.py`，构建规格明确排除 `pet.chat`
-和 `keyring`。配置仍可能来自曾经启用 Chat 的用户目录，因此运行时
+（**只排它**）。配置仍可能来自曾经启用 Chat 的用户目录，因此运行时
 `Config._migrate_plaintext_keys_to_keyring()` 对缺失的 `pet.chat` 只跳过迁移，
 不能让配置加载失败；除该明确缺失模块外的导入错误仍应抛出。
+
+### `keyring` 四个变体都带（2026-10-17 修正）
+
+2026-10-17 之前，三个构建脚本把 `keyring` 与 `pet.chat` 一起排除在 no-chat 变体之外
+（Windows 是 `--exclude-module keyring`，Linux/macOS 是 `excludes="pet.chat,keyring"`），
+收集参数 `--collect-all keyring` 只挂在 `*-chat` 分支里。这个组合是错的：
+
+- 语音报时设置页（`pet/voice_chime_settings.py`）**刻意不依赖 `pet.chat`**（历史事故：
+  设置页在打包版整体打不开），它在 chat / no-chat 两条链路上都注册；MiMo 与豆包这两个
+  收费后端的 API Key 字段因此对所有变体都可见；
+- 凭据只走 `pet/tts_secrets`：钥匙串优先，写不进去就退化为**写它的那个进程**的内存；
+- 设置页默认跑在**独立进程**（`settings_process_isolation`，见 `pet/config.py`），
+  真正合成的 `VoiceChimeService` 在主宠进程。于是包外无 keyring 时：用户填了 Key、
+  界面报「已保存（仅本次运行）」，主进程读到的却是空串，收费后端永远自报「没配 Key」，
+  而界面上没有任何一处说得出原因。
+
+所以现在：`--collect-all keyring` 在**四个变体 × 三端**都无条件生效，`keyring` 不再出现
+在任何排除清单里；no-chat 只排除 `pet.chat`。守卫是
+[`tests/test_packaging_keyring_notices.py`](../tests/test_packaging_keyring_notices.py)
+（构建参数清单）＋ [`tests/test_tts_secrets.py`](../tests/test_tts_secrets.py)（跨进程读不到
+的行为回归）。界面对这条链路的说法：写失败时行状态是「没能保存上（只在本进程内存，重启
+就没了）」并弹一次提示，**不再**出现「已保存」或「本次运行有效」这类承诺。
+
+**产物侧还有一道门**：`scripts/verify_bundle_tts.py` 的兜底清单
+（`MINIMUM_MODULES`）里加了 `keyring`——三端构建在 PyInstaller **之后**都会跑它的
+`--app-dir`，少带 keyring 即以退出码 4 中止。只钉脚本里的 `--collect-all` 不够：
+`--collect-all` 在包收集不到时只打一行 WARNING 就继续（这正是那个脚本存在的理由）。
+真产物实测：修复后的参数 keyring 在包里、修复前的参数（`--exclude-module keyring`）判缺，
+原始输出见 `.scratch/packaging-final-20261017/evidence.txt`。
 
 打包验收至少包含：
 
@@ -227,6 +366,7 @@ E:\tools\InnoSetup6\ISCC.exe /DMyAppShortName=dsh-pet-standalone-gif /DMyAppExeN
 $env:QT_QPA_PLATFORM = "offscreen"
 python -m pytest -q tests/test_chat_subsystem.py::test_no_chat_packaging_uses_isolated_entrypoint
 python -m pytest -q tests/test_config_key_migration.py
+python -m pytest -q tests/test_packaging_keyring_notices.py tests/test_tts_secrets.py
 ```
 
 ## 五、注意事项

@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""设置页「互动」域：页内任务标签（点击与音效 / 自言自语）+ 本域全部设置行。
+"""设置页「互动」域：页内任务标签（点击与音效 / 自言自语 / 天气 / 趣味）+ 本域全部设置行。
 
 **为什么单独一个模块**：``modern_settings_dialog.py`` 是"上帝对话框"（行数预算
 反复触顶），本域的行定义与页装配搬到这里，收益是双向的——既让互动域长得像
 「菜单」域那样可分页（主人反馈「单页面太多东西了」），又把 60+ 行从该文件搬出。
 
-**为什么用页内标签而不是再拆一个侧栏域**：侧栏 9 个域是外部契约
+**为什么用页内标签而不是再拆一个侧栏域**：侧栏 10 个域是外部契约
 （``SETTINGS_DOMAIN_NAV``，多处测试与截图脚本按索引/名称依赖）；同一个能力域内的
-多个**同级任务**适合页内标签（先例：菜单域的 菜单编排 / 快捷启动 / 外观）。本域两个
-标签就是两个同级任务：**点击与音效**（输入 + 点击反馈）、**自言自语**（周期气泡的
-台词与配图）。
+多个**同级任务**适合页内标签（先例：菜单域的 菜单编排 / 快捷启动 / 外观）。本域四个
+标签就是四个同级任务：**点击与音效**（输入 + 点击反馈）、**自言自语**（周期气泡的
+节奏，加上两条链路共用的台词与配图）、**天气**、**趣味**（卡片名仍是「抽签」）——后两个都是"用户主动
+拉一次、桌宠给一个结果"的互动面，行与控件由各自模块构建（本模块只挂页）。
 
 **接线契约**（与 ``settings_file_interpret`` 同口径）：
 
@@ -27,8 +28,8 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from .settings_widgets import SettingRow, SettingsSection, SettingsTabContainer
 
-TAB_KEYS = ("click", "self_talk", "weather")
-TAB_LABELS = ("点击与音效", "自言自语", "天气")
+TAB_KEYS = ("click", "self_talk", "weather", "divination", "hotkeys")
+TAB_LABELS = ("点击与音效", "自言自语", "天气", "趣味", "快捷键")
 
 
 def _page(dialog, title: str, sections: list[tuple[str, list[SettingRow]]]) -> QWidget:
@@ -74,8 +75,8 @@ def build_click_rows(dialog) -> list[SettingRow]:
                 "click_self_talk_precache",
                 "台词自动预缓存",
                 "保存设置后，在后台把点击台词与点击动画绑定台词合成为本机语音文件，"
-                "点击时秒出、断网也能说（需要本机 CosyVoice 语音服务在运行；"
-                "没装本地语音服务时保持关闭即可，新台词仍走在线合成）。",
+                "点击时秒出、断网也能说（用与语音报时相同的语音后端和音色，可先在"
+                "语音报时里点一次试听确认能出声；不想占磁盘就保持关闭，新台词仍走在线合成）。",
                 dialog.self_talk_voice_precache_check,
             ),
             SettingRow("click_talk_bindings", "点击动画台词绑定", "为每个点击动画设置专属自言自语台词。", dialog.click_talk_bindings_btn),
@@ -98,7 +99,12 @@ def build_click_rows(dialog) -> list[SettingRow]:
 
 
 def build_self_talk_rows(dialog) -> list[SettingRow]:
-    """「自言自语」组的行（周期气泡的台词 / 节奏 / 配图）。"""
+    """「自言自语」组的行（节奏 / 显示时间 / 台词 / 配图）。
+
+    节奏与配图大小只属于周期链路（显隐只跟 ``self_talk``）；显示时间、候选内容、
+    图片目录、配图概率是**两条链路共读**的同一份配置，显隐跟「周期或点击任一开启」
+    （见 ``ModernSettingsDialog._update_self_talk_content_controls``）。
+    """
     return [
         SettingRow(
             "self_talk_bubble_style",
@@ -130,11 +136,11 @@ def build_self_talk_rows(dialog) -> list[SettingRow]:
 
 
 def build_interaction_domain(dialog) -> QWidget:
-    """「互动」域整页：一个页内任务标签容器（两个标签各含自己的组）。
+    """「互动」域整页：一个页内任务标签容器（四个标签各含自己的组）。
 
-    组名 ``输入`` / ``点击反馈`` / ``自言自语`` 保持不变——它们是对外契约，
-    既有用例（test_menu_layout / test_desktop_pet_features / test_requested_regressions）
-    按组名硬编码断言。
+    组名 ``输入`` / ``点击反馈`` / ``自言自语`` / ``天气`` / ``抽签`` 保持不变——
+    它们是对外契约，既有用例（test_menu_layout / test_desktop_pet_features /
+    test_requested_regressions / test_settings_interaction_tabs）按组名硬编码断言。
     """
     tabs = SettingsTabContainer(dialog)
     tabs.addTab(
@@ -169,4 +175,21 @@ def build_interaction_domain(dialog) -> QWidget:
     from .settings_weather import build_weather_tab
 
     tabs.addTab(TAB_KEYS[2], TAB_LABELS[2], build_weather_tab(dialog))
+    # 第四个同级任务：每日一签（"用户主动拉一次、桌宠给一个结果"，同天气一族）。
+    # **标签名用「趣味」**：她 2026-10-15 的归类要求是「抽签这个功能…归类为趣味」；
+    # 卡片/分组名仍是「抽签」。落地形态是**页内标签而不是一级域**——只有一组的
+    # 「趣味」一级域按 docs/SETTINGS-CHANGE-GATES.md 的准入不合格（新域须 ≥2 稳组，
+    # 且为塞第 11 个域压缩侧栏间距会损害所有域的点击目标）。两者的区别只在容器层级：
+    # 一级域要过准入，页内标签不用——她的归类意图由标签名承载。
+    from .settings_divination import build_divination_tab
+
+    tabs.addTab(TAB_KEYS[3], TAB_LABELS[3], build_divination_tab(dialog))
+    # 第五个同级任务：全局快捷键（"用户怎么唤出它"）。默认全不绑，见 settings_hotkeys。
+    from .settings_hotkeys import build_hotkey_rows
+
+    tabs.addTab(
+        TAB_KEYS[4],
+        TAB_LABELS[4],
+        _page(dialog, TAB_LABELS[4], [("快捷键", build_hotkey_rows(dialog))]),
+    )
     return tabs

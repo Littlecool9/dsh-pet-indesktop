@@ -1020,8 +1020,11 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self.update()
         # 右键菜单改大小属于用户主动设置：子肥鱼置位 user_customized（占位），
         # 下次生成不被主设置刷新；位置自存等后台写盘不置位（_save_position 不动旗）。
+        # 当场落盘：旗标压在草稿区会冻住档案快照，紧接着的自存触发的那次 reload
+        # 读回旧尺寸又把窗口弹回去（#304 的「闪一下」）。
         if getattr(getattr(self, "cfg", None), "instance_id", None):
             self.cfg.set("user_customized", True)
+            self.cfg.save()
         self._save_position()
 
     # ================================================================ 位置
@@ -3321,6 +3324,11 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
                 play_release_sound(self._press_sound_pair, volume)
             if not self._try_open_quick_chat_from_bubble(g):
                 self._on_click()
+                # 每日一签：每天第一次点桌宠给一行提示（钩子由 app.py 以公有属性
+                # 注入，未注入时无操作——与语音报时的窗口钩子同一手法）。
+                hint = getattr(self, "on_user_interaction", None)
+                if callable(hint):
+                    hint()
         self._dragging = False
         self._interaction_state = "IDLE"
         self._press_global = None
@@ -3758,7 +3766,8 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
 
     def show_bubble(self, text: str, duration_ms: int = 3200, subtitle: str | None = None,
                     *, sticky: bool = False, buttons: list[tuple[str, object]] | None = None,
-                    title_first: bool = False, width_locked: bool = False) -> None:
+                    title_first: bool = False, width_locked: bool = False,
+                    reserve: bool = True) -> bool:
         """向桌宠头顶冒泡提示（app 层反馈用，非侵入）。重要气泡会占用气泡位。
 
         ``sticky=True`` 显示「一直挂到主动关闭」的气泡（审批等）：不启动自动
@@ -3770,12 +3779,16 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         且自动 sticky（点选前一直挂着）。
 
         提醒消息队列激活期间（有审批/问题/硬失败/卡住提醒在展示），普通气泡
-        直接让路丢弃，不覆盖提醒弹窗。"""
+        直接让路丢弃，不覆盖提醒弹窗。
+
+        返回**是否真上了屏**（与 overlay 壳的 ``show_bubble`` 同契约）：不可见 /
+        设置页抑制期 / 提醒占位时为 False。提醒类调用方据此改道，别把"没展示"
+        当成"已交付"。"""
         if not self.isVisible() or self._bubble_suppressed:
-            return
+            return False
         if not sticky and not buttons and getattr(self, "_alert_current", None) is not None:
             # 有提醒在展示：普通气泡让路，绝不覆盖审批弹窗
-            return
+            return False
         if sticky or buttons:
             self._sticky_bubble_active = True
             self._sticky_text = str(text)
@@ -3787,12 +3800,15 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
                 pet_scale=self.scale, subtitle=self._sticky_subtitle, sticky=True,
                 buttons=self._sticky_buttons,
             )
-            return
+            return True
         _set_speech_bubble_interactive(self)
-        self.hold_bubble(duration_ms / 1000.0 + 2.0)
+        # Match the overlay host: lyrics do not reserve the notification slot.
+        if reserve:
+            self.hold_bubble(duration_ms / 1000.0 + 2.0)
         self._speech_bubble.show_text(
             str(text), window_placement.bubble_anchor_rect(self), duration_ms, pet_scale=self.scale,
             subtitle=str(subtitle or ""), title_first=title_first, width_locked=width_locked)
+        return True
 
     def hide_bubble(self, *args, **kwargs):
         """Compatibility delegation (window_alerts.hide_bubble)."""

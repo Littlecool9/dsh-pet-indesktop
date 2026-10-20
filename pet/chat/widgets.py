@@ -434,7 +434,10 @@ class MessageBubble(QFrame):
         self.thinking_body.setObjectName("thinking-body")
         self.thinking_body.setWordWrap(True)
         self.thinking_body.setTextFormat(Qt.TextFormat.PlainText)
-        self.thinking_body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.thinking_body.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self.thinking_body.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.thinking_body.setStyleSheet(
             "QLabel#thinking-body { color: rgba(128,128,128,0.95); font-size: 12px;"
             " border-left: 2px solid rgba(128,128,128,0.35); padding: 2px 0 2px 10px; margin: 2px 0 8px 0; }"
@@ -449,7 +452,10 @@ class MessageBubble(QFrame):
         self.body = QLabel(self.surface)
         self.body.setObjectName("bubble-body")
         self.body.setWordWrap(True)
-        self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.body.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self.body.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         # AI 回复按 Markdown 渲染（链接可点、可选中复制）；用户消息保持纯文本
         if role == "assistant":
             self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)

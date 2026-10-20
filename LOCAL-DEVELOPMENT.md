@@ -3,6 +3,11 @@
 适用范围：本地 Windows x64，2026-10-14 配置，源码基线 `b55f203`（上游 main / v4.3.0）。
 项目功能及上游说明见 [README](README.md)，工程规则见 [AGENTS.md](AGENTS.md)，完整文档入口见 [docs/INDEX.md](docs/INDEX.md)。
 
+2026-10-20 同步：当前本地分支 `codex/focus-mode` 已整合上游 `147170f`（v4.3.4），
+保留专注模式、自动循环与角色收尾；本页后文 2026-10-14 的版本和验证数字为历史记录。
+此次冲突处理、真实双屏/歌词/OCR 验证与完整回归见
+[上游合并报告](docs/PR-REPORT-UPSTREAM-434-MERGE-2026-10-20.md)。
+
 ## 启动
 
 - 日常使用：双击根目录的 `start-local.bat`，无控制台窗口。

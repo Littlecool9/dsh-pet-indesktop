@@ -206,4 +206,7 @@ jobs:
           files: |
             dist-onedir/*-portable.zip
             dist-onedir/*-setup.exe
-          generate_release_notes: true
+          # 草稿：构建完只挂附件，正文与发布由维护者核对后手动 publish。
+          # generate_release_notes 必须关——否则会覆盖维护者写的发布正文。
+          draft: true
+          generate_release_notes: false

@@ -280,6 +280,12 @@ def test_click_speech_alone_asks_for_the_audio_channel():
         def __init__(self, **values):
             self.config = _Cfg(values)
 
+        def _self_talk_voice_configs(self):
+            # 这两个键是**每宠键**：真值在各自的 slot 档案里，主配置只是 slot0 兜底。
+            # 判据必须读"每只宠此刻真正在用的那份视图"（v4.3.3 用户实测：设置里
+            # 勾着、档案里也有值，点击就是不朗读且无日志——判据读主配置恒 False）。
+            return [self.config]
+
     def wanted(**values) -> bool:
         return AppShell._self_talk_speak_wanted(_Shell(**values))
 
@@ -288,3 +294,32 @@ def test_click_speech_alone_asks_for_the_audio_channel():
     assert wanted(self_talk_speak_enabled=False, click_show_self_talk=True, self_talk_enabled=True) is False
     # 键缺失（老配置）→ 缺省为关，不因"读不到"就白建音频通道
     assert wanted(click_show_self_talk=True, self_talk_enabled=True) is False
+
+
+def test_click_speech_judges_each_pet_own_slot_view():
+    """通道判据按**每宠视图**判断，不看主配置（v4.3.3 用户实测的根因）。
+
+    ``self_talk_speak_enabled`` 与 ``click_show_self_talk`` 都在 ``PER_PET_KEYS``
+    里：设置页写进 ``config-slot-N.json``，主配置里根本没有这两个键。判据读主配置
+    就永远是 False —— 音频通道不建，点击静默无声、连日志都没有。
+    """
+    from pet.app import AppShell
+
+    class _Shell:
+        def __init__(self, main, pets):
+            self.config = _Cfg(main)
+            self._pets = [_Cfg(values) for values in pets]
+
+        def _self_talk_voice_configs(self):
+            return self._pets
+
+    silent_main = {}          # 主配置里没有这两个每宠键
+    pet_on = {"self_talk_speak_enabled": True, "click_show_self_talk": True}
+    pet_off = {"self_talk_speak_enabled": False, "click_show_self_talk": True}
+
+    assert AppShell._self_talk_speak_wanted(_Shell(silent_main, [pet_on])) is True, (
+        "slot 档案开着就必须建通道（主配置没有这些键是正常的）")
+    assert AppShell._self_talk_speak_wanted(_Shell(silent_main, [pet_off])) is False
+    assert AppShell._self_talk_speak_wanted(
+        _Shell(silent_main, [pet_off, pet_on])) is True, "任一只开着就要通道"
+    assert AppShell._self_talk_speak_wanted(_Shell(silent_main, [])) is False

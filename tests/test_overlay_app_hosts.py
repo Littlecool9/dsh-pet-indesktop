@@ -27,6 +27,7 @@ from PySide6.QtCore import QLockFile
 from PySide6.QtWidgets import QApplication
 
 import pet.app as app_mod
+import pet.window as window_mod
 import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
 from pet.app import AppShell, PetInstance
@@ -315,6 +316,71 @@ def test_todo_reminder_bubbles_on_overlay_host(tmp_path):
 
         assert "站会" in _bubble_text(overlay)
         assert shell._toast_windows == [], "落了气泡就不该再弹系统通知"
+    finally:
+        _teardown(overlay)
+
+
+class _LegacyBubbleHost:
+    """legacy ``PetWindow.show_bubble`` 的最小宿主（真实现，只补它读的状态面）。"""
+
+    def __init__(self) -> None:
+        self._bubble_suppressed = False
+        self._alert_current = None
+        self._speech_bubble = _LegacyBubble()
+        self.scale = 1.0
+
+    def isVisible(self) -> bool:  # noqa: N802 - 对齐 Qt API
+        return True
+
+    def hold_bubble(self, seconds: float) -> None:
+        pass
+
+    def visible_content_rect(self):
+        from PySide6.QtCore import QRect
+        return QRect(0, 0, 100, 100)
+
+
+class _LegacyBubble:
+    def __init__(self) -> None:
+        self.shown: list[str] = []
+
+    def hide(self) -> None:
+        pass
+
+    def show_text(self, text, *_args, **_kwargs) -> None:
+        self.shown.append(text)
+
+
+def test_show_bubble_returns_delivery_verdict_on_both_topologies(tmp_path):
+    """overlay 壳与 legacy ``PetWindow`` 的 ``show_bubble`` 返回同一套契约。
+
+    交付确认制（免打扰汇报 / 待办 / 报时 / 节日）靠这个返回值判断"到底上没上
+    屏"：两套拓扑必须同义——真上屏 True，让路/抑制 False，且绝不返回 None
+    （legacy 早期成功失败都返回 None，只能当"已展示"，误判出静默丢失）。
+    """
+    shell, inst, overlay = _make_overlay_app(tmp_path)
+    try:
+        overlay.overlay.show()
+        overlay.spawn_pet()
+        legacy = _LegacyBubbleHost()
+
+        assert overlay.show_bubble("普通气泡") is True
+        assert window_mod.PetWindow.show_bubble(legacy, "普通气泡") is True
+
+        # 审批提醒占着气泡位：普通气泡让路，两边都返回 False
+        overlay.show_alert("审批请求", buttons=[("同意", lambda: None)])
+        assert overlay._alert_current is not None
+        assert overlay.show_bubble("普通气泡") is False
+        legacy._alert_current = {"id": "approval"}
+        assert window_mod.PetWindow.show_bubble(legacy, "普通气泡") is False
+
+        # 设置页抑制期
+        overlay.clear_alerts()
+        overlay.set_bubble_suppressed(True)
+        assert overlay.show_bubble("普通气泡") is False
+        legacy._alert_current = None
+        window_mod.PetWindow.set_bubble_suppressed(legacy, True)
+        assert window_mod.PetWindow.show_bubble(legacy, "普通气泡") is False
     finally:
         _teardown(overlay)
 

@@ -9,11 +9,13 @@
 
 三个硬约束（都在 ``tests/test_screen_capture_result_panel.py`` 里钉死）：
 
-1. **不抢焦点**：窗口带 ``WindowDoesNotAcceptFocus``（= Windows 的
-   ``WS_EX_NOACTIVATE``）与 ``WA_ShowWithoutActivating``——主人正在别的窗口打字时
-   弹出结果，输入焦点不许被抢走（与灵动岛、桌面通知同口径）。
-2. **鼠标交互照常**：防抢焦点窗仍然收得到鼠标事件（岛上的卡片按钮就是先例），
-   所以"复制"做成**按钮**而不是指望用户 Ctrl+C——这个窗口拿不到键盘焦点。
+1. **显示时不抢焦点**：窗口带 ``WA_ShowWithoutActivating``——主人正在别的窗口打字
+   时弹出结果，输入焦点不许被抢走（与灵动岛、桌面通知同口径）。
+   **不再带** ``WindowDoesNotAcceptFocus``（``WS_EX_NOACTIVATE``）：那个标志连
+   "用户点击后激活"也一并禁掉，于是键盘事件永远进不来——选中一段后 Ctrl+C 复制不了，
+   只能右键菜单（2026-10-19 实机反馈）。现在保留"打开不激活"、放开"点击可激活"。
+2. **鼠标交互照常**：鼠标事件本来就有（岛上的卡片按钮是先例）；文本视图是
+   ``ClickFocus``，选中后 Ctrl+C 能复制，右键菜单与工具栏的「复制」按钮照旧。
 3. **Esc 可关**：同上，面板收不到键盘事件，Esc 只能走应用级事件过滤器；过滤器
    **永不吞事件**（恒返回 ``False``）——主人的 Esc 语义（弹弓取消、关设置页）
    一个都不能被结果面板挡住。
@@ -25,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPalette, QPen, QPixmap, QTextOption
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -43,6 +45,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .brand_icons import pick_loading_icon
 
 __all__ = ["SHORT_RESULT_LIMIT", "SYSTEM_STYLE", "ScreenResult", "ScreenResultPanel",
            "resolve_style"]
@@ -134,10 +138,47 @@ def resolve_style(style: str | None, palette=None) -> str:
     return "dark"   # 连调色板都问不到（无 QApplication）：退回本片原有的暗色
 
 
+#: 加载动画里图标的方槽边长（逻辑像素）：素材按原始宽高比等比塞进方槽并居中。
+_ICON_BOX = 44
+
+
+def _fitted_rect(icon: QPixmap, box: int) -> QRectF:
+    """图标等比居中塞进 ``box×box`` 方槽的目标矩形（非方形素材不许被拉变形）。
+
+    鲸蛙素材是 847×682，硬塞进方槽会被横向压扁；这里按窄边定比例、长边贴槽。
+    尺寸按**设备无关像素**算（``deviceIndependentSize``）：2x 素材的逻辑边长是物理
+    边长的一半，按物理像素算会把 HiDPI 素材画成两倍大。返回的矩形以槽心为原点，
+    正好配 ``paintEvent`` 里已经 ``translate`` 过的坐标系。
+    （别把这条口径套到 ``drawPixmap`` 的 source 上——那个参数是**物理像素**，
+    取整图要用 ``icon.rect()``。）
+    """
+    source = icon.deviceIndependentSize()
+    ratio = min(box / max(1.0, source.width()), box / max(1.0, source.height()))
+    width, height = source.width() * ratio, source.height() * ratio
+    return QRectF(-width / 2, -height / 2, width, height)
+
+
 class _LoadingFish(QWidget):
-    """加载动画：DeepSeek 官方鲸鱼轻轻浮动 + 喷泡泡（项目吉祥物；素材
-    ``assets/chat/ds_whale.png`` 随包分发，simple-icons CC0 渲出的渐变蓝 PNG）。
-    素材缺席时回退为三点跳动（绝不让"加载动画"自己成为故障点）。
+    """加载动画：品牌图标轻轻浮动 + 喷泡泡（素材 ``assets/chat/`` 随包分发）。
+
+    **每一轮加载抽一次图标**（:meth:`start`，由 :meth:`ScreenResultPanel.show_result`
+    的过程态调用，四条链路 OCR/翻译/问答/重翻都走这里）：``random.random() < 0.1``
+    出鲸蛙，其余 DS logo（:func:`brand_icons.pick_loading_icon`）。整轮保持所选的那
+    一只——相位只驱动浮动与泡泡，不轮播也不每帧重抽。
+
+    **轮次身份（``round_key``）由调用方给**，一次用户操作一个身份：
+
+    - 换身份＝换了件事，哪怕上一轮还没收口也**重抽**（失败/取消只有一个"失败理由"、
+      没有终态结果可摆到面板上，收口漏一处也不许把下一轮的脸留住）；
+    - 同身份＝同一次操作的过程更新（``actions._run_translate`` 先"正在识别"再"正在
+      翻译"），不重抽——换脸等于告诉用户"换了件事"；
+    - 收口只收**自己的轮**（:meth:`stop` 的归属判据）：两条链路共用这一块面板，重翻
+      的收口不许把采集链路还在跑的那一轮连动画一起收掉。
+
+    ``hideEvent`` 只停表、**留着轮次身份**：卡片被收起（用户关掉 / 被别的链路的终态
+    顶下去）是共用面板的覆盖行为，不是"换了件事"；真正结束一轮的是本轮终态结果或
+    显式收口（``ScreenResultPanel.end_loading``）。素材全缺席时回退为三点跳动
+    （绝不让"加载动画"自己成为故障点）。
 
     面板是防抢焦点的复用件，动画用自己的 QTimer：``hideEvent``/非 loading 结果
     都会停掉它，绝不会在面板收起后还占着定时器空转。
@@ -149,41 +190,50 @@ class _LoadingFish(QWidget):
         self.setFixedHeight(64)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._phase = 0.0
-        self._whale = self._load_whale()
+        self._round_key: object = None   # 当前轮的身份（换身份＝换了件事）
+        self._icon = QPixmap()           # 本轮的主角：start() 抽定，整轮不变
         self._timer = QTimer(self)
         self._timer.setInterval(50)   # 20fps 足够顺滑又省电
         self._timer.timeout.connect(self._tick)
 
-    @staticmethod
-    def _load_whale() -> QPixmap:
-        import sys
-        from pathlib import Path
+    def _current_icon(self) -> QPixmap:
+        """本轮加载选中的那一只（``start`` 抽定之后整轮不变）。"""
+        return self._icon
 
-        candidates = []
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            candidates.append(Path(meipass) / "assets" / "chat" / "ds_whale.png")
-        candidates.append(Path(__file__).resolve().parents[2] / "assets" / "chat" / "ds_whale.png")
-        for path in candidates:
-            if path.is_file():
-                pixmap = QPixmap(str(path))
-                if not pixmap.isNull():
-                    return pixmap
-        return QPixmap()
+    def start(self, round_key: object = None) -> None:
+        """开始（或继续）一轮加载：**某一张卡片的图标只在"新的一轮"里抽一次**。
 
-    def start(self) -> None:
+        "新的一轮"＝身份变了（``round_key`` 与当前轮不同）或本轮还没有图标
+        （上一轮已收口）。同身份的过程更新只重启计时器，不重抽（见类文档）。
+        """
+        if round_key != self._round_key or self._icon.isNull():
+            self._round_key = round_key
+            self._icon = pick_loading_icon()
         if not self._timer.isActive():
             self._timer.start()
 
-    def stop(self) -> None:
+    def stop(self, round_key: object) -> bool:
+        """收口一轮加载；返回是否**真的**收了口（键不合＝别人的轮，什么都没动）。
+
+        ``round_key`` 是轮次身份（没有缺省值：收口必须说清收的是谁的轮）：只有当前轮的
+        主人能收它——重翻链路的收口不许把采集链路还在跑的那一轮连动画一起收掉。键不合
+        时连可见性都不碰。
+        """
+        if round_key != self._round_key:
+            return False
+        self._round_key = None
+        self._icon = QPixmap()
         self._timer.stop()
+        self.setVisible(False)   # 轮收了口就不该还挂着"在跑"的卡片
+        return True
 
     def _tick(self) -> None:
         self._phase += 0.13
         self.update()
 
     def hideEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
-        self.stop()
+        # 只停表：轮次身份留着（见类文档——被收起/被顶下去不是换了件事）
+        self._timer.stop()
         super().hideEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
@@ -195,7 +245,8 @@ class _LoadingFish(QWidget):
         phase = self._phase
         cx, cy = self.width() / 2, self.height() / 2 + 10
 
-        if self._whale.isNull():
+        icon = self._current_icon()
+        if icon.isNull():
             # 素材缺席的回退：三点跳动（形状简单但绝不能不画）
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#1677e8"))
@@ -206,7 +257,7 @@ class _LoadingFish(QWidget):
             painter.end()
             return
 
-        # 泡泡：从鲸鱼头顶（喷水孔位置）往上升、越来越淡
+        # 泡泡：从图标头顶（喷水孔位置）往上升、越来越淡
         for i in range(3):
             t = (phase * 0.5 + i / 3.0) % 1.0          # 0..1 循环
             bubble_x = cx - 6 + math.sin(t * math.pi * 2 + i) * 4
@@ -224,14 +275,17 @@ class _LoadingFish(QWidget):
             painter.drawEllipse(QPointF(bubble_x, bubble_y), r, r)
             painter.drawEllipse(QPointF(bubble_x, bubble_y), r, r)
 
-        # 鲸鱼：随相位轻轻上下浮动 + 极轻微摇摆（像浮在水里）
+        # 本轮加载的主角：随相位轻轻上下浮动 + 极轻微摇摆（像浮在水里）——
+        # 相位只推动画，图标是 start() 抽定的那一只（不轮播、不重抽）；
+        # 出图等比居中（鲸蛙 847×682 硬塞方槽会被压扁）：目标矩形是等比后的
+        # **逻辑**尺寸，源矩形取 ``icon.rect()``（**物理**像素的整图）——三参重载的
+        # source 就是物理像素，按设备无关尺寸给会让 2x 素材只画出左上那 1/4。
         bob = math.sin(phase) * 2.4
         tilt = math.sin(phase * 0.7) * 0.06
-        size = 44
         painter.save()
         painter.translate(cx, cy + bob)
         painter.rotate(math.degrees(tilt))
-        painter.drawPixmap(-size // 2, -size // 2, size, size, self._whale)
+        painter.drawPixmap(_fitted_rect(icon, _ICON_BOX), icon, QRectF(icon.rect()))
         painter.restore()
         painter.end()
 
@@ -294,6 +348,14 @@ class ScreenResultPanel(QFrame):
     - **可拖动**：按住标题栏区域拖（标题/状态标签对鼠标透明，事件落到面板上）；
     - **可缩放**：右下角 ``QSizeGrip``；用户拉过的尺寸在本实例上记住
       （面板是复用件，下一张结果沿用你调好的大小——只记进程内，不碰配置）。
+
+    **共用一件，但同一时刻只认一轮**（跨截图返修 P1）：四条链路都会往这一块面板上摆
+    卡片，所以"谁有权改这块面板"必须是明确的一处口径——最新到过的那一轮。这个判据
+    **不在面板里**，而在落点 ``ScreenCapturePresenter``（``actions._claims_display``，
+    唯一一份水位）：它必须先判再通知/再开面板，短结果不上面板也得判。面板因此只做
+    "照着摆"：被顶下去的旧卡片根本到不了这里，一个字段都不会被改、连还在跑的加载
+    动画都不碰；面板自己留的轮次状态只有加载动画那一轮的**身份相等**
+    （:class:`_LoadingFish`）。
     """
 
     def __init__(self, parent: QWidget | None = None, *, style: str | None = None) -> None:
@@ -307,7 +369,6 @@ class ScreenResultPanel(QFrame):
             Qt.WindowType.Tool
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.WindowDoesNotAcceptFocus
         )
         # 真圆角靠透明背景 + paintEvent 手画卡片；不透明会把圆角吃成直角
         # （实机"白盒"观感之源），而透明窗上 QSS 又不画自身背景（A/B 实测）。
@@ -328,7 +389,13 @@ class ScreenResultPanel(QFrame):
         self._escape_installed = False
         self._on_continue_ask = None  # show_result 注入的"继续提问"回调
         self._continue_image = None
+        self._continue_below = None   # 这张卡片自己的选区（「继续提问」随卡片带走）
         self._on_language_change = None  # show_result 注入的语言行回调
+        # 展示归属**不在这里**：共用面的归属由落点 ``ScreenCapturePresenter`` 一份
+        # 水位判（见 ``actions._claims_display``）——面板只负责"照着摆"，不再自己
+        # 记身份历史（旧的 ``_round_epoch`` 字典每个身份留一条 int、进程内永不清理）。
+        # 面板对 ``round_key`` 的用法只剩一处：加载动画那一轮的**身份相等**（抽不抽 /
+        # 收不收自己的口，见 :class:`_LoadingFish`）。
         self._build()
         self._grip = QSizeGrip(self)
         self._grip.setObjectName("screen-result-grip")
@@ -495,8 +562,9 @@ class ScreenResultPanel(QFrame):
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         view.setMinimumHeight(min_h)
         view.setMaximumHeight(max_h)
-        # 只读文本视图不许在点击时抢键盘焦点（面板本来也激活不了）
-        view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # 点击才聚焦（打开时仍不抢焦点，见 WA_ShowWithoutActivating）：
+        # 不给任何焦点的话 Ctrl+C 永远没有落点，用户只能右键菜单复制。
+        view.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         return view
 
     # ---------------------------------------------------------------- 只读视图
@@ -537,7 +605,9 @@ class ScreenResultPanel(QFrame):
         callback = self._on_continue_ask
         if callback is None or self._continue_image is None:
             return
-        callback(self._continue_image, self._primary_view.toPlainText())
+        # 选区随卡片一起交出去（``(图, 正文, 本卡选区)``）：回调方不许回头去问"最近一次
+        # 采集的选区"——那张卡的图与文字可能来自更早的一次操作（跨截图串用）。
+        callback(self._continue_image, self._primary_view.toPlainText(), self._continue_below)
 
     def _language_changed(self, _index: int) -> None:
         callback = self._on_language_change
@@ -554,18 +624,40 @@ class ScreenResultPanel(QFrame):
 
     # ---------------------------------------------------------------- 展示
     def show_result(self, result: ScreenResult, anchor: QWidget | None = None,
-                    on_continue_ask=None, below=None, on_language_change=None) -> None:
-        """换内容 + 定位 + 显示（复用同一件面板，不重复造窗）。
+                    on_continue_ask=None, below=None, on_language_change=None,
+                    round_key: object = None) -> bool:
+        """换内容 + 定位 + 显示（复用同一件面板，不重复造窗）；返回是否摆了这张卡。
 
-        ``on_continue_ask``：签名 ``(image, recognized_text) -> None``——面板底部
+        ``on_continue_ask``：签名 ``(image, recognized_text, below) -> None``——面板底部
         「继续提问…」的回调（由编排层注入，把图带进问答浮窗）。``result.image``
-        为空时入口不出现（没有上下文的"继续问"是空转）。
+        为空时入口不出现（没有上下文的"继续问"是空转）。``below`` 是**这张卡自己的**
+        选区，随卡片一起交出去（见 :meth:`_continue_ask`）。
 
         ``on_language_change``：签名 ``(target) -> None``——翻译语言行的回调。
         只在 ``result.language_selector`` 为真且回调存在时出现该行。
 
         ``below``：采集选区（SelectionRect 或矩形）——给定时面板落在选区正下方
         （实机反馈：落在屏幕角落视线要来回跳），缺省维持锚/屏幕边的旧定位。
+
+        ``round_key``：这张卡片所属的轮次身份（编排层给的，一次用户操作一个）——面板
+        只用它管**加载动画那一轮**：过程态靠它决定"抽不抽"、终态靠它决定"收的是不是
+        自己那一轮"（见 ``_LoadingFish``）。
+
+        **展示归属不在这里**（跨截图返修 P1 + 二轮返修）：这份面板是共用件，但"谁有权
+        改它"的判据只有一份，在落点 ``ScreenCapturePresenter``（``actions._claims_display``）
+        ——只有它能先判再通知、并且连不上面板的短结果也一起判（短结果照样覆写岛/气泡）。
+        被顶下去的旧卡片因此**根本到不了这一行**：正文、状态行、译文槽、语言行一个字
+        都不改，连还在跑的加载动画都不碰（它属于新一轮），面板的可见性/位置也不动。
+
+        真实故障：A 的翻译结果摆着 → 用户切语言触发重翻 → 重翻还在路上时用户又截了
+        第二张图，第二张的过程态卡片已经占住面板 → A 的旧终态回来。旧实现先写正文
+        （把第二张的卡片写成 A 的原文/译文）**再**判轮次归属，连第二张还在转的动画一起
+        收掉：用户看到的是一张静止的旧结果，第二张"正在跑"没有留下任何痕迹。
+
+        面板这一层**不留任何按身份的登记**（``ScreenResult`` → 控件是本方法唯一的
+        副作用）：谁能改这块屏由上游那**一份**水位说了算，面板再记一份就是两套口径
+        分叉的起点。返回 ``True`` 表示"照单摆了"——归属判在落点，那里才是"这张卡该不该
+        出现"的唯一结论（``ScreenCapturePresenter.show`` 判不过就根本不调用本方法）。
         """
         self._title.setText(str(result.title))
         self._status.setText(str(result.status))
@@ -579,9 +671,9 @@ class ScreenResultPanel(QFrame):
         loading = bool(result.loading)
         self._loading.setVisible(loading)
         if loading:
-            self._loading.start()
+            self._loading.start(round_key)
         else:
-            self._loading.stop()
+            self._loading.stop(round_key)
         self._copy_btn.setVisible(not loading)
         # 空正文（引擎缺席/没认到字）不占地方：面板只剩标题栏与状态说明
         self._primary_view.setVisible(bool(result.primary.strip()))
@@ -601,6 +693,7 @@ class ScreenResultPanel(QFrame):
         )
         self._continue_btn.setVisible(self._on_continue_ask is not None)
         self._continue_image = result.image
+        self._continue_below = below
         # 加载态不摆"正在识别…"这类文字（实机反馈：动画即可，文字像卡死说明）
         self._status.setVisible(bool(result.status) and not loading)
 
@@ -619,6 +712,19 @@ class ScreenResultPanel(QFrame):
         self.show_near(anchor, below=below)
         self.show()
         self.raise_()
+        return True
+
+    def end_loading(self, round_key: object = None) -> bool:
+        """显式收口一轮加载；返回是否真的收了口（键不合＝别人的轮，什么都没动）。
+
+        给**没有终态内容可摆**的出口用（失败 / 取消）：终态结果走 ``show_result``
+        的 ``loading=False``。不收口的后果是加载卡继续转、下一独立操作还接着上一轮
+        的脸（抽签失灵），所以这类出口必须显式结束这一轮。
+
+        ``round_key`` 是本轮的身份：别人的轮收不得（重翻链路的收口不许把采集链路
+        还在跑的那一轮收掉——两条链路共用这一块面板，见 ``_LoadingFish``）。
+        """
+        return self._loading.stop(round_key)
 
     def show_near(self, anchor: QWidget | None = None, below=None) -> None:
         """贴边定位：有选区矩形优先跟选区；否则优先锚（岛）左边，再贴屏幕边。

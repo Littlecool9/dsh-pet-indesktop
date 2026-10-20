@@ -589,6 +589,7 @@ class DynamicIsland(QWidget):
         self._bump_anim_left = 0.0
         # 图标位图状态（icon="auto"/"img:<路径>" 时用；emoji 模式不碰）
         self._icon_provider = None  # 头像取图回调，AppShell 注入
+        self._identity_provider = None  # 角色身份取源，AppShell 注入（见 set_identity_provider）
         self._icon_pixmap_cache: QPixmap | None = None
         self._icon_img_failed = False  # img: 加载失败也记住，免每帧重试磁盘 IO
         self._icon_pixmap_token = 0  # 头像换代计数：内容层缓存按它判失效
@@ -912,6 +913,17 @@ class DynamicIsland(QWidget):
         self._icon_provider = fn if callable(fn) else None
         self._clear_icon_cache()
         self.update()
+
+    def set_identity_provider(self, fn) -> None:
+        """注入**角色身份**取源（AppShell 提供：当前呈现身份的每宠配置视图）。
+
+        ``character`` 是每宠键，真值在 slot 档案里；本窗口持有的 ``config`` 是
+        进程级配置，只给全局设置用。全局面那个 ``character`` 是出厂默认的残留
+        （slot0 迁移与 ``Config.save`` 都会把每宠键从 ``config.json`` 清掉），
+        拿它取名字 = 换完角色岛名还停在默认那只。回调每次取名时现取，所以换角色
+        无需重新注入；未注入时沿用 ``self.config``（直接构造岛的场合）。
+        """
+        self._identity_provider = fn if callable(fn) else None
 
     def set_balance_info(self, tier_text: str, balance_text: str) -> None:
         self._balance_tier_text = str(tier_text or "余额峰谷 --")
@@ -3139,8 +3151,15 @@ class DynamicIsland(QWidget):
         return segments
 
     def _character_name(self) -> str:
-        character_id = str(self.config.get("character", catalog.DEFAULT_CHARACTER))
-        return self.config.character_alias(character_id) or character_id
+        """岛上显示的角色名（用户别名优先，回退角色 id）。
+
+        取源是 ``set_identity_provider`` 注入的**当前身份视图**——``character`` 是
+        每宠键，本窗口的 ``config`` 只有出厂默认的残留，读它会让换完角色的岛名
+        停在默认那只。未注入时退回 ``self.config``（直接构造岛的场合）。
+        """
+        source = self.config if self._identity_provider is None else self._identity_provider()
+        character_id = str(source.get("character", catalog.DEFAULT_CHARACTER))
+        return source.character_alias(character_id) or character_id
 
     def _icon_spec(self) -> str:
         """图标配置原值（auto / img:<路径> / 文字或 emoji）。"""

@@ -45,6 +45,11 @@ def _player(monkeypatch, values=None, hit_min_dv=100.0, clock=None):
                         lambda path, volume: plays.append(volume) or True)
     monkeypatch.setattr(click_sound, "resolve_click_sound_candidates",
                         lambda pack, data_dir=None: ["/tmp/click.wav"])
+    # 先把上一条用例延后提交的那一声抽干再清表：播放走
+    # ``QTimer.singleShot(0)`` 且音效池是进程级的，别处（如撞出真碰撞的用例）
+    # 排下的播放会落在本用例的第一次 ``_pump`` 里，混进"我的动作响了几声"。
+    _pump()
+    plays.clear()
     world = SimpleNamespace(hit_min_dv=hit_min_dv)
     player = SpriteSoundPlayer(_Cfg(values), world,
                                clock=clock or (lambda: 1000.0))
@@ -513,7 +518,9 @@ def test_shell_click_feedback_and_collision_listener(tmp_path, monkeypatch):
         # 的 test_click_sound_uses_clicked_sprite_config 因此红过）。
         _pump()
         # 碰撞监听器已挂接
-        assert shell._sound.on_collision in shell.collision._listeners
+        # 碰撞监听器已挂接：共享播放器经壳按事件所在屏的世界分派（多屏逐屏一份
+        # 世界，播放器只持一块屏做缺省）
+        assert shell._on_collision_sound in shell.collision._listeners
     finally:
         shell._delete_runtime_marker()
 
@@ -531,3 +538,31 @@ def test_light_pet_island_hit_below_raw_dv_floor_still_sounds():
     event = SimpleNamespace(a="pet-1", b="island", j=32.5)
     assert player._hit_floor(event) <= 32.5
     assert player._hit_floor(SimpleNamespace(a="pet-1", b="pet-2", j=32.5)) == 300.0
+
+
+def test_click_gate_picks_from_the_whole_candidate_list(monkeypatch, tmp_path):
+    """点击门在多文件包里**现挑**，不再固定文件名排序第一那个（issue #308）。
+
+    设置页对「自定义文件夹（随机）」的承诺就是随机播放；旧实现取 ``candidates[0]``，
+    整个进程内永远播同一个文件（报告者 9 个 .mp3 的目录只播排序第一）。
+    """
+    files = [tmp_path / f"{index}.mp3" for index in range(3)]
+    monkeypatch.setattr(click_sound, "resolve_click_sound_candidates",
+                        lambda pack, data_dir=None: list(files))
+    picks: list[int] = []
+
+    def choose(paths):
+        picks.append(len(paths))
+        return paths[len(picks) - 1]          # 每次换一个 → 证明真的走了现挑
+
+    monkeypatch.setattr(click_sound, "choose_sound", choose)
+    player, played = _recording_player(
+        monkeypatch, {"click_sound_pack": {"kind": "folder", "path": str(tmp_path)}})
+    for _ in range(3):
+        player._last_play = 0.0
+        player.on_click()
+        _pump()
+
+    assert picks == [3, 3, 3], "点击门必须把**整个**候选列表交给 choose_sound"
+    paths = [str(path) for path, _ in played]
+    assert len(set(paths)) > 1, f"多文件包点击必须换文件，实际：{paths}"

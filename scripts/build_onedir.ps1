@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 <#
 .SYNOPSIS
     dsh-pet-standalone onedir build + portable zip packaging.
@@ -48,6 +48,16 @@
       (excluding them made OCR unusable in the frozen bundle - measured
       2026-10-13).
 
+    Credential store + bundled notices (2026-10-17):
+      Every variant collects keyring, including the no-chat ones: the voice-chime
+      settings page and its paid TTS backends (MiMo / Doubao API keys) exist in all
+      four variants, and a bundle without keyring can only keep a key in the memory
+      of the process that wrote it (settings pages run in their own process), so the
+      main pet process never sees it while the UI says "saved". The repo-root LICENSE
+      and THIRD_PARTY_NOTICES.md are bundled too: the click sounds under
+      assets\sounds\duck are MIT assets whose license text only lives in the notices
+      file, so shipping the assets without it ships the material without the license.
+
     Examples:
       powershell -ExecutionPolicy Bypass -File scripts\build_onedir.ps1
       powershell -ExecutionPolicy Bypass -File scripts\build_onedir.ps1 -Variant webm -SkipZip
@@ -74,6 +84,9 @@ Write-Host "[build] pet-runtime-2026-09-01.1 build_started=$buildStamp source=$r
 #   GBK/cp1252 二次解码源码或资源（乱码包根因）。
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
+
+python scripts\verify_bundle_tts.py --environment
+if ($LASTEXITCODE -ne 0) { throw '[tts] upgrade build dependencies with pip install -r requirements.txt' }
 
 $variants = @{
     'webm-chat' = @{ Name = 'dsh-pet-standalone-webm-chat'; Entry = 'packaging\pet_entry.py' }
@@ -129,8 +142,12 @@ if ($nodeExe) {
 
 # GIF builds ship assets/characters_gif (webm dir must NOT be bundled, else runtime prefers webm)
 $datas = if ($isGif) { 'assets/characters_gif;assets/characters_gif' } else { 'assets/characters;assets/characters' }
-# No-chat builds exclude the chat subsystem and keyring (kept out of the bundle)
-$excludes = if ($noChat) { @('--exclude-module', 'pet.chat', '--exclude-module', 'keyring') } else { @() }
+# no-chat 变体只排 chat 子系统本体（2026-10-17 起不再排 keyring）：
+# 语音报时设置页与它的收费 TTS 后端（MiMo / 豆包都要 API Key）在四个变体里都在，
+# 少了 keyring 的变体只能把 Key 留在**写它的那个进程**的内存里——而设置页跑在独立
+# 进程（--settings），主程序读不到，界面却报「已保存」。四个变体三个平台都由
+# tests/test_packaging_keyring_notices.py 钉住。
+$excludes = if ($noChat) { @('--exclude-module', 'pet.chat') } else { @() }
 # PyOpenGL 与本应用无关（Qt 用自带 OpenGL），但其 freeglut_README.txt 是
 # CP1252 编码，会触发 check_bundle_encoding 的 UTF-8 严格校验（该自检针对
 # 中文资源，第三方 README 属误伤）；排除后包体也更小。
@@ -186,8 +203,34 @@ foreach ($m in @('matplotlib','matplotlib_inline','seaborn','IPython','ipykernel
 foreach ($m in @('django','hypothesis')) {
     $excludes += @('--exclude-module', $m)
 }
-# Chat 版必须显式收集 keyring（API Key 系统安全存储）；no-chat 不收集
-$keyringCollect = if ($noChat) { @() } else { @('--collect-all', 'keyring') }
+# keyring 必须显式收集，且**四个变体都要**（API Key 的系统安全存储）：no-chat 变体把
+# pet.chat 排掉了，静态分析因此摸不到 keyring（chat 的 SecretStore 是它原来的唯一入口），
+# 而语音报时的收费后端（pet/tts/mimo、pet/tts/doubao）照旧收 API Key。少了它，凭据只能
+# 留在写它的进程内存里，主程序永远读不到（见上面 $excludes 那段）。
+$keyringCollect = @('--collect-all', 'keyring')
+# **keyring 的 Windows 后端要 win32ctypes**（pywin32-ctypes 包，import 名 `win32ctypes`）。
+#
+# 注意归因（2026-10-19 核验，纠正先前的说法）：4.3.3 的包**并不缺它**。两项证据要分开看：
+# ① 产物层：`CArchiveReader` 读 4.3.3 部署 exe 的内嵌 PYZ，里面有 27 个 `win32ctypes.*`
+#    模块（PyInstaller 自带 hook-win32ctypes 收的；`_internal` 目录里看不到它只是"纯 Python
+#    模块进 PYZ"的正常表现）。
+# ② 模块层（**不是**冻结进程）：以产物 `_internal` 作 sys.path、`python -S` 隔离系统
+#    site-packages，`import win32ctypes.pywin32.win32cred` 成功——这只说明包内那份源码能被
+#    同版本解释器加载，不能当成"冻结运行时已验证"（keyring 本体会因 jaraco 只在 PYZ 里而
+#    在这条路径下 ImportError）。
+# 所以"缺这个模块"不是那次 401 的根因。
+#
+# 仍然显式收集，理由换成加固：那条收集是**隐式**的，依赖 PyInstaller hook 与 keyring
+# 版本恰好的配合；hook 消失或依赖布局变化就静默丢，症状是钥匙串后端不可用（凭据只活在
+# 写它的进程内存里：界面显示"已保存"、重启后读到空）。显式收集让这件事在构建期可见，
+# 并进 `scripts/verify_bundle_tts.py` 的 **Windows** 兜底清单（缺了退出码 4；Linux/macOS
+# 不装这个依赖，门禁不许要求它）。
+$keyringCollect += @('--collect-all', 'win32ctypes')
+# 随包分发的许可与声明：assets\sounds\duck 下的内置点击音是 MeteorNOX 的 MIT 素材，
+# 许可正文写在仓根 THIRD_PARTY_NOTICES.md 第 1 节——只打 assets\sounds 等于只分发素材、
+# 不分发许可。两份都落在 _internal（onedir 的数据根），安装包整目录拷贝即随分发。
+# 这两行刻意写成内联的 --add-data（同 assets\icon.ico 那行）：漏掉不报错，只在产物里
+# 静默少一份声明，所以它要待在参数段里一眼看得见（守卫：tests/test_packaging_keyring_notices.py）。
 $chatData = if ($noChat) { @() } else {
     @(
         '--add-data', 'pet\chat\legacy_styles.qss;pet\chat',
@@ -326,6 +369,11 @@ if (-not $SkipBuild) {
         "VARIANT = '$Variant'`n",
         [System.Text.UTF8Encoding]::new($false)
     )
+    # 运行期图标（窗口/标题栏）也要进包：上面的 --icon 只把图标写进 exe 的**文件图标**
+    # 资源，窗口图标由 pet/application_icon.py 从 <_MEIPASS>\assets\icon.ico 读。
+    # 漏掉这一行不会有任何报错（只有源文件不存在时 PyInstaller 才会挡下），因此由
+    # tests/test_application_icon.py 的打包契约测试守着。见 docs\ONEDIR_PACKAGING.md
+    # 「运行期应用图标」。
     python -m PyInstaller --noconfirm --clean --onedir --windowed --noupx `
         --name $name `
         --distpath dist-onedir `
@@ -346,6 +394,9 @@ if (-not $SkipBuild) {
         @chatData `
         --add-data "assets\sounds;assets\sounds" `
         --add-data "assets\chat;assets\chat" `
+        --add-data "assets\icon.ico;assets" `
+        --add-data "LICENSE;." `
+        --add-data "THIRD_PARTY_NOTICES.md;." `
         --add-data "integrations;integrations" `
         --add-data "resources\presentmon;resources\presentmon" `
         @rapidocrData `
@@ -596,6 +647,8 @@ if ($LASTEXITCODE -ne 0) { throw "[rapidocr] bundle cannot run local OCR (module
 Write-Host "[rapidocr] bundle carries the engine module + models + rapidocr config" -ForegroundColor Green
 
 # ---------- exe smoke test（启动成功才继续打包） ----------
+python scripts\verify_bundle_tts.py --app-dir $appDir
+if ($LASTEXITCODE -ne 0) { throw '[tts] bundled dependency version or modules are invalid' }
 # 注意：PyInstaller --windowed 在 import 失败时会弹错误对话框且进程存活，
 # 只看"进程 8 秒没退出"是假阳性。这里先做确定性加载链验证（从 bundle 布局
 # 真实加载 Shiboken/QtCore/QtGui/QtWidgets），再启动 exe 检查主窗口出现。

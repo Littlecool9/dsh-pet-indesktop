@@ -267,8 +267,18 @@ class IslandCollisionBody(QObject):
 
     # ------------------------------------------------------------ 几何
     def _wall_active(self) -> bool:
-        """墙是否生效：运行中 + 岛可见 + 非细条态 + 非几何动画。"""
+        """墙是否生效：运行中 + 岛可见 + 非细条态 + 非几何动画。
+
+        ``self._island`` 可能是 ``None``：岛被配置关掉时 AppShell 仍会按
+        ``collision_enabled`` 建碰撞体并挂到窗口的 ``_island_clamp_body`` 钩子上。
+        这里不判空就抛 ``AttributeError: 'NoneType' object has no attribute
+        'isVisible'``，而异常发生在 ``move_window_towards`` 内部、``host.move()``
+        之前 —— 位置永不更新，表现为「拖不动、也不漫游」，且窗口化的冻结程序
+        把槽内异常吞掉，日志里一个字都没有（issue #311 附带的第二条）。
+        """
         if not self._running:
+            return False
+        if self._island is None:
             return False
         if not self._island.isVisible():
             return False

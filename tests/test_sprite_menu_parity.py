@@ -456,6 +456,56 @@ def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
         shell._delete_runtime_marker()
 
 
+def test_music_submenu_offers_every_player_a_launch_entry(tmp_path):
+    """overlay 侧音乐子菜单给每个播放器一条「打开…给主人放歌」入口。
+
+    酷狗 / 汽水是后补的（此前只有网易云 / QQ音乐）：入口少了就是"用户按名字找不到
+    那个能放歌的项"。文案按 ``music_players`` 注册表逐键核对，不手抄标签（避免与
+    注册表漂移，也让四个键的映射抄错时立刻红）；窗口侧同一棵树由
+    ``test_menu_tree_matches_reference_petwindow`` 的逐项包含 + 兄弟顺序保证同源。
+    """
+    from pet import music_players
+
+    shell, _instance, _config = _make_overlay(
+        tmp_path, values={"music_lyric_enabled": True})
+    try:
+        music = _find(build_sprite_full_menu(shell), "音乐").menu()
+        assert music is not None
+        labels = [a.text() for a in music.actions() if not a.isSeparator()]
+    finally:
+        shell._delete_runtime_marker()
+
+    for key in ("netease", "qqmusic", "kugou", "soda"):
+        expected = f"打开{music_players.player_label(key)}给主人放歌"
+        assert expected in labels, f"音乐子菜单缺 {key} 的启动入口：{labels}"
+    launch = [text for text in labels if text.startswith("打开")]
+    assert len(launch) == len(set(launch)) == 4, f"启动入口重复或数量不对：{launch}"
+
+
+def test_divination_entry_appears_when_app_shell_provides_the_callback(tmp_path):
+    """回调存在 → overlay 菜单必须出现「抽支签」。
+
+    真 app 里回调来自 ``AppShell.trigger_divination_draw``（app.py），门面
+    ``SpriteMenuFacade`` **必须显式代理** ``on_divination_draw``：注册表的可用性
+    判定是 ``callable(getattr(facade, "on_divination_draw", None))``，漏代理就
+    **静默少一项**——2026-10-15 林小姐截图发现的就是这一条（模板里 visible: true
+    也照样不显示）。
+
+    这里不能靠"和 PetWindow 对齐"那条拦：脚手架两侧都没有 app 回调，
+    包含关系照样成立，红不了。所以要显式把回调装上再断言。
+    """
+    shell, instance, _config = _make_overlay(tmp_path)
+    try:
+        instance.shell.trigger_divination_draw = lambda: None
+        labels = _all_labels(build_sprite_full_menu(shell))
+        assert "抽支签" in labels, "回调可用时「抽支签」必须出现在 overlay 菜单里"
+        # 反向：把回调摘掉，这一项必须消失（可用性判定真的在起作用，不是硬编码显示）
+        del instance.shell.trigger_divination_draw
+        assert "抽支签" not in _all_labels(build_sprite_full_menu(shell))
+    finally:
+        shell._delete_runtime_marker()
+
+
 def test_harness_launcher_gets_widget_dialog_parent(tmp_path, monkeypatch):
     """harness 四个入口的模态父必须是 QWidget（facade 不能当 QMessageBox parent）。
 
@@ -865,7 +915,8 @@ def test_golden_spin_skips_while_throw_egg_active(tmp_path):
         active = True
 
     try:
-        shell._throw_egg = _BusyEgg()
+        # 探头/彩蛋逐屏一份：本用例只有一块屏，替身挂到那块屏的宿主上
+        shell._main_host.throw_egg = _BusyEgg()
         shell.trigger_golden_spin()
         assert shell._golden_spin_timer is None or not shell._golden_spin_timer.isActive()
     finally:

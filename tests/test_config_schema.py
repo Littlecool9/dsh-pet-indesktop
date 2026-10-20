@@ -34,6 +34,7 @@ from pet.island_segments import CPU, NETWORK
 RELOAD_WHITELIST_SNAPSHOT = frozenset(
     {
         "agent_cost_enabled",
+        "allow_cross_screen",
         "anim_menu_stay_open",
         "animation_gap_seconds",
         "auto_hide_fullscreen",
@@ -71,6 +72,10 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "dialogue_last_scope",
         "dialogue_mode",
         "dialogue_phrases",
+        "divination_enabled",
+        "divination_hint",
+        "divination_speak",
+        "divination_state",
         "drag_physics",
         "drop_gravity",
         "dynamic_island",
@@ -84,6 +89,10 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "game_fps_target_mode",
         "golden_spin_direct",
         "golden_spin_on_click",
+        # 全局快捷键（进程级；空串 = 不绑）
+        "hotkey_open_chat",
+        "hotkey_look_screen",
+        "hotkey_screen_capture",
         "harness_autostart",
         "harness_launch_target",
         "idle_low_fps_enabled",
@@ -148,18 +157,30 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "throw_strength",
         "todo_reminder_enabled",
         "todo_reminder_lead_minutes",
+        "todo_reminder_speak",
         "user_customized",
         "voice_chime_custom_quotes_en",
         "voice_chime_custom_quotes_zh",
         "voice_chime_custom_times",
+        "voice_chime_doubao_pitch",
+        "voice_chime_doubao_speaker",
         "voice_chime_enabled",
+        "voice_chime_mimo_model",
+        "voice_chime_mimo_style",
+        "voice_chime_mimo_voice",
         "voice_chime_pitch",
         "voice_chime_rate",
+        "voice_chime_sapi_rate",
+        "voice_chime_sapi_voice",
         "voice_chime_schedule",
         "voice_chime_show_bubble",
         "voice_chime_show_quote",
+        "voice_chime_tts_backend",
+        "voice_chime_tts_fallback",
+        "festival_birthday",
         "festival_custom_quotes_cn",
         "festival_custom_quotes_west",
+        "festival_reminder_animation",
         "festival_reminder_cn",
         "festival_reminder_count",
         "festival_reminder_enabled",
@@ -197,6 +218,15 @@ SPECIAL_CASED_KEYS = frozenset({"version", "proactive_screen", "agent_link", "ch
 # 2026-10-07 P1 Slice C 加灵动岛指标 1（island_metrics，列表序=优先级），白名单 140。
 # 2026-10-11 加游戏帧率 2（game_fps_target_mode 枚举 / game_fps_process 纯 exe 名，
 # 都是**全局**键：岛与采集链路读主配置），白名单 142。
+# 2026-10-13 加语音报时合成后端 9 键（tts_backend / tts_fallback / mimo_model /
+# mimo_voice / mimo_style / sapi_voice / sapi_rate / doubao_speaker / doubao_pitch，
+# 随 provider 注册表一起进来），白名单 151。
+# 2026-10-14 补登记节日提醒 2 键（festival_reminder_animation / festival_birthday）：
+# 它们随「节日动画 + 我的生日」一起进来时**漏登在 config.py 的默认 dict 与白名单里**
+# （设置页有行、config 没键），于是本轮把它们渲染出来后被
+# `test_settings_default_marks` 的「冻结集」抓到——补齐后白名单 153。
+# 2026-10-18 加待办语音播报 1 键（todo_reminder_speak，默认 False：复用语音报时的
+# 音频通道，不新增语速/音色/音量键），白名单 154。
 DEFAULTS_SNAPSHOT = RELOAD_WHITELIST_SNAPSHOT | SPECIAL_CASED_KEYS
 
 
@@ -712,6 +742,87 @@ def test_set_cleans_music_player_paths(tmp_path):
     assert cfg.data["music_player_paths"] == {"netease": "D:/a.exe"}
     cfg.set("music_player_paths", "not-a-dict")
     assert cfg.data["music_player_paths"] == {}
+
+
+def test_music_player_paths_accepts_all_registered_players(tmp_path):
+    """四播放器的路径都要能存下来（清洗键集与 music_players.PLAYERS 同源）。
+
+    回归面：清洗名单只认 netease/qqmusic 时，酷狗/汽水手填的路径在 Config()
+    构造与 reload() 里被静默丢掉，用户填了等于没填。
+    """
+    payload = {
+        "netease": "D:/CloudMusic/cloudmusic.exe",
+        "qqmusic": "D:/QQMusic/QQMusic.exe",
+        "kugou": "D:/KuGou/KGMusic/KuGou.exe",
+        "soda": "C:/Users/me/AppData/Local/SodaMusic/SodaMusic.exe",
+    }
+    _write_config(tmp_path, {"version": 4, "music_player_paths": payload})
+    cfg = Config(base=tmp_path)
+    assert cfg.data["music_player_paths"] == payload
+
+    cfg.reload()
+    assert cfg.data["music_player_paths"] == payload, "reload() 把新播放器的路径丢了"
+
+
+def test_music_player_paths_keys_track_registry(tmp_path):
+    """清洗键集 = 注册表键集（不许在 config 里另抄一份固定键表）。"""
+    from pet import music_players
+
+    assert set(music_players.player_keys()) == {"netease", "qqmusic", "kugou", "soda"}
+    payload = {key: f"D:/{key}/player.exe" for key in music_players.player_keys()}
+    _write_config(tmp_path, {"version": 4, "music_player_paths": payload})
+    cfg = Config(base=tmp_path)
+    assert cfg.data["music_player_paths"] == payload
+
+
+def test_music_player_paths_drops_unknown_keys_but_keeps_old_two(tmp_path):
+    """旧两键升级后不丢；表外键（含键名大小写不符、拼错的播放器键）照旧丢弃。"""
+    _write_config(
+        tmp_path,
+        {
+            "version": 4,
+            "music_player_paths": {
+                "netease": "D:/CloudMusic/cloudmusic.exe",
+                "qqmusic": "D:/QQMusic/QQMusic.exe",
+                "kugou": "D:/KuGou/KGMusic/KuGou.exe",
+                "kuGou": "D:/KuGou/KuGou.exe",       # 键名大小写不符 = 表外键
+                "soda_music": "D:/SodaMusic.exe",
+                "unknown": "D:/evil.exe",
+            },
+        },
+    )
+    cfg = Config(base=tmp_path)
+    assert cfg.data["music_player_paths"] == {
+        "netease": "D:/CloudMusic/cloudmusic.exe",
+        "qqmusic": "D:/QQMusic/QQMusic.exe",
+        "kugou": "D:/KuGou/KGMusic/KuGou.exe",
+    }
+
+
+def test_four_player_paths_persist_across_restart(tmp_path):
+    """四键写盘 → 重启（新建 Config）后仍是四键，且空串/未知键不落盘。"""
+    cfg = Config(base=tmp_path)
+    cfg.set("music_player_paths", {
+        "kugou": "D:/KuGou/KGMusic/KuGou.exe",
+        "soda": "D:/SodaMusic/SodaMusic.exe",
+        "netease": "D:/CloudMusic/cloudmusic.exe",
+        "qqmusic": "",
+        "bogus": "D:/bogus.exe",
+    })
+    cfg.save()
+
+    fresh = Config(base=tmp_path)
+    assert fresh.data["music_player_paths"] == {
+        "kugou": "D:/KuGou/KGMusic/KuGou.exe",
+        "soda": "D:/SodaMusic/SodaMusic.exe",
+        "netease": "D:/CloudMusic/cloudmusic.exe",
+    }
+    fresh.reload()
+    assert fresh.data["music_player_paths"] == {
+        "kugou": "D:/KuGou/KGMusic/KuGou.exe",
+        "soda": "D:/SodaMusic/SodaMusic.exe",
+        "netease": "D:/CloudMusic/cloudmusic.exe",
+    }
 
 
 def test_huge_integer_literal_falls_back_to_default(tmp_path):

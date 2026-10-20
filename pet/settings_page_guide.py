@@ -15,7 +15,10 @@ test_architecture.py``）没有余量，而本功能的主体是一段页内跳�
   ``sections_in_layout_order`` 走真实布局树，与用户在旧页看到的顺序同源。
 - **跳转条只做「页内直达到区」**：不做新导航层、不改侧栏 10 域契约、不动任何行键。
   点一下把目标区顶到视口上沿（``setValue``），不用 ``ensureWidgetVisible``——后者
-  只保证「看得见」，长卡片会把目标压在屏幕下沿，等于没跳。
+  只保证「看得见」，长卡片会把目标压在屏幕下沿，等于没跳。显隐判据（区数够 **且**
+  内容真的超过视口）必须量在**这一态的落定几何**上：跳转条自己占的那 28px 让出去之后，
+  视口要等下一轮事件循环才长回来，当场重判会把它又显示回来（``_apply_visibility``
+  里的同步推平就是为这件事）。
 - **页尾留白是「顶对齐」这条口径的必要条件**：滚动范围的尽头是「内容底边贴视口
   底边」，页尾那一组最多滚到 ``视口高 - 该组高``，够不到 y=8。展开时序再对也没用
   ——范围本身就不够（``_PastEndPadding``）。
@@ -25,7 +28,7 @@ test_architecture.py``）没有余量，而本功能的主体是一段页内跳�
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QLabel,
     QLayout,
@@ -38,6 +41,8 @@ from PySide6.QtWidgets import (
 from .settings_widgets import CollapsibleGroup, SettingRow, SettingsSection, SettingsTabContainer
 
 #: 少于这么多「区」就不装跳转条：两三个区一眼扫得完，多一条横条只是噪音。
+#: 另一半判据是「内容真的超过视口」（短页上这条横条没有任何位移可言）：见
+#: :meth:`_SettingsAnchorBar._content_overflows`。
 ANCHOR_MIN_BLOCKS = 4
 
 
@@ -62,14 +67,30 @@ def _layout_children(widget) -> list[QWidget]:
     return children
 
 
+def _is_plain_container(widget) -> bool:
+    """没有自己的标题、只是布局层的普通 ``QWidget``（域装配可能先起一层再放卡片）。
+
+    2026-10-14 起「语音」域就是这样：顶层一张「语音报时」平卡 + 节日页自建的卡片组，
+    中间隔了一层自建 ``QWidget``。跳转条与组描述都按布局树取材，不穿透这层就会
+    「新卡片看不见、跳转条少一格」。
+    """
+    return type(widget) is QWidget and widget.layout() is not None
+
+
 def blocks_in_layout_order(page) -> list[tuple[str, QWidget]]:
     """页内**顶层块**（分区 / 折叠框）按布局顺序；跳转条一格对一块。"""
-    blocks = []
-    for child in _layout_children(page):
-        if isinstance(child, CollapsibleGroup):
-            blocks.append((child.toggle.text(), child))
-        elif isinstance(child, SettingsSection):
-            blocks.append((section_title(child), child))
+    blocks: list[tuple[str, QWidget]] = []
+
+    def walk(node) -> None:
+        for child in _layout_children(node):
+            if isinstance(child, CollapsibleGroup):
+                blocks.append((child.toggle.text(), child))
+            elif isinstance(child, SettingsSection):
+                blocks.append((section_title(child), child))
+            elif _is_plain_container(child):
+                walk(child)
+
+    walk(page)
     return blocks
 
 
@@ -83,6 +104,8 @@ def sections_in_layout_order(page) -> list[tuple[str, list[SettingRow]]]:
                 found.append((section_title(child), list(child.rows)))
             elif isinstance(child, CollapsibleGroup):
                 walk(child.body)
+            elif _is_plain_container(child):
+                walk(child)
 
     walk(page)
     return found
@@ -110,6 +133,57 @@ def current_page_content(scroll: QScrollArea) -> QWidget:
     return tabs.stack.currentWidget() if tabs is not None else content
 
 
+def _tab_chrome(tabs: SettingsTabContainer | None) -> int:
+    """标签容器在**当前标签页**之上多占的那一层（``None`` = 不是标签域 ⇒ 0）。
+
+    给"手里已经有容器"的调用者用（跳转条 / 页尾留白构造时都找过一次），避免每拍重找。
+    """
+    if tabs is None:
+        return 0
+    layout = tabs.layout()
+    spacing = layout.spacing() if layout is not None else 0
+    return max(0, tabs.tab_bar.sizeHint().height() + spacing)
+
+
+def tab_chrome_height(scroll: QScrollArea) -> int:
+    """页内标签域在**当前标签页**之上多占的那一层（标签栏 + 容器布局间距）。
+
+    滚动的视口是**整块滚动内容**（= 标签容器）的视口，而 ``current_page_content``
+    给的是容器里那一页：只拿页高去比视口就漏了这一层——``页高 <= 视口 < 页高 + 这一层``
+    这一小段里判据说「装得下」，而内容其实要滚（实测 1100 宽、桌宠／动作与碰撞这一页的
+    层高 52px = 标签栏 40 + 间距 12，对应窗口高 1222…1278）。
+
+    取**结构量**（标签栏自己的 hint + 容器布局的 spacing），不取
+    ``容器.minimumSizeHint() − 当前标签页.minimumSizeHint()``：后者在"刚把留白归零、
+    布局还没落定"的那一拍会被上一拍的缓存值污染（实测同一态下差分量到 1336，真值 52）
+    —— 而留白判据恰恰是在那一拍"归零后重量"的。标签栏纵向是 Fixed、按钮高度也是 Fixed，
+    所以它的 hint 就是它落版后的高，且不用等第一遍布局。
+    """
+    return _tab_chrome(tab_container(scroll.widget()))
+
+
+def current_page_height(scroll: QScrollArea, tabs: SettingsTabContainer | None = None) -> int:
+    """当前这一屏真实要占的高度：当前标签页的高（扣掉页尾留白）**加上**标签那一层。
+
+    页尾留白（``_PastEndPadding``）挂在标签页自己布局的下外边距上、不算内容，故扣掉；
+    留白是按「最小高」1:1 长出来的，所以扣得掉。
+
+    ``tabs`` 传调用者手里的标签容器（不是标签域就传 ``None``）：不传则自己找一次。
+    两个调用者（跳转条 / 页尾留白）构造时都已经找过，传进来就省掉每拍的子树查找——
+    非标签域那一次 ``findChild`` 实测 **11.6 µs**（页面上百个控件，判据每拍都调）。
+    """
+    content = scroll.widget()
+    if tabs is None:
+        tabs = tab_container(content)
+    root = tabs.stack.currentWidget() if tabs is not None else content
+    layout = root.layout() if root is not None else None
+    if layout is None:
+        return 0
+    width = scroll.viewport().width()
+    needed = max(root.minimumSizeHint().height(), root.heightForWidth(width))
+    return needed - layout.contentsMargins().bottom() + _tab_chrome(tabs)
+
+
 # --------------------------------------------------------------------------- 组描述
 #: 组标题 → 一句人话（显示在组标题 / 折叠头下面，12px 灰字）。
 #:
@@ -118,9 +192,13 @@ def current_page_content(scroll: QScrollArea) -> QWidget:
 #: ``tests/test_settings_page_guide.py`` 的覆盖率守卫会盯住。
 SECTION_GUIDE: dict[str, str] = {
     "专注模式": "工作背景填写一次，专注时自动带入；在灵动岛或右键菜单开始，专注与休息到点后自动切换并播放提示音。",
+    "作者账号": "BiliBili、抖音与 GitHub。",
     # 常规
     "应用启动": "开机后要不要自动把桌宠叫起来。",
-    "窗口与系统": "它压在别的窗口上面还是能被盖住，全屏玩游戏时让不让位。",
+    "窗口与系统": "它压在别的窗口上面还是能被盖住，全屏玩游戏时让不让位，光标被系统藏起来时要不要自动穿透点击，以及桌宠能不能被拖到别的显示器上。",
+    # 收起时只留一句"这一项做什么"：重启级切换、OBS 捕获方式与作用域全文都在行内，
+    # 展开即见（分层是"要不要现在读"，不是删说明）。摘要里不写缩写（黑话 lint 同尺子）。
+    "直播捕获（高级）": "让直播工具能枚举并捕获桌宠窗口。",
     "启动项（高级）": "随桌宠启动（不是开机）时顺手把 dsh 服务拉起来；可以只起服务，也可以连界面一起打开。",
     # 桌宠
     "显示": "桌宠和它的气泡显示多大、多透明。",
@@ -172,13 +250,20 @@ SECTION_GUIDE: dict[str, str] = {
     "文案风格与模板": "它说话是什么风格，以及一份可以整体替换的文案模板。",
     "自定义台词（逐事件文案）": "每个事件各说什么，逐条改；不改也能正常用。",
     "事件气泡文案": "按事件分组的气泡台词，一行一条。",
-    # 语音
-    "语音报时 · 何时报": "几点说话、多久说一次。",
-    "语音报时 · 用什么声音": "用哪个音色，语速、音调、音量各是多少。",
-    "语音报时 · 说什么": "报完时间加不加台词、冒不冒气泡，以及先试听一句。",
-    "节日提醒 · 开关": "开不开节日提醒、提醒哪些节日、要不要一起念出来。",
-    "节日提醒 · 时间": "一天提醒几次，或者自己排几个时间点。",
-    "节日提醒 · 文案": "节日文案从哪儿来，以及先预览一次看看效果。",
+    # 互动 · 趣味（卡片名仍是「抽签」）
+    "抽签": "右键「抽支签」出当天的签，一天一支；这里管开关、要不要念、要不要每天提醒。",
+    "快捷键": "给「对话 / 看看屏幕 / 截图提问」各录一个全局组合键；空着就是不绑，右键菜单照常能用。",
+    # 语音（2026-10-14 起两页各自自建卡片，标题跟着从「语音报时 · X」变成卡片名）
+    # 「语音报时」是域里唯一那张语音卡：语音页自己的四张小卡（基础设置 / 合成后端 /
+    # 语音 / 台词歌词）**不进域**——它们的行被收进这张平卡，容器本身被丢弃，所以
+    # 那四个标题在界面上永远不会出现，不能在这里留条目（会被防腐烂用例判为过期）。
+    "语音报时": "几点说话、多久说一次；用哪家的合成引擎、各引擎的音色与参数；"
+              "以及报完时间加不加台词、冒不冒气泡。",
+    "何时提醒": "一天提醒几次，或者自己排几个时间点。",
+    "提醒哪些日子": "开不开节日提醒、提醒哪些节日。",
+    "怎么提醒": "出声念、播动画、附一句诗词，各自开不开。",
+    "你的生日": "填了就在当天有专属祝福。",
+    "少用项": "自定义节日文案与预览这类偶尔才用的项。",
     # 文件识别
     "拖文件解读": "把文件拖到桌宠身上，它会读一遍并说点什么。",
 }
@@ -260,7 +345,13 @@ class _FlowLayout(QLayout):
 
 
 class _SettingsAnchorBar(QWidget):
-    """页头标题下方那一排 chip：一个可见分区一格，点一下顶对齐滚过去。"""
+    """页头标题下方那一排 chip：一个可见分区一格，点一下顶对齐滚过去。
+
+    **短页不摆**：页内每个区都已在视口里时，这条横排 chip 只是把页头重复一遍——点它
+    没有任何位移。显隐判据因此是「区数够 **且** 内容真的超过视口」，见
+    :meth:`_apply_visibility` 与 :meth:`_content_overflows`；判据量必须在**这一态的
+    落定几何**上做（显隐刚改时视口还差自己那段），故显隐变更当场推平布局再复核。
+    """
 
     def __init__(self, heading_host: QWidget, scroll: QScrollArea, padding: _PastEndPadding):
         super().__init__(heading_host)
@@ -270,11 +361,24 @@ class _SettingsAnchorBar(QWidget):
         self._layout = _FlowLayout(self)
         self._chips: list[QPushButton] = []
         self._blocks: list[tuple[str, QWidget]] = []
+        #: 跳转条自己占掉的那段高度（见 ``_content_overflows``）：只在真正落过版之后
+        #: 记下来，取值 0 表示"还没量过"，那时判据退回当前视口（偏向显示，不会把长页藏掉）。
+        self._bar_height = 0
+        self._sync_timer = QTimer(self)
+        self._sync_timer.setSingleShot(True)
+        self._sync_timer.setInterval(0)
+        self._sync_timer.timeout.connect(self._apply_visibility)
         self._tabs = tab_container(scroll.widget())
         if self._tabs is not None:
             # 页内标签各是一组区：换标签就把跳转条换成那一组的。
             self._tabs.currentKeyChanged.connect(self._on_tab_changed)
         heading_host.layout().addWidget(self)
+        # 视口尺寸/显隐变了要重判；滚动范围变了（展开折叠组、依赖放出整组行…）同样
+        # 会改变"够不够装"，所以两边都盯。重判推到下一拍：这些信号都可能发在布局过程
+        # 里，当场改自己的可见性会重入布局流程（同 ``SettingsSidebarPane`` 的先例）。
+        # 而显隐一旦真的改了，就当场把布局推平（``_apply_visibility`` 里的同步复核）。
+        scroll.viewport().installEventFilter(self)
+        scroll.verticalScrollBar().rangeChanged.connect(lambda *_args: self._schedule_visibility())
         self.rebuild()
 
     # ---------------------------------------------------------------- 装配
@@ -297,8 +401,7 @@ class _SettingsAnchorBar(QWidget):
             block.installEventFilter(self)
             self._chips.append(chip)
             self._layout.addWidget(chip)
-        self.setVisible(len(self._blocks) >= ANCHOR_MIN_BLOCKS)
-        self._sync_visibility()
+        self._apply_visibility()
 
     def _on_tab_changed(self, _key: str) -> None:
         self.rebuild()
@@ -307,6 +410,80 @@ class _SettingsAnchorBar(QWidget):
         """整组被依赖隐藏时 chip 同步隐藏（``isHidden`` 才是「显式藏了」）。"""
         for chip, (_title, block) in zip(self._chips, self._blocks):
             chip.setVisible(not block.isHidden())
+
+    # ------------------------------------------------------------ 显隐（短页不摆）
+    def _schedule_visibility(self) -> None:
+        if not self._sync_timer.isActive():
+            self._sync_timer.start()
+
+    def _apply_visibility(self) -> None:
+        """跳转条自己的显隐：**区数够** 且 **内容真的超过视口**。
+
+        显隐变更之后要**当场**把页头那几层布局推平再复核一次（:meth:`_settle_geometry`）：
+        跳转条让出一行之后，滚动视口要等下一轮事件循环才长回来，而判据按「藏掉之后装不装
+        得下」回答——若在这一拍就重判，量到的还是矮视口（``hidden`` 分支又不补自己那段），
+        于是「装不下」⇒ 又把自己显示回来。两个稳态里会停在错的显态：1100×556 实测停在
+        显态 + 页尾 381px 空白，而把窗口再拉高 28px 就装得下（544…568 整段都是这样）。
+        推平之后两个方向量到的都是这一态的落定几何，最多两拍就收敛：不排队、不用定时器
+        兜、也不靠放大窗口掩盖。
+        """
+        self._sync_visibility()
+        for _pass in range(2):
+            want = len(self._blocks) >= ANCHOR_MIN_BLOCKS and self._content_overflows()
+            if want == (not self.isHidden()):
+                return
+            self.setVisible(want)
+            self._settle_geometry()
+
+    def _settle_geometry(self) -> None:
+        """从自己往上逐层 ``activate()`` 到滚动内容所在的那一页。
+
+        同步推平（同 :meth:`_settle` 的手法，不排定时器）：跳转条占掉/让出的那段高度要
+        同一拍落进视口，紧接着的复核才量得到这一态的真值。
+        """
+        target = self._scroll.parentWidget()
+        node: QWidget | None = self
+        while node is not None:
+            layout = node.layout()
+            if layout is not None:
+                layout.activate()
+            if node is target:
+                return
+            node = node.parentWidget()
+
+    def _content_overflows(self) -> bool:
+        """真实内容是否超过视口——判据与调用者的显隐状态无关，只有一个不动点。
+
+        三笔都要算对：
+
+        - **量的是整块滚动内容，不是标签页自己**：页内标签域多一层「标签栏 + 间距」
+          （:func:`current_page_height`）。拿页高直接比视口，``页高 <= 视口 < 页高 + 层高``
+          这一小段就成了漏网：判据说装得下、跳转条收起来，而用户明明要滚才看得完。
+        - **页尾留白不算内容**（``_PastEndPadding`` 挂在内容布局的下外边距上）：它由
+          "内容超不超过视口"反推出来（装得下就是 0），把它算进去等于拿结论当前提。
+        - **跳转条自己占的那段高度要加回来**：显着的时候视口已经被它压矮了一截，直接
+          比会让短页"因为自己摆着一条跳转条"而永远显示不足（两种状态各自自洽 ⇒ 来回
+          抖）。加回自己那份之后，判据在两个状态下取到同一个可用高，因此是幂等的。
+          还没落过版（``_bar_height == 0``）时不加：偏向显示，宁可多一条也不把长页藏掉。
+
+        还有一件不在这个函数里、但同样属于判据前提的事：量到的视口必须是**这一态的落定
+        几何**。显隐刚改、布局还没跟上时量到的是上一态的视口（矮 28px），"加回自己那段"
+        也补不回来——那一路由 :meth:`_apply_visibility` 的同步推平负责。
+        """
+        viewport = self._scroll.viewport()
+        if viewport.height() <= 0:
+            return False
+        budget = viewport.height() + (0 if self.isHidden() else self._bar_height)
+        return current_page_height(self._scroll, self._tabs) > budget
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        if self.isHidden():
+            return
+        # 记下自己占的那段高度（判据要用），并重判一次：可见性变化本身也要等布局
+        # 落定之后才量得准尺寸，这一拍的重判把"刚才量到的"喂回判据。
+        self._bar_height = self.height()
+        self._schedule_visibility()
 
     # ---------------------------------------------------------------- 跳转
     def jump_to(self, block: QWidget) -> None:
@@ -361,8 +538,14 @@ class _SettingsAnchorBar(QWidget):
 
     # ---------------------------------------------------------------- 跟手
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API
-        if event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+        if watched is self._scroll.viewport():
+            if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+                self._schedule_visibility()
+        elif event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+            # 整组出现/消失会改变页高（也改变 chip 该不该在）：chip 当场同步，
+            # 跳转条自己的显隐推到下一拍。
             self._sync_visibility()
+            self._schedule_visibility()
         return super().eventFilter(watched, event)
 
 
@@ -398,7 +581,10 @@ class _PastEndPadding(QObject):
       （``QVBoxLayout`` 的 ``spacing``），于是留白为 0 的页面也会凭空长高一段——那只
       会把「刚好装得下」的页面挤出一个滚动条。外边距只改布局自己的尺寸，不留痕迹。
     - **内容本来就装得下时补 0**：那种页面根本不滚动，每一组都已经看得见，再挂留白
-      只会凭空变出滚动条（短页面的显隐不受本功能影响）。
+      只会凭空变出滚动条（短页面的显隐不受本功能影响）。「装得下」按**整块滚动内容**
+      判：页内标签域要连标签栏那一层一起算（:func:`tab_chrome_height`），否则
+      ``页高 <= 视口 < 整块内容高`` 这一小段会被答成"装得下"——跳转条摆着、点下去却
+      顶不到 y=8（实测 1100 宽、桌宠／动作与碰撞、窗口高 1264：只滚到 52，目标 979）。
     - 视口尺寸变了要重算：事件过滤器盯 viewport 的 Resize / Show。
     - 页内标签各是一份页内容（``SettingsTabContainer`` 的 stack），每份各挂一块，
       换标签时一并重算（``currentKeyChanged``）。
@@ -415,6 +601,8 @@ class _PastEndPadding(QObject):
             if tabs is not None else [content]
         )
         self._scroll = scroll
+        #: 页内标签容器（没有就是 None）：判据只在这里找一次，之后每拍直接用。
+        self._tabs = tabs
         self._roots = [root for root in roots if root is not None and root.layout() is not None]
         self._syncing = False
         if not self._roots:
@@ -450,9 +638,15 @@ class _PastEndPadding(QObject):
         if margins.bottom() != height:
             layout.setContentsMargins(margins.left(), margins.top(), margins.right(), height)
 
-    @staticmethod
-    def _height_for(root: QWidget, viewport: QSize) -> int:
-        """这块留白该多高；页面本来就装得下就给 0（见类说明）。"""
+    def _height_for(self, root: QWidget, viewport: QSize) -> int:
+        """这块留白该多高；页面本来就装得下就给 0（见类说明）。
+
+        「装得下」这一问要按**整块滚动内容**回答：页内标签域的内容是标签容器，比标签页
+        自己多一层「标签栏 + 间距」（:func:`tab_chrome_height`）。只拿标签页去比视口，
+        ``页高 <= 视口 < 页高 + 层高`` 这一小段就会答成"装得下"⇒ 留白 0 ⇒ 页尾那几组
+        点了也顶不到 y=8（实测 1100 宽、桌宠／动作与碰撞：窗口高 1264 时点「多开碰撞」
+        只滚到 52，目标 979）。
+        """
         layout = root.layout()
         _PastEndPadding._apply(root, 0)
         layout.activate()
@@ -463,7 +657,8 @@ class _PastEndPadding(QObject):
         # 都会让判据自证成立，短页面从此长出一屏空白还退不回去（实测把 1600×900 的
         # 「常规」页挤出滚动条，页面标题与内容不再居中对齐）。
         rendered_height = root.heightForWidth(viewport.width())
-        if viewport.height() <= 0 or max(minimum_height, rendered_height) <= viewport.height():
+        laid_out = _tab_chrome(self._tabs) + max(minimum_height, rendered_height)
+        if viewport.height() <= 0 or laid_out <= viewport.height():
             return 0
         blocks = [child for child in _layout_children(root)
                   if isinstance(child, (SettingsSection, CollapsibleGroup))]

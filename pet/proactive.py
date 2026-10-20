@@ -222,7 +222,12 @@ class ProactiveScreenWatcher:
     - Phase 2 为【日志模式】：仅 logging.info 输出，不调用大模型。
     """
 
-    def __init__(self, window: Any, config: Any) -> None:
+    def __init__(self, window: Any, config: Any, identity_provider: Any = None) -> None:
+        """``identity_provider``：角色身份的每宠视图（壳注入；``None`` = 用 ``config``）。
+
+        ``cfg`` 必须继续是进程级配置——主动识屏的开关、白名单、额度、密钥都是全局面；
+        只有**宠物名**取当前身份（``character`` 是每宠键，见 :meth:`pet_name`）。
+        """
         from PySide6.QtCore import QObject, QTimer, Signal
 
         class _WatcherBridge(QObject):
@@ -264,6 +269,7 @@ class ProactiveScreenWatcher:
 
         self.win = window
         self.cfg = config
+        self._identity_provider = identity_provider if callable(identity_provider) else None
         parent_obj = self.win if hasattr(self.win, "winId") else None
         self._bridge = _WatcherBridge(self, parent=parent_obj)
         self._bridge.frame_ready.connect(self._bridge._forward_frame)
@@ -594,6 +600,22 @@ class ProactiveScreenWatcher:
 
             logging.exception("主动识屏回复同步进会话失败")
 
+    def pet_name(self) -> str:
+        """识屏提示里"我是谁"的名字：**当前身份**的显示名（别名优先，回退目录名）。
+
+        ``character`` 在 ``PER_PET_KEYS`` 里，真值属于 slot；本 watcher 的 ``cfg``
+        是进程级配置（开关/白名单/额度/密钥都必须是全局面），全局面那个
+        ``character`` 只是出厂默认的残留。角色身份因此走壳注入的每宠视图：共享
+        watcher 由 ``SharedSubsystems`` 注入，逐窗挂载（legacy）的那份 ``cfg``
+        本身就是该宠的路由视图，未注入时直接用 ``cfg``。
+        """
+        from . import catalog
+
+        source = self.cfg if self._identity_provider is None else self._identity_provider()
+        return source.character_display_name(
+            str(source.get("character", catalog.DEFAULT_CHARACTER))
+        )
+
     def _resolve_vision_provider(self, eff: dict) -> tuple[Any, str]:
         """解析视觉请求的 provider 与 system_prompt（手册 §6）。
 
@@ -624,11 +646,9 @@ class ProactiveScreenWatcher:
         gen: int = -1,
     ) -> None:
         """后台线程：发起大模型视觉请求，处理重试/熔断，并通过桥接信号在桌宠冒泡。"""
-        from . import catalog, vision
+        from . import vision
 
-        pet_name = self.cfg.character_display_name(
-            str(self.cfg.get('character', catalog.DEFAULT_CHARACTER))
-        )
+        pet_name = self.pet_name()
         try:
             reply = vision._post_vision_request(
                 jpeg_bytes, app_str, system_prompt, provider, memory_context=memory_ctx,

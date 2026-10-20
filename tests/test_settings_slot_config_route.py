@@ -76,6 +76,7 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
         dialog.pet_opacity_spin.setValue(35)
         dialog.edge_probe_check.setChecked(True)
         dialog.voice_chime_page.enabled_check.setChecked(True)
+        dialog.divination_speak_check.setChecked(True)   # 「互动 · 抽签」的念签开关
         assert dialog._write_config() is True
     finally:
         dialog.deleteLater()
@@ -84,6 +85,7 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
     assert on_disk["pet_opacity"] == 35, "窗口级键必须落主配置"
     assert on_disk["edge_probe_enabled"] is True, "拖拽探头必须落主配置"
     assert on_disk["voice_chime_enabled"] is True, "语音报时必须落主配置"
+    assert on_disk["divination_speak"] is True, "抽签的念签开关必须落主配置"
     assert "scale" not in on_disk
     assert _read_json(_slot_path(main.dir, 0))["scale"] == 0.5
 
@@ -91,6 +93,7 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
     assert slot_on_disk.get("pet_opacity") != 35, "非 per-slot 键一个字节都不该进 slot 文件"
     assert slot_on_disk.get("edge_probe_enabled") is not True
     assert slot_on_disk.get("voice_chime_enabled") is not True
+    assert slot_on_disk.get("divination_speak") is not True
 
 
 def test_child_save_keeps_per_slot_keys_in_the_slot_file(tmp_path, app):
@@ -439,7 +442,9 @@ def test_harness_controls_are_editable_on_the_child_page(tmp_path, app):
             assert row is not None
             hint = row.hint_label.text()
             assert "仅主桌宠" not in hint
-            assert "影响所有桌宠" in hint
+            # 作用域是行内独立标注（说明末尾不再带它），原文逐字保留。
+            assert "影响所有桌宠" in row.scope_note.text()
+            assert row.scope_note.isHidden() is False
 
         dialog.harness_autostart_check.setChecked(True)
         dialog.harness_launch_target_select.setCurrentData("service")
@@ -453,11 +458,33 @@ def test_harness_controls_are_editable_on_the_child_page(tmp_path, app):
     assert on_disk["harness_launch_target"] == "service"
 
 
-# ------------------------------------------------------------ 8. 分流范围（只对 overlay 的 slot 身份）
-def test_main_pet_config_is_not_routed(tmp_path):
-    """主宠设置进程（无 --instance）：原样返回，行为逐位不变。"""
-    main = Config(base=tmp_path)
-    assert settings_slot_config.route_settings_config(main) is main
+# ------------------------------------------------------------ 8. 分流范围（空身份与 slot 身份都分流）
+def test_main_pet_config_is_routed_to_slot0(tmp_path):
+    """主宠设置会话（无 --instance 的空身份）也按 slot0 分流（#271 契约变更）。
+
+    旧契约是"空身份原样返回、行为逐位不变"，实机口径已推翻：运行期每宠键只从
+    ``config-slot-0.json`` 取源（``_SpriteConfig.get`` 的第一条分支），空身份直写的
+    每宠键在 ``Config.save()`` 出闸时被当退役键 pop 掉——写入凭空蒸发、``save()``
+    还报成功，用户重开设置看到的是出厂默认（#271：主宠改尺寸/气泡不生效）。
+    故空身份与显式 ``slot-0`` 同规：每宠键落 slot0 档案、全局键落主 ``config.json``。
+    """
+    from pet import pet_profiles
+
+    main = Config(base=tmp_path, instance_id="")
+    assert main.save() is True
+
+    routed = settings_slot_config.route_settings_config(main)
+    assert isinstance(routed, settings_slot_config.SlotRoutedConfig)
+    assert routed.path == spawn_state.slot_config_path(main.dir, 0), \
+        "空身份会话的配置面指向 slot0 档案（身份与报错路径都以它为准）"
+
+    routed.set("scale", 0.77)        # 每宠键
+    routed.set("pet_opacity", 55)    # 全局键
+    assert routed.save() is True
+
+    assert pet_profiles.read_slot_profile(main.dir, 0).value("scale") == pytest.approx(0.77)
+    assert "scale" not in _read_json(main.path), "每宠键不许落进主 config.json"
+    assert _read_json(main.path)["pet_opacity"] == 55, "全局键照旧落主 config.json"
 
 
 def test_legacy_topology_slot_config_is_not_routed(tmp_path, monkeypatch):
@@ -521,7 +548,10 @@ def test_routed_keys_cover_the_runtime_per_slot_read_surface(tmp_path):
     assert "collision_enabled" in settings_slot_config.SLOT_ROUTED_KEYS
     assert "user_customized" in settings_slot_config.SLOT_LOCAL_KEYS
     for main_only in ("pet_opacity", "voice_chime_enabled", "edge_probe_enabled",
-                      "dynamic_island", "context_menu_appearance"):
+                      "dynamic_island", "context_menu_appearance",
+                      # 每日一签：「互动 · 抽签」那三行是**进程级**键（签一天一支、
+                      # 状态只有一份），子宠页改它同样只该落主配置。
+                      "divination_enabled", "divination_speak", "divination_hint"):
         assert main_only not in settings_slot_config.SLOT_ROUTED_KEYS
 
 

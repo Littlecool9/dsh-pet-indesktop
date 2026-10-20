@@ -112,3 +112,88 @@ def test_minimum_modules_are_still_required(verify_tts):
     """兜底清单（含 PYZ-only 的 tabulate）不许在过滤里被削掉。"""
     assert "tabulate" in verify_tts.MINIMUM_MODULES
     assert "edge_tts" in verify_tts.MINIMUM_MODULES
+
+
+@pytest.mark.parametrize("build_version,bundle_version,ok", [
+    ("7.3.1", "7.3.1", True), ("7.2.8", "7.2.8", False),
+    ("7.3.1", "7.2.8", False), ("7.3.1", None, False),
+    ("7.3.1", "7.3.2", False), ("8.0.0", "8.0.0", False),
+])
+def test_bundle_version_gate(verify_tts, tmp_path, monkeypatch, build_version, bundle_version, ok):
+    import importlib.metadata
+
+    exe = tmp_path / "pet.exe"
+    exe.write_bytes(b"archive is the OS boundary")
+    if bundle_version:
+        metadata = tmp_path / "_internal" / f"edge_tts-{bundle_version}.dist-info" / "METADATA"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(f"Metadata-Version: 2.4\nName: edge-tts\nVersion: {bundle_version}\n",
+                            encoding="utf-8")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: build_version)
+    everything = set(verify_tts.MINIMUM_MODULES) | set(verify_tts.platform_modules())
+    # 闭包里的点号模块会让 verify 要求其顶层包名，present 必须一并具备。
+    present = everything | {m.split(".")[0] for m in everything}
+    monkeypatch.setattr(verify_tts, "import_closure", lambda: everything)
+    monkeypatch.setattr(verify_tts, "frozen_module_names", lambda exe: present)
+    code, summary = verify_tts.verify(tmp_path, exe)
+    assert (code == 0) is ok, summary
+    if ok:
+        assert summary["build_version"] == "7.3.1"
+        assert summary["bundle_version"] == "7.3.1"
+
+
+def _gate_with(verify_tts, monkeypatch, tmp_path, platform, frozen):
+    """在指定"目标平台"上跑一次 verify()，返回 (退出码, 摘要)。
+
+    `frozen` 是"包里有这些模块"的模拟；闭包里的点号模块会被要求其顶层包，所以这里
+    一并补上顶层名，避免把判定逻辑的顶层推导当成缺模块。
+    """
+    import importlib.metadata
+
+    exe = tmp_path / "pet"
+    exe.write_bytes(b"archive is the OS boundary")
+    metadata = tmp_path / "_internal" / "edge_tts-7.3.1.dist-info" / "METADATA"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    if not metadata.is_file():
+        metadata.write_text("Metadata-Version: 2.4\nName: edge-tts\nVersion: 7.3.1\n",
+                            encoding="utf-8")
+    present = set(frozen) | {m.split(".")[0] for m in frozen}
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "7.3.1")
+    monkeypatch.setattr(verify_tts.sys, "platform", platform)
+    monkeypatch.setattr(verify_tts, "import_closure", lambda: set(verify_tts.MINIMUM_MODULES))
+    monkeypatch.setattr(verify_tts, "frozen_module_names", lambda exe: set(present))
+    return verify_tts.verify(tmp_path, exe)
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_windows_only_modules_are_not_required_on_other_targets(
+        verify_tts, monkeypatch, tmp_path, platform):
+    """干净 Linux/macOS 构建不装 Windows-only 依赖，门禁不许因此判红。
+
+    astra 第 13 轮：`MINIMUM_MODULES` 无条件要求 `win32ctypes.pywin32.win32cred`，而
+    `build_linux.sh` / `build_macos.sh` 调的是同一个 `verify()`——那是把正确的产物
+    拒掉。修法是让这类依赖按目标平台生效。
+    """
+    code, summary = _gate_with(verify_tts, monkeypatch, tmp_path, platform,
+                               set(verify_tts.MINIMUM_MODULES))
+    assert code == 0, summary
+    assert "win32ctypes.pywin32.win32cred" not in summary["checked"]
+
+
+def test_windows_target_still_requires_its_backend_dependency(verify_tts, monkeypatch, tmp_path):
+    """反过来：Windows 目标少带 win32ctypes 必须判红（别把条件化做成放水）。"""
+    code, summary = _gate_with(verify_tts, monkeypatch, tmp_path, "win32",
+                               set(verify_tts.MINIMUM_MODULES))
+    assert code == 4, summary
+    assert summary["missing"] == ["win32ctypes.pywin32.win32cred"]
+
+    code, summary = _gate_with(verify_tts, monkeypatch, tmp_path, "win32",
+                               set(verify_tts.MINIMUM_MODULES)
+                               | set(verify_tts.WINDOWS_ONLY_MODULES))
+    assert code == 0, summary
+
+
+def test_platform_modules_is_empty_off_windows(verify_tts):
+    assert verify_tts.platform_modules("linux") == ()
+    assert verify_tts.platform_modules("darwin") == ()
+    assert verify_tts.platform_modules("win32") == verify_tts.WINDOWS_ONLY_MODULES

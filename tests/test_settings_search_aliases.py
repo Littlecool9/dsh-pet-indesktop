@@ -268,13 +268,134 @@ def test_alias_reset_defaults_and_excluded_terms_are_documented(tmp_path, monkey
             matches = _matches(dialog, token)
             keys = _keys(matches)
             assert keys, f"别名「{token}」没有命中任何行（别名字典 → 行键的指向已失效）"
-            for target in targets:
+            # 只要求**本平台真实存在**的那几行命中：有的别名会并列指到一个平台
+            # 专属行（「自动化与联动」并列指主动识屏 + 待办提醒，而主动识屏整页只在
+            # Windows 构造），拿本平台不存在的行去要求命中是假要求。
+            present = [
+                target for target in targets
+                if dialog.findChild(SettingRow, f"settingRow_{target}") is not None
+            ]
+            assert present, f"别名「{token}」的落点全都按平台闸门不存在"
+            for target in present:
                 assert f"settingRow_{target}" in keys, (
                     f"别名「{token}」必须命中 settingRow_{target}"
                 )
         # 「恢复默认设置…」是侧栏按钮、不是设置行：搜索框给不出行的落点，
         # 因此这条不做（口径见 pet/settings_search 的模块 docstring）。
         assert _matches(dialog, "恢复默认") == []
+    finally:
+        dialog.close()
+
+
+# --------------------------------------------- ②b 用户视角实测的 0 命中词（2026-10-18）
+def test_hotkey_words_reach_all_three_action_rows(tmp_path, monkeypatch):
+    """「快捷键 / 热键」→ 三个 `hotkey_*` 行全部进候选。
+
+    行标题只写三个动作名、说明里写「组合键」，整份设置页没有「快捷键」「热键」
+    这两个词，于是用户视角实测 0 命中。三个动作是三行，别名必须**全指**：只指一行
+    等于替用户挑了一个动作。首条命中是行序第一项（AI 对话），与右键菜单的顺序一致。
+    """
+    expected = [
+        "settingRow_hotkey_open_chat",
+        "settingRow_hotkey_look_screen",
+        "settingRow_hotkey_screen_capture",
+    ]
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        for query in ("快捷键", "热键", "全局快捷键在哪"):
+            assert _keys(_matches(dialog, query)) == expected, query
+            assert _search(dialog, query).objectName() == expected[0]
+            assert dialog.search_status.text() == "1/3 · AI 对话"
+    finally:
+        dialog.close()
+
+
+def test_secondary_display_words_reach_the_cross_screen_row(tmp_path, monkeypatch):
+    """「副屏 / 多屏」→ 跨屏开关（「跨屏 / 显示器」本来就能命中，这里补的是口语）。"""
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        for query in ("副屏", "多屏", "副屏怎么开"):
+            row = _search(dialog, query)
+            assert row.objectName() == "settingRow_cross_screen", query
+            assert _keys(dialog._search_matches) == ["settingRow_cross_screen"]
+            assert dialog.search_status.text() == "1/1 · 允许桌宠跨屏"
+    finally:
+        dialog.close()
+
+
+def test_domain_names_land_on_their_representative_rows(tmp_path, monkeypatch):
+    """照着侧栏念域名也要搜得到：10 个域名里用户最常念的 4 个各给一个落点。
+
+    侧栏域名是导航标签（``SETTINGS_DOMAIN_NAV``），不在行文案里，因此关键词路径
+    永远 0 命中。落点选该域**最有代表性**的那一行（逐条理由写在别名表里）：
+    桌面组件 = 灵动岛主开关；AI 与对话 = 「API 列表」（域首行 = 模型与连接抬头）+
+    对话窗口（域名里「对话」那半边）；自动化与联动 = 主动识屏主开关；
+    文件识别 = 拖文件后询问解读（该域只有两行，它就是功能本体）。
+    """
+    expected = {
+        "桌面组件": ["settingRow_dynamic_island_enabled"],
+        "AI 与对话": ["settingRow_provider_list", "settingRow_chat_ui_style"],
+        "ai 与对话": ["settingRow_provider_list", "settingRow_chat_ui_style"],
+        # 「主动识屏」页只在 Windows 建（`sys.platform == "win32" and include_ai`
+        # 闸门），macOS/Linux 上那一行不存在，只剩该域第一组的「待办提醒」。
+        # 命中顺序按行序，而「待办提醒」组在域里排在前面，所以 Windows 上也先命中它。
+        "自动化与联动": (
+            ["settingRow_todo_reminder_enabled", "settingRow_proactive_enabled"]
+            if sys.platform == "win32" else ["settingRow_todo_reminder_enabled"]),
+        "文件识别": ["settingRow_file_interpret_enabled"],
+    }
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        for query, keys in expected.items():
+            assert _keys(_matches(dialog, query)) == keys, query
+            row = _search(dialog, query)
+            assert row.objectName() == keys[0]
+            # 命中后确实翻到了那个域（不是只在别的页里高亮）
+            assert _current_page(dialog).isAncestorOf(row), query
+    finally:
+        dialog.close()
+
+
+def test_check_update_is_a_command_and_stays_out_of_the_index(tmp_path, monkeypatch):
+    """「检查更新」是按钮不是设置行：按既有口径不进索引，不为它破例。
+
+    它是「更新」页上的 ``QPushButton``（`pet/update_settings.py`），与侧栏的
+    「恢复默认设置 / 保存并退出」同类——候选集只装 ``SettingRow``，命令给不出行
+    落点。要让它可搜得先给按钮建落点模型，那是另一件事。
+    """
+    from pet.settings_search import ROW_ALIASES
+
+    assert not any("检查更新" in token for token in ROW_ALIASES), (
+        "别名表不该为命令类控件破例")
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        assert _matches(dialog, "检查更新") == []
+        assert dialog.search_status.text() == "未找到匹配的设置"
+    finally:
+        dialog.close()
+
+
+def test_new_aliases_keep_the_existing_first_hits(tmp_path, monkeypatch):
+    """补别名**只能追加**候选：补之前已正确的首条命中逐条不变。
+
+    「密钥 → API Key」是最容易被新词挤掉的一条（「AI 与对话」也指向 AI 域），
+    所以这里把既有正例整表钉住，而不是抽一两条。
+    """
+    expected = {
+        "密钥": "settingRow_api_key",
+        "跨屏": "settingRow_cross_screen",
+        "显示器": "settingRow_cross_screen",
+        "网速": "settingRow_island_network",
+        "上行": "settingRow_island_network",
+        "开机启动": "settingRow_autostart",
+        "壁纸": "settingRow_chat_background_file",
+        "帧数": "settingRow_island_fps",
+        "信息槽": "settingRow_dynamic_island_info",
+    }
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        for query, key in expected.items():
+            assert _search(dialog, query).objectName() == key, query
     finally:
         dialog.close()
 
@@ -433,3 +554,152 @@ def test_existing_keyword_searches_still_reach_their_rows(tmp_path, monkeypatch)
         assert dialog.agent_link_box.isAncestorOf(_current_match(dialog))
     finally:
         dialog.close()
+
+
+# ---------------------------------------------------------------- Ctrl+F 与索引口径
+def test_ctrl_f_focuses_the_search_box(tmp_path, monkeypatch):
+    """设置窗里注册了 Ctrl+F，触发后光标进搜索框（浏览器/编辑器的一致习惯）。
+
+    不模拟真实按键：offscreen 平台不把 ``QTest.keyClick`` 派发给快捷方式，那样的
+    用例会在 CI 上假绿/假红。这里断言两件真事——**绑定的是 ``StandardKey.Find``
+    且作用域覆盖子控件**，以及**触发后焦点确实落到搜索框**。
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeySequence, QShortcut
+
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        dialog.show()
+        finders = [
+            shortcut for shortcut in dialog.findChildren(QShortcut)
+            if shortcut.key().matches(QKeySequence.StandardKey.Find)
+            == QKeySequence.SequenceMatch.ExactMatch
+        ]
+        assert finders, "设置窗必须注册 Ctrl+F"
+        shortcut = finders[0]
+        assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut, (
+            "焦点在任意子控件上时都要能触发")
+        assert shortcut.key().toString() == "Ctrl+F"
+
+        dialog.self_talk_check.setFocus()
+        assert dialog.focusWidget() is not dialog.search_edit, "前提：焦点不在搜索框"
+
+        shortcut.activated.emit()
+
+        assert dialog.focusWidget() is dialog.search_edit, "Ctrl+F 应该把焦点送进搜索框"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_author_rows_are_searchable_and_jump_to_the_update_page(tmp_path, monkeypatch):
+    """「更新」页的作者账号行也进搜索索引：搜 BiliBili / 抖音 能跳过去。
+
+    它们不是 SettingRow（没有配置键），但按同形暴露 label/hint_label，所以同一套
+    匹配函数就能覆盖——不必为"可搜"改掉那一块的排版。
+    """
+    from pet import settings_search
+    from pet.settings_about import AuthorRow
+
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        rows = dialog._search_rows
+        assert any(isinstance(row, AuthorRow) for row in rows), "作者行必须进索引"
+
+        matches = settings_search.find_matches(rows, "bilibili")
+        assert matches, "搜平台名要有命中"
+        assert all(isinstance(row, AuthorRow) for row in matches)
+
+        handles = settings_search.find_matches(rows, "快乐小咸鱼")
+        assert handles, "搜账号名也要有命中"
+
+        dialog._search_settings("bilibili")
+        page = dialog.pages.currentWidget()
+        assert page is not None and page.isAncestorOf(matches[0]), (
+            "命中项在「更新」页，翻页要跳过去")
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+# ---------------------------------------------------------------- 方向键翻命中
+def test_arrow_down_advances_and_arrow_up_goes_back(tmp_path, monkeypatch):
+    """搜索框里 ↓/↑ 逐条翻命中（回车之外的第二条直觉路径）。
+
+    通用预期：浏览器查找栏、VSCode、Windows 设置搜索都用 ↑/↓ 翻结果，按回车循环
+    反而少见。单行 QLineEdit 里 ↑/↓ 本来没有默认行为，不会和光标移动抢键。
+    """
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        dialog.show()
+        dialog.search_edit.setText("对话")
+        app.processEvents()
+        total = len(dialog._search_matches)
+        assert total >= 3, f"前提：这个查询要多于两条命中（实际 {total}）"
+        assert dialog.search_status.text().startswith("1/")
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Down)
+        app.processEvents()
+        assert dialog.search_status.text().startswith("2/"), "↓ 应该前进一条"
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Down)
+        app.processEvents()
+        assert dialog.search_status.text().startswith("3/"), "↓ 再前进一条"
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Up)
+        app.processEvents()
+        assert dialog.search_status.text().startswith("2/"), "↑ 应该后退一条"
+        assert _current_match(dialog) is dialog._search_matches[1]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_arrow_up_from_the_first_match_wraps_to_the_last(tmp_path, monkeypatch):
+    """第一条上按 ↑ 回绕到最后一条（取模天然支持，不需要特判分支）。"""
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        dialog.show()
+        dialog.search_edit.setText("对话")
+        app.processEvents()
+        total = len(dialog._search_matches)
+        assert total >= 3
+        assert dialog.search_status.text().startswith("1/")
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Up)
+        app.processEvents()
+        assert dialog.search_status.text().startswith(f"{total}/"), "↑ 从第一条回绕到最后"
+        assert _current_match(dialog) is dialog._search_matches[-1]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_arrow_with_a_modifier_is_not_swallowed_by_search(tmp_path, monkeypatch):
+    """带修饰键的 ↑/↓ 必须透传给输入框，不许被搜索翻页抢走。
+
+    输入法候选导航（尤其中文输入法预编辑态）与将来可能加的 Ctrl+↑ 类组合键，都不该
+    被搜索拦掉；只有裸键（和小键盘方向键）才是"翻命中"的语义。
+    """
+    dialog = _dialog(tmp_path, monkeypatch)
+    try:
+        dialog.show()
+        dialog.search_edit.setText("对话")
+        app.processEvents()
+        assert len(dialog._search_matches) >= 3
+        assert dialog.search_status.text().startswith("1/")
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Down, Qt.KeyboardModifier.ControlModifier)
+        app.processEvents()
+        assert dialog.search_status.text().startswith("1/"), "Ctrl+↓ 不该翻页"
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Up, Qt.KeyboardModifier.ShiftModifier)
+        app.processEvents()
+        assert dialog.search_status.text().startswith("1/"), "Shift+↑ 不该翻页"
+
+        QTest.keyClick(dialog.search_edit, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+        app.processEvents()
+        assert dialog.search_status.text().startswith("1/"), "Alt+↓ 不该翻页"
+    finally:
+        dialog.close()
+        dialog.deleteLater()

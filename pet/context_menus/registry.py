@@ -42,8 +42,10 @@ from .shared import (
     add_agent_cost,
     add_music_lyric_align,
     add_music_next,
+    add_music_open_kugou,
     add_music_open_netease,
     add_music_open_qqmusic,
+    add_music_open_soda,
     add_music_pause,
     add_music_prev,
     add_music_quit,
@@ -78,6 +80,8 @@ ACTION_LABELS = {
     "music_prev": "上一首",
     "music_quit": "退出音乐模式", "music_open_netease": "打开网易云并播放",
     "music_open_qqmusic": "打开QQ音乐并播放",
+    "music_open_kugou": "打开酷狗音乐并播放",
+    "music_open_soda": "打开汽水音乐并播放",
     "music_lyric_align": "歌词对齐",
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
@@ -109,7 +113,8 @@ ACTION_ICONS = {
     "golden_spin": "play", "edge_probe": "corner",
     "music_next": "play", "music_prev": "play", "music_quit": "stop", "agent_cost": "balance",
     "music": "play", "music_pause": "pause", "music_open_netease": "play",
-    "music_open_qqmusic": "play", "music_lyric_align": "play",
+    "music_open_qqmusic": "play", "music_open_kugou": "play",
+    "music_open_soda": "play", "music_lyric_align": "play",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
     "memory_trim": "clear",
     "deepseek_web": "web", "check_update": "update", "github_project": "web",
@@ -120,6 +125,7 @@ ACTION_ICONS = {
     "network_info": "web",
     "modern_settings": "settings", "quit": "quit",
     "voice_chime_now": "chat", "voice_chime_toggle": "chat",
+    "divination_draw": "todo",
     "festival_now": "todo", "festival_toggle": "todo",
 }
 
@@ -252,6 +258,11 @@ def _build_festival_now(menu, pet):
     return add_action(menu, "今日节日", "todo", pet.on_festival_now, close_on_trigger=True)
 
 
+def _build_divination_draw(menu, pet):
+    """「抽支签」：每天一支，点开即出（当天再点显示同一支）。"""
+    return add_action(menu, "抽支签", "todo", pet.on_divination_draw, close_on_trigger=True)
+
+
 def _build_check_update(menu, pet):
     return add_action(menu, "检查更新", "update", lambda: pet.on_check_update(pet), close_on_trigger=True)
 
@@ -326,6 +337,11 @@ class MenuActionRegistry:
             ),
             "music_open_netease": MenuActionSpec(add_music_open_netease),
             "music_open_qqmusic": MenuActionSpec(add_music_open_qqmusic),
+            # 酷狗 / 汽水与上面两条同源：同一个建造器 + 同一个启动 worker，只有
+            # player_key 不同。可用性一律 True（入口位置由布局树保留），装没装由
+            # 运行时启用态表达（CONTEXT.md：Runtime Disabled 保留位置 + 解释原因）。
+            "music_open_kugou": MenuActionSpec(add_music_open_kugou),
+            "music_open_soda": MenuActionSpec(add_music_open_soda),
             # 平台门在 menu_layout 的 available_actions 过滤里生效（非 Windows
             # 整条不出现）；builder 自身也有同一道门，legacy 扁平布局直接调它。
             "memory_trim": MenuActionSpec(add_memory_trim, _memory_trim_available),
@@ -371,6 +387,9 @@ class MenuActionRegistry:
             ),
             "festival_toggle": MenuActionSpec(
                 _build_festival_toggle, _callback_available("on_toggle_festival")
+            ),
+            "divination_draw": MenuActionSpec(
+                _build_divination_draw, _callback_available("on_divination_draw")
             ),
             # 天气：回调缺失 = 能力不可用（隐藏）；开关关掉 = 运行时置灰、位置保留
             # （CONTEXT.md 的 Capability Unavailable / Runtime Disabled 口径）。

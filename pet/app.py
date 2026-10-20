@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -440,9 +439,16 @@ _MUSIC_PLAYER_WARM_DELAY_MS = 2500
 def _warm_music_player_paths() -> None:
     """后台线程暖音乐播放器路径缓存（幂等，可重复调用）。
 
-    右键菜单「打开网易云/QQ音乐并播放」的 builder 在 GUI 线程只读缓存（冷缓存
+    右键菜单「打开某播放器给主人放歌」的 builder 在 GUI 线程只读缓存（冷缓存
     时乐观启用）：真正的目录浅扫在这里的 daemon 线程里做，否则冷缓存下首次开
     菜单要在 MainThread 上扫 6s+。
+
+    **启动只预热下面这两键**（``netease`` / ``qqmusic``）：注册表后补的酷狗、
+    汽水不在启动预热点里，它们的缓存由首次构建音乐子菜单时的幂等预热（或设置页
+    「自动检测」）补齐——菜单条目不因此置灰（冷缓存一样乐观启用），只是那一次
+    扫描发生在打开菜单之后。四条串行浅扫在本机要二十多秒，压在启动路径上会拖慢
+    首屏。这条口径由 ``tests/test_music_player_cache.py`` 的
+    ``test_ui_ready_prewarm_schedules_music_player_cache_warm`` 钉住。
     """
     from . import music_players
 
@@ -610,6 +616,10 @@ class PetInstance:
         win.on_self_talk_speak = self._slot_wrap(self.shell.speak_self_talk)
         win.on_festival_now = self._slot_wrap(self.shell.trigger_festival_now)
         win.on_toggle_festival = self._slot_wrap(self.shell.toggle_festival_reminder)
+        # 每日一签：菜单「抽支签」→ 出当天的签；on_user_interaction 供
+        # 窗口在"用户点了桌宠"时回调（当天没看才提示一行）。
+        win.on_divination_draw = self._slot_wrap(self.shell.trigger_divination_draw)
+        win.on_user_interaction = self._slot_wrap(self.shell.divination_hint_on_interaction)
         win.on_restore_fun_windows = restore_ojingjing_windows
         win.on_hidden = self._slot_wrap(self._notify_pet_hidden)
         # 4.4b：窗级「退出这只」恒注入（多窗常开化；最后一窗退出即全进程退出，
@@ -1081,6 +1091,7 @@ class PetInstance:
             shell._sync_todo_service()
             shell._sync_chime_service()
             shell._sync_festival_service()
+            shell._sync_divination_service()
             self._sync_animation_prewarm()
             self._refresh_chat_windows()
             _mac_set_dock_icon_visible(bool(self.config.get("show_dock_icon", True)))
@@ -1168,7 +1179,11 @@ class PetInstance:
             from .chat.session_store import SessionStore
 
             store = SessionStore(self.config.dir, getattr(self.config, "instance_id", ""))
-            character_id = str(self.config.get("character", catalog.DEFAULT_CHARACTER))
+            # ``character`` 是每宠键：会话按角色隔离，读主配置会稳定拿到出厂默认
+            # 角色，slot≠0 的宠聊天就串到默认角色的会话里（同族缺陷：进程级服务
+            # 读每宠键）。身份统一经 ``_identity_config()`` 取当前呈现身份。
+            character_id = str(self._identity_config().get(
+                "character", catalog.DEFAULT_CHARACTER))
             sessions = store.list(character_id)
             if sessions:
                 session = sessions[0]
@@ -1616,22 +1631,55 @@ class AppShell:
     def _self_talk_speak_wanted(self) -> bool:
         """点击自言自语朗读是否开启——它同样复用报时服务的音频通道。
 
-        只要求「点击触发自言自语」+ 本朗读开关：点击自言自语是独立开关，不与
-        「气泡自言自语」总开关（周期气泡）耦合，否则只想点击听声的用户永远拿不到
-        音频通道。避免给用不到的场景常驻一条音频通道。
+        ``self_talk_speak_enabled`` 与 ``click_show_self_talk`` 都在
+        ``pet_profiles.PER_PET_KEYS`` 里（**每宠键**）：真值在各自的 slot 档案，
+        主配置那份只是 slot0 兜底。读主配置会让"设置页明明打开了、运行期看不到"
+        ——音频通道根本不建，点击静默无声、连一行日志都没有（v4.3.3 用户实测：
+        设置里勾着「点击台词朗读」，`config-slot-0.json` 也有值，就是不朗读）。
+        """
+        for cfg in self._self_talk_voice_configs():
+            try:
+                speaks = bool(cfg.get("self_talk_speak_enabled", False))
+                shows = bool(cfg.get("click_show_self_talk", False))
+            except Exception:  # noqa: BLE001 - 单个视图读失败不该拖垮通道判据
+                continue
+            if speaks and shows:
+                return True
+        return False
+
+    def _divination_speak_wanted(self) -> bool:
+        """抽签语音播报是否开启——它同样复用报时服务的音频通道。
+
+        与节日语音同族：通道随报时开关一起被释放时，抽签语音就变成"有气泡没声音"。
+        判定走抽签自己的配置清洗（`normalize_divination_config`，非法值回落默认），
+        与抽签服务读的同一处实现，不另立第二份真值。
+        """
+        from .divination import normalize_divination_config
+
+        cfg = normalize_divination_config(self.config)
+        return bool(cfg["enabled"] and cfg["speak"])
+
+    def _todo_speak_wanted(self) -> bool:
+        """待办语音播报是否开启——它同样复用报时服务的音频通道。
+
+        与节日语音同族：通道随报时开关一起被释放时，待办提醒就变成"有气泡没声音"
+        （开关能存、点了没声的死开关）。总开关关掉时待办服务自己也不跑，故两者都要。
         """
         return bool(
-            self.config.get("self_talk_speak_enabled", False)
-            and self.config.get("click_show_self_talk", False)
+            self.config.get("todo_reminder_enabled", True)
+            and self.config.get("todo_reminder_speak", False)
         )
 
     def _chime_wanted(self) -> bool:
-        # 报时自身开启，或节日语音 / 点击自言自语朗读需要这条音频通道（三者共用
-        # 一套合成与播放，因此"通道是否存在"取决于其中之一是否需要）。
+        # 报时自身开启，或节日语音 / 点击自言自语朗读 / 抽签语音 / 待办语音播报需要
+        # 这条音频通道（五者共用一套合成与播放，因此"通道是否存在"取决于其中之一
+        # 是否需要）。
         return (
             bool(self.config.get("voice_chime_enabled", False))
             or self._festival_speak_wanted()
             or self._self_talk_speak_wanted()
+            or self._divination_speak_wanted()
+            or self._todo_speak_wanted()
         )
 
     def _ensure_chime_service(self):
@@ -1652,30 +1700,39 @@ class AppShell:
         return service.should_speak_at(chime_slot)
 
     def ensure_audio_channel(self):
-        """对外暴露的音频通道（节日提醒语音复用报时服务的合成与播放）。"""
-        return self._ensure_chime_service()
+        """对外暴露的音频通道（节日提醒语音 / 每日一签复用报时服务的合成与播放）。
+
+        通道可能是**为本次调用才懒创建**的（报时、节日语音、点击朗读都关着，只有
+        抽签语音一路要用它），此时服务里的 ``_cfg`` 还是模块默认值——合成后端、
+        回退开关、音量都按默认走，用户选的本地后端与音量被无视（真事故：只开抽签
+        语音 + 选 SAPI + 关回退 + 音量 0，抽签语音照旧联网 edge 合成、按默认音量出声）。
+
+        未在运行就先补读一次用户配置（与 ``speak_self_talk`` 同一条做法），收在这一
+        处是为了不必让每个调用方各自补读。运行中的通道由 ``_sync_chime_service`` 在
+        保存时刷新，不在这里重读：重读会清掉报时那一组预合成占位。
+        """
+        channel = self._ensure_chime_service()
+        if channel is not None and not channel.is_running():
+            channel.apply_config()
+        return channel
 
     def self_talk_voice_file(self, text: str) -> Path | None:
         """预缓存台词音频的查找路径；没有就返回 None。
 
-        命名约定与产出脚本（F:\\dsh\\tts\\build_self_talk_voice.py）一致：
-        ``<配置目录>/self_talk_voice/<md5(文本)[:16]>.wav``。刻意放配置目录而不是
-        仓库 assets —— 它属于用户数据（换资源包/更新不该丢），与报时缓存
-        voice_chime_cache 同级。
+        键与产出侧是**同一个实现**（``self_talk_voice.find_audio`` → ``cached_audio``
+        → ``cache_path_for`` / ``cache_path``），查找顺序：当前配置（合成后端 + 音色
+        + 语速）解析出的 flavor 缓存 → 经典文本缓存
+        ``<配置目录>/self_talk_voice/<md5(文本)[:16]>.<扩展名>``（外部产出脚本那条
+        兼容来源）。刻意放配置目录而不是仓库 assets —— 它属于用户数据（换资源包/
+        更新不该丢），与报时缓存 voice_chime_cache 同级。
+
+        分成两份实现曾经是隐患：算法漂移没有交叉测试兜着，表现只有"声音怎么变了"；
+        只按文本命键则是"试听换了新声音、点击台词还是旧声音"。
         """
         directory = getattr(getattr(self, "config", None), "dir", None)
         if directory is None:
             return None
-        name = hashlib.md5(str(text).strip().encode("utf-8")).hexdigest()[:16] + ".wav"
-        path = Path(directory) / "self_talk_voice" / name
-        try:
-            # 0 字节的残file不算命中（合成写入被打断会留下它）：播静音比回落
-            # 在线合成更糟——主人只会觉得"点了没声/坏了"，日志里什么都看不到。
-            if path.is_file() and path.stat().st_size > 0:
-                return path
-        except OSError:
-            pass
-        return None
+        return self_talk_voice.find_audio(directory, text, self.config)
 
     def speak_self_talk(self, text: str = "") -> bool:
         """点击自言自语朗读：把同一句话送进报时服务的音频通道。
@@ -1725,15 +1782,23 @@ class AppShell:
     def precache_self_talk_voice(self, reason: str = "") -> bool:
         """把还没有本地音频的点击台词（含点击动画绑定台词）交给后台补齐。
 
-        为什么必须后台：本机合成一句要 20 秒上下（还要 ASR 回读校验、不满意就
-        重抽），保存设置或点击那一刻同步做必然卡顿。开关
-        ``self_talk_voice_precache_enabled`` 默认关闭——本机没装本地 TTS 服务是
-        常态，不开就不该发探测请求；服务不在线时后台线程安静收工。
+        合成走「设置 → 语音报时」同一条链路（``pet/tts`` 注册表 + 同一音色），所以
+        试听能出声就等于这里能生成；本机可选的自建 TTS 服务只由 ``DSH_PET_TTS_URL``
+        覆盖，不在线会自动落回注册表。为什么必须后台：一句在线合成要几秒（自建服务
+        更慢），保存设置或点击那一刻同步做必然卡顿。开关
+        ``self_talk_voice_precache_enabled`` 默认关闭——开一次要在本机写几十个音频
+        文件，不开的用户不该付这笔合成开销。
 
-        返回是否真的起了新一轮（上一轮没跑完时返回 False，不排队）。
+        返回是否真的起了新一轮。开关关着返回 False（一个请求都不发）；上一轮没跑完
+        也返回 False，但这次请求会被记为**待处理快照**，当前批结束后按它补跑一轮
+        （合成期间追加的台词不会错过这一轮）。
         """
+        if not self_talk_voice.enabled(self.config):
+            # 关着时连每宠名单都不读：slot 档案的读取不该为关掉的功能付费。
+            return False
         try:
-            started = self_talk_voice.start_precache(self.config)
+            started = self_talk_voice.start_precache(
+                self.config, configs=self._self_talk_voice_configs())
         except Exception:
             logging.exception("启动台词语音预缓存失败（不影响点击朗读）")
             return False
@@ -1741,6 +1806,28 @@ class AppShell:
             logging.getLogger("dsh-pet-standalone").info(
                 "已开始后台预缓存台词语音%s", f"（{reason}）" if reason else "")
         return started
+
+    def _self_talk_voice_configs(self) -> list:
+        """每只活跃宠的配置视图（台词名单 ``self_talk_texts`` 是每宠键，按 slot 读）。
+
+        两条拓扑各自的"该宠此刻真正在用的那份视图"，不另造读取口径：
+
+        - legacy：逐窗 ``PetInstance.config``（``SlotRoutedConfig``，每宠键路由到
+          该 slot 档案）；
+        - overlay：子宠是 sprite、没有 PetInstance，视图只有壳的 ``_sprite_config``
+          给得出（主 sprite 也是这条，slot0 档案）。
+
+        拿主配置统一读会让 slot≠0 的宠在别人的名单上生成，点击时命中不到缓存、
+        悄悄回退在线合成（音色变成另一个人）。
+        """
+        overlay = getattr(self, "_overlay_shell", None)
+        all_sprites = getattr(overlay, "_all_sprites", None)
+        sprite_cfg = getattr(overlay, "_sprite_config", None)
+        if callable(all_sprites) and callable(sprite_cfg):
+            return [sprite_cfg(sprite) for sprite in all_sprites()]
+        # ``_instances`` 是底层表（``instances`` 只是它的 property）：``__new__``
+        # 造出来的测试桩没有这张表，读不到时当作"没有活跃宠"。
+        return [inst.config for inst in getattr(self, "_instances", ())]
 
     def _sync_chime_service(self) -> None:
         """按配置启停语音报时服务；关闭时释放服务对象。"""
@@ -1812,10 +1899,14 @@ class AppShell:
     def _apply_external_config_change(self) -> None:
         """把「配置已在别处落盘」同步到运行期（独立设置进程 / watcher 路径）。
 
+        全局快捷键也在这里重注册：关掉进程隔离时设置页就在本进程里保存、**没有**
+        watcher，改键要立刻生效就只能挂在这条共用入口上（watcher 路径同样走这里）。
+
         与进程内对话框 finished 的应用链同源（PetInstance._modern_settings_finished
         在真实壳上委托到这里）；多实例时扇出到每个 PetInstance 的窗口，而不是
         只看主窗——外部改配置的那个实例不一定是主窗。
         """
+        self._apply_global_hotkeys()
         for inst in getattr(self, "_instances", []):
             win = getattr(inst, "win", None)
             if win is not None:
@@ -1838,6 +1929,13 @@ class AppShell:
         self._sync_todo_service()
         self._sync_chime_service()
         self._sync_festival_service()
+        # 抽签的预合成也随配置收敛：音色/语速一变，缓存键就变了，必须重合。
+        self._sync_divination_service()
+        # 台词语音预缓存同样在这里收敛：设置页默认跑在独立进程
+        # （settings_process_isolation），进程内对话框那条保存链根本不会执行——
+        # 少了这一行，用户打开开关并保存后本次运行一个文件都不生成（issue #305）。
+        # 开关判定在入口内部，关着时是 no-op；重复触发是单飞的，已补齐时立刻返回。
+        self.precache_self_talk_voice("外部保存设置后")
         # 外部配置变更也可能改了 agent_link.dsh（右键菜单开关落盘后同样收敛到
         # 这里）→ 各窗 refresh_pet_settings 链里的 manager.apply_config 会按
         # 同一功能门启停 DshMonitor（桥目录唯一读方）；overlay 拓扑由上面的
@@ -2395,6 +2493,11 @@ class AppShell:
         # "本分钟是否让位"。顺序反了会出现"报时先响、节日后响"从而两者都出声。
         self._sync_festival_service()
         self._sync_chime_service()
+        # 每日一签：**启动就同步**，让「抽签中...」与今天那段签文在后台先合好。
+        # 挂在点击那一刻已经晚了一拍——实测她点下去之后 1.2 秒合成才完成，
+        # 那 1.2 秒就是她说的"合成还是太慢"。必须排在 _sync_chime_service 之后：
+        # 预合成要用报时服务那条音频通道。
+        self._sync_divination_service()
         # 设置页进程隔离：启动即装 config 目录 watcher，独立设置进程落盘后由它
         # 合并进运行期（开关关闭时不装，完全走旧路径）。
         self._install_config_watcher()
@@ -2407,6 +2510,8 @@ class AppShell:
         # ——它要在关机窗口期到来**之前**就位，才能抢在会话拆除前关掉 ffmpeg
         # 派生（否则系统会弹 0xc0000142 阻塞关机）。
         self._install_session_watcher()
+        # 全局快捷键：壳已就绪才装（分发目标是壳的三个既有入口），默认全不绑。
+        self._install_global_hotkeys()
         self._announce_slot0_profile_problem()
 
     def _announce_slot0_profile_problem(self) -> None:
@@ -2454,6 +2559,76 @@ class AppShell:
             self.precache_self_talk_voice("启动时")
         except Exception:
             logging.exception("启动时预缓存台词语音失败")
+
+    # ------------------------------------------------------------ 全局快捷键
+    def _install_global_hotkeys(self) -> None:
+        """装系统级热键服务（幂等；非 Windows 或装不上时只保留引用供诊断）。"""
+        service = getattr(self, "_hotkeys", None)
+        if service is None:
+            try:
+                from .hotkeys import GlobalHotkeyService
+
+                service = GlobalHotkeyService(self.app)
+                self._hotkeys = service  # 先保活：装原生过滤器要求对象常驻
+                service.install()
+            except Exception:
+                logging.exception("安装全局快捷键失败（右键菜单仍可用）")
+                return
+        self._apply_global_hotkeys()
+
+    def _apply_global_hotkeys(self) -> None:
+        """按当前配置重新注册全部热键（改键/启动/外部配置变更后调用）。"""
+        service = getattr(self, "_hotkeys", None)
+        if service is None or not getattr(service, "installed", False):
+            return
+        from .hotkeys import ACTIONS
+
+        try:
+            failures = service.apply(
+                {action: self.config.get(key) for action, key in ACTIONS.items()},
+                {
+                    "open_chat": self._hotkey_open_chat,
+                    "look_screen": self._hotkey_look_screen,
+                    "screen_capture": self._hotkey_screen_capture,
+                })
+        except Exception:
+            logging.exception("注册全局快捷键失败（右键菜单仍可用）")
+            return
+        for action, text, reason in failures:
+            logging.warning("全局快捷键未生效：%s（%s）%s", action, text, reason)
+
+    def _hotkey_overlay(self):
+        return getattr(self, "_overlay_shell", None)
+
+    def _hotkey_open_chat(self) -> None:
+        """AI 对话：与右键「AI 对话」同一条入口（内部已处理 overlay 拓扑的回退）。"""
+        opener = getattr(self.instance, "open_chat", None)
+        if callable(opener):
+            opener()
+            return
+        quick = getattr(self._hotkey_overlay(), "open_quick_chat", None)
+        if callable(quick):
+            quick()
+
+    def _hotkey_look_screen(self) -> None:
+        """看看屏幕：与右键「看看屏幕」同一条入口（不传 sprite = 主宠）。"""
+        look = getattr(self._hotkey_overlay(), "look_at_screen", None)
+        if callable(look):
+            look()
+            return
+        legacy = getattr(getattr(self.instance, "win", None), "look_at_screen", None)
+        if callable(legacy):
+            legacy()
+
+    def _hotkey_screen_capture(self) -> None:
+        """截图提问：与右键「截图提问」同一条入口。"""
+        capture = getattr(self._hotkey_overlay(), "on_screen_capture", None)
+        if callable(capture):
+            capture()
+            return
+        legacy = getattr(getattr(self.instance, "win", None), "on_screen_capture", None)
+        if callable(legacy):
+            legacy()
 
     def _install_session_watcher(self) -> None:
         """安装会话结束探测器（幂等；实例属性强引用保活，不跨实例共享）。"""
@@ -2852,6 +3027,12 @@ class AppShell:
             logging.exception("退出时关闭会话写盘 worker 失败")
         # 批5.2a：进程级共享子系统收口（agent_link / proactive / 全屏 watcher）。
         # 单窗关闭（退出这只）不触发——只有「全部退出」才停共享子系统。
+        hotkeys = getattr(self, "_hotkeys", None)
+        if hotkeys is not None:
+            try:
+                hotkeys.uninstall()
+            except Exception:
+                logging.debug("注销全局快捷键失败", exc_info=True)
         if self._shared is not None:
             try:
                 self._shared.stop_all()
@@ -2906,6 +3087,15 @@ class AppShell:
                     shell.todo_service = None
                 if getattr(shell, "_shared", None) is not None:
                     shell._shared.stop_all()
+                # 全局热键是**系统级**注册：测试里直接 start() 过的壳不摘，注册会活到
+                # 进程结束（后面的用例、甚至开发机上真热键都会被它占着）。
+                hotkeys = getattr(shell, "_hotkeys", None)
+                if hotkeys is not None:
+                    try:
+                        hotkeys.uninstall()
+                    except Exception:
+                        logging.debug("测试收口注销全局快捷键失败", exc_info=True)
+                    shell._hotkeys = None
                 service = getattr(shell, "voice_chime_service", None)
                 if service is not None:
                     try:
@@ -3053,6 +3243,9 @@ class AppShell:
             # 岛图标默认取鱼本体头像（图片路径不碰 emoji 字体栈，见 dynamic_island
             # 的 _icon_pixmap 注释）；帧未就绪时岛侧只画底圈并稍后重试
             self.island.set_icon_provider(self._island_icon_pixmap)
+            # 岛名是**当前身份**的名字：角色身份走每宠视图，不是进程级配置
+            # （换完角色岛名还停在默认那只，见 _identity_config）
+            self.island.set_identity_provider(self._identity_config)
             self.island.clicked.connect(self._toggle_pet_from_island)
             self.island.toggle_pet_requested.connect(self._toggle_pet_from_island)
             self.island.open_chat_requested.connect(self._open_chat_from_island)
@@ -3110,6 +3303,15 @@ class AppShell:
             return
         body = getattr(self, "island_collision", None)
         if not enabled:
+            if body is not None:
+                body.stop()
+            return
+        # 岛本身没启用（``self.island is None``）时不该建碰撞体：墙的每一个判据
+        # 都要问岛（可见性/几何/模式），没有岛就只有"永远不生效"这一种结果，
+        # 却会给每只宠挂上 ``_island_clamp_body`` 钩子——历史上那条钩子里的
+        # 判空缺失曾让移动整体静默失效（issue #311）。
+        if getattr(self, "island", None) is None:
+            body = getattr(self, "island_collision", None)
             if body is not None:
                 body.stop()
             return
@@ -3208,6 +3410,31 @@ class AppShell:
         """
         config = getattr(getattr(self, "instance", None), "config", None)
         return config if config is not None else self.config
+
+    def _identity_config(self):
+        """进程级服务的**角色身份**取源：当前呈现身份的每宠视图。
+
+        ``character`` 属 ``PER_PET_KEYS``，真值在 ``config-slot-N.json``；全局面那个
+        ``character`` 是出厂默认的残留（slot0 迁移与 ``Config.save`` 都会把每宠键从
+        ``config.json`` 清掉）。所以灵动岛名、托盘「切换角色」勾选、主动识屏的
+        ``pet_name`` 三条进程级读点一律经这里取当前身份——不是「没有值」，是**稳定
+        读到错的默认值**（2026-10-19 用户反馈：换完角色，灵动岛名还是默认那只）。
+
+        两条拓扑各自的"该宠此刻真正在用的那份视图"，不另造读取口径：
+
+        - overlay：主宠是 sprite，取壳的 ``_sprite_config(主 sprite)``（配置同步边界
+          会作废它的快照，换角色后立刻是新值）；
+        - legacy：``PetInstance.config`` 那条 slot0 路由视图。
+
+        overlay 壳还没有主 sprite（启动期、slot0 档案被降级、退出收口后）时退回同一条
+        slot0 视图：两者读的都是 slot0 档案，不会给出第二个真值。
+        """
+        overlay = getattr(self, "_overlay_shell", None)
+        sprite = getattr(overlay, "sprite", None)
+        sprite_config = getattr(overlay, "_sprite_config", None)
+        if sprite is not None and callable(sprite_config):
+            return sprite_config(sprite)
+        return self._chat_identity_config()
 
     def _show_island_chat(self, *, activate: bool = True,
                           reply_text: str | None = None) -> None:
@@ -3330,15 +3557,21 @@ class AppShell:
         只在**一只可见的都没有**时才补这一步：有可见 sprite 就一根逐只标志都不碰，
         用户的逐只选择原样保留；没有 sprite 清单的精简装配/测试替身按「窗口可见即
         可见」处理（与 :meth:`_overlay_sprite_visible` 同一口径），什么都不做。
+
+        遍历**全部宿主**：混合缩放下每块屏一张窗，只恢复主窗的话副屏那几只藏着的
+        宠永远叫不回来（用户点了「显示桌宠」却仍有屏是空的）。
         """
         if self._overlay_sprite_visible(shell):
             return
         setter = getattr(shell, "set_sprite_visible", None)
         if not callable(setter):
             return
-        sprites = getattr(getattr(shell, "overlay", None), "sprites", ()) or ()
-        for sprite in list(sprites):
-            setter(sprite, True)
+        for host in self._overlay_hosts(shell):
+            sprites = getattr(getattr(host, "overlay", None), "sprites", None)
+            if sprites is None:
+                continue  # 该宿主没有 sprite 清单接口（精简装配）
+            for sprite in list(sprites):
+                setter(sprite, True)
 
     def _open_settings_from_island(self) -> None:
         inst = self.instance
@@ -3371,17 +3604,16 @@ class AppShell:
         overlay = getattr(self, "_overlay_shell", None)
         if overlay is not None:
             # overlay 拓扑：instances[].win 恒为 None（PetWindow 不构造），
-            # 聚合可见态由唯一合成窗承担。但合成窗是**常驻**透明全屏窗——逐只
-            # 显隐（OverlayShell.set_sprite_visible）只翻 sprite.visible、不关它，
-            # 故窗口可见只是必要条件：还要至少剩一只可见 sprite（见下）。
-            window = getattr(overlay, "overlay", None)
-            if window is None:
+            # 聚合可见态由合成窗承担。但合成窗是**常驻**透明全屏窗——逐只显隐
+            # （OverlayShell.set_sprite_visible）只翻 sprite.visible、不关它，故
+            # 窗口可见只是必要条件：还要至少剩一只可见 sprite（见下）。混合缩放
+            # 下一块屏一张窗（多宿主）：任一张窗可见 + 任一宿主上有一只可见即成立，
+            # 只看主窗会把"主窗空着、副屏还有宠"判成隐藏。
+            windows = [getattr(host, "overlay", None)
+                       for host in self._overlay_hosts(overlay)]
+            if not any(self._window_visible(window)
+                       for window in windows if window is not None):
                 return False
-            try:
-                if not window.isVisible():
-                    return False
-            except RuntimeError:
-                return False  # 原生窗口已销毁：没有可见面
             return self._overlay_sprite_visible(overlay)
         return any(
             inst.win is not None and getattr(inst.win, "isVisible", lambda: True)()
@@ -3389,23 +3621,46 @@ class AppShell:
         )
 
     @staticmethod
+    def _overlay_hosts(shell) -> list:
+        """壳的全部宿主（混合缩放下每块屏一个）；没有 ``hosts()`` 的精简装配按单宿主算。"""
+        getter = getattr(shell, "hosts", None)
+        return list(getter()) if callable(getter) else [shell]
+
+    @staticmethod
+    def _window_visible(window) -> bool:
+        """该窗口是否在屏上；原生窗口已销毁（RuntimeError）算不可见。"""
+        try:
+            return bool(window.isVisible())
+        except RuntimeError:
+            return False
+
+    @staticmethod
     def _overlay_sprite_visible(shell) -> bool:
-        """合成窗里是否至少有一只可见 sprite（主宠与子宠同等计入）。
+        """是否至少有一只可见 sprite（主宠与子宠、**每块屏的窗**同等计入）。
 
         逐只藏光全部 sprite 后窗口仍 ``isVisible()``，此时桌宠在屏幕上其实一只
         都没有——聚合若判可见，岛会把快速对话锚到不可见的 sprite，隐藏期该弹的
         岛气泡也不再弹。可见性读壳自己的 ``_sprite_visible``（同一判据，含鸭式
-        sprite 的兜底）；没有 sprite 清单的精简装配/测试替身退回「窗口可见即可见」。
+        sprite 的兜底）。
+
+        遍历全部宿主：混合缩放下每块屏一张窗，只看主窗（``shell.overlay``）会把
+        "全迁到副屏"判成一只都没有、把"主窗藏光但副屏有宠"判成隐藏。两种兜底要
+        分开：**没有** sprite 清单这个接口（精简装配/测试替身）→ 按「窗口可见即
+        可见」；清单**存在**但一只都没有 → 真的没有可见宠。
         """
-        sprites = list(getattr(getattr(shell, "overlay", None), "sprites", ()) or ())
-        if not sprites:
-            return True
         probe = getattr(shell, "_sprite_visible", None)
-        for sprite in sprites:
-            visible = probe(sprite) if callable(probe) else getattr(sprite, "visible", True)
-            if visible:
-                return True
-        return False
+        has_list = False
+        for host in AppShell._overlay_hosts(shell):
+            sprites = getattr(getattr(host, "overlay", None), "sprites", None)
+            if sprites is None:
+                continue  # 这个宿主没有 sprite 清单接口
+            has_list = True
+            for sprite in list(sprites):
+                visible = (probe(sprite) if callable(probe)
+                           else getattr(sprite, "visible", True))
+                if visible:
+                    return True
+        return not has_list
 
     def _toggle_pet_from_island(self) -> None:
         # overlay 拓扑：inst.win 全为 None，旧循环拿不到任何窗——路由到
@@ -4116,6 +4371,17 @@ class AppShell:
             logging.exception("退出这只：关闭会话写盘 worker 失败")
 
     def _build_empty_pet_tray(self) -> None:
+        """零宠物的可见兜底：托盘（无托盘时另开恢复窗）。
+
+        **必须留一条 WARN**：legacy 拓扑下走这条路径意味着"进程活着、但桌面上没有
+        任何顶层窗口"，而调用方不区分它与正常启动——没有日志时用户侧只能报出
+        「启动后什么都没有」，连是不是启动失败都无从自查（issue #286）。
+        """
+        logging.warning(
+            "legacy: slot0 未活跃，没有捕获窗（活跃集合=%s，配置目录=%s）："
+            "托盘/恢复窗的「生成 / 恢复 slot0」可重建",
+            sorted(getattr(self, "_active_pet_slots", None) or ()),
+            getattr(self.instance.config, "dir", None))
         tray = self.tray
         if tray is None:
             tray = QSystemTrayIcon(self._tray_placeholder_icon())
@@ -4127,6 +4393,9 @@ class AppShell:
         menu.addAction("退出应用", self.request_app_quit)
         self._install_tray_menu(menu, [menu])
         tray.setContextMenu(menu)
+        # 托盘提示同样说实话：默认的通用 tooltip 会让"桌面上什么都没有"看起来像
+        # 悬停没反应，而不是"这只宠物当前没有捕获窗"。
+        tray.setToolTip("dsh-pet：没有可显示的桌宠（slot0 未活跃）")
         tray.show()
         if not QSystemTrayIcon.isSystemTrayAvailable():
             from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
@@ -4310,6 +4579,54 @@ class AppShell:
         """「启用/关闭节日提醒」开关（默认隐藏、菜单编辑器可加回）：翻转配置并同步服务启停。"""
         self._toggle_flag("festival_reminder_enabled", self._sync_festival_service)
 
+    # ------------------------------------------------------------ 每日一签（互动 · 趣味）
+    def _ensure_divination_service(self):
+        """懒创建抽签服务（纯逻辑 + 无定时器，创建很轻，但仍按开关懒建）。"""
+        if getattr(self, "divination_service", None) is None:
+            from .divination_service import DivinationService
+
+            self.divination_service = DivinationService(self)
+            # 建好就刷一次配置：`apply_config()` 会顺手把今天的语音预合成提交掉，
+            # 免得"服务建了但没人调 apply_config"时预热被漏掉。
+            self.divination_service.apply_config()
+        return self.divination_service
+
+    def _sync_divination_service(self) -> None:
+        """按开关同步抽签服务：关掉就释放，不留常驻对象。"""
+        from .divination import normalize_divination_config
+
+        if normalize_divination_config(self.config)["enabled"]:
+            self._ensure_divination_service().apply_config()
+        elif getattr(self, "divination_service", None) is not None:
+            # 停用要**显式收口**：服务持有跨天定时器，直接丢对象定时器还会留着。
+            self.divination_service.shutdown()
+            self.divination_service = None
+
+    def trigger_divination_draw(self) -> None:
+        """菜单「抽支签」：出当天的签（当天再点显示同一支）。
+
+        关掉总开关时**不做静默无反应**——明确告诉用户去哪儿打开（天气那条同口径）。
+        """
+        service = self._ensure_divination_service()
+        service.apply_config()
+        if service.draw_now() is None:
+            win = getattr(self, "win", None)
+            if win is not None:
+                try:
+                    win.show_bubble("每日一签已关闭 · 设置 → 互动 · 趣味 里打开", duration_ms=6000)
+                except Exception:
+                    logging.exception("抽签关闭提示气泡失败")
+
+    def divination_hint_on_interaction(self) -> None:
+        """用户点了桌宠：当天还没看签时冒一行提示（服务内部判开关与是否已抽）。"""
+        service = getattr(self, "divination_service", None)
+        if service is None:
+            return
+        try:
+            service.hint_on_interaction()
+        except Exception:
+            logging.exception("抽签提示失败")
+
     def system_notify(self, title: str, message: str, *, on_click=None, duration_ms: int = 5000) -> None:
         """Show a bottom-right desktop notification (self-drawn, tray-independent)."""
         self._prune_toasts()
@@ -4424,7 +4741,9 @@ class AppShell:
         add_tray_action(menu, '桌宠设置', self.instance.open_modern_settings)
 
         m_char = track_menu(menu.addMenu('切换角色'))
-        current = str(self.config.get('character', catalog.DEFAULT_CHARACTER))
+        # 勾选态标**当前身份**的角色（换角色后本菜单会重建，见 _refresh_tray_menu）；
+        # 读进程级配置会让勾永远停在出厂默认那只（与岛名同源缺陷）
+        current = str(self._identity_config().get('character', catalog.DEFAULT_CHARACTER))
         for cid in catalog.list_available_characters():
             act = add_tray_action(
                 m_char, cid, lambda cid=cid: self.instance.switch_character(cid))

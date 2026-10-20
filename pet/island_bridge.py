@@ -36,6 +36,9 @@
   一律视为不可注册并撤下既有墙；岛对象/回调异常静默降级（岛本体功能不受影响）；
 - **屏迁移**：``IslandWindowBridge.set_origin`` 更新 overlay 全局原点后重算
   局部几何（overlay 重建/换屏时壳层调用，气泡跟随器 ``set_origin`` 同款）。
+  ``IslandWindowBridge.rebind`` 换**宿主**（岛跨到另一块屏：碰撞世界与原点一起
+  换）——混合缩放下一块屏一张合成窗、各有自己的世界；壳经 ``on_sync`` 挂点
+  每次几何同步前判断岛是否换屏，换了才重绑（见 ``overlay_shell._island_screen_host``）。
 
 Qt 耦合面（写清）
 ----------------
@@ -547,13 +550,16 @@ class IslandWindowBridge:
 
     def __init__(self, island, world=None, overlay=None, *, sound=None,
                  bump=None, member_id: str | None = None, clock=None,
-                 kinetic=None) -> None:
+                 kinetic=None, on_sync=None) -> None:
         self._island = island
         # overlay 引用：几何原点来源 + 拖拽期穿透轮询降档的落点（见
         # _sync_island_drag）。None 时降档通道静默降级。
         self._overlay = overlay
         origin = overlay.geometry().topLeft() if overlay is not None else None
         self._origin = (float(origin.x()), float(origin.y())) if origin is not None else (0.0, 0.0)
+        # on_sync 挂点：callable()，每次几何/显隐同步**之前**转达——壳据此判断岛
+        # 是否换了屏并把墙换到新宿主（见 rebind）。异常静默降级。
+        self._on_sync = on_sync
         self._filter = None
         self._filter_installed = False
         self._core = IslandCollisionBridge(
@@ -687,6 +693,25 @@ class IslandWindowBridge:
         self._core.reset_motion()
         self.sync_geometry()
 
+    def rebind(self, world, overlay=None) -> None:
+        """换宿主（岛跨到另一块屏）：世界与坐标原点**一起**换。
+
+        混合缩放下一块屏一张合成窗、每张窗一份碰撞世界与局部原点（见
+        ``OverlayShell._multi_window``），所以"墙留在原世界"= 岛在这块屏上不存在：
+        这屏的宠直接穿过去。``overlay`` 给了就同时换原点来源，否则沿用旧原点
+        （同一坐标系里换世界，例如世界重建）。
+
+        换世界后立即按新原点重算几何：``attach`` 内部先按旧局部几何登记一帧，
+        紧接着的 ``sync_geometry`` 会立刻改写成新坐标——同一调用栈内完成，任何
+        tick/绘制都看不到中间态。岛速基线作废（跨屏位移不是岛在动）。
+        """
+        if overlay is not None:
+            self._overlay = overlay
+            origin = overlay.geometry().topLeft()
+            self._origin = (float(origin.x()), float(origin.y()))
+        self._core.reset_motion()
+        self.attach(world)
+
     def update_geometry(self, left, top, width, height) -> bool:
         """直接喂局部几何（岛非 QWidget / 几何来自别处时用）。"""
         return self._core.update_geometry(left, top, width, height)
@@ -699,7 +724,11 @@ class IslandWindowBridge:
         探头宠）：停靠细条且未悬停探出（stadium 水平轴假设不成立）；几何
         动画进行中（``_geo_to`` 非 None，展开/停靠/归位的中间帧不代表落点）。
         两类状态结束后岛的 Move/Resize/回调会再次触发本方法，按最终几何复墙。
+
+        入口先转达 ``on_sync`` 挂点：岛换屏（拖过去/夹回/换主屏）与显隐一样都是
+        几何回调的一种，壳必须在墙落到旧世界**之前**有机会换宿主。
         """
+        self._notify_sync()
         try:
             if not self._island.isVisible():
                 self._core.set_visible(False)
@@ -721,3 +750,18 @@ class IslandWindowBridge:
     def on_collision(self, event) -> None:
         """碰撞事件入口（转发核心桥；world 直接挂本对象也可）。"""
         self._core.on_collision(event)
+
+    def _notify_sync(self) -> None:
+        """几何/显隐即将同步 → 外部（壳按岛当前屏换宿主）。
+
+        与 ``kinetic``/``drag_state`` 挂点同纪律：异常静默降级（岛本体功能不受
+        影响），且在墙落盘**之前**调用——壳重绑后 ``sync_geometry`` 才按新原点
+        算局部几何。重复回调的幂等由壳侧负责（宿主没变就早退）。
+        """
+        callback = self._on_sync
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            logger.debug("island_bridge: 岛同步转达失败", exc_info=True)

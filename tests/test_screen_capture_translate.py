@@ -399,3 +399,21 @@ def test_content_parts_are_joined(monkeypatch):
     _capture(monkeypatch, _FakeResponse(payload))
 
     assert translate_text("你好", _FakeConfig(_provider())) == "Hello world"
+
+
+def test_the_prompt_treats_ocr_line_breaks_as_layout_not_sentence_ends(monkeypatch):
+    """OCR 文本按栏宽硬折行：指令必须让模型先接回完整句子，而不是照行对译。
+
+    旧指令写着「保留原有的换行结构」——模型老实照做，于是 "Working / on / two of /
+    these" 被逐行对译成「正在 / 处理 / 这些中的 / 这些」，语序与语义一起丢。
+    """
+    calls = _capture(monkeypatch, _FakeResponse(_reply("正在做其中两件")))
+
+    translate_text("Working\non\ntwo of\nthese", _FakeConfig(_provider()))
+
+    system = _system_message(calls[0]["body"])
+    assert "保留原有的换行结构" not in system, "逐行对齐原文正是逐词译文的成因"
+    assert "不是句子边界" in system
+    assert "只输出译文" in system, "「只输出译文」这条不许被新指令挤掉"
+    # 原文仍然逐字照发（不改写用户看到的 OCR 结果）
+    assert _user_message(calls[0]["body"]) == "Working\non\ntwo of\nthese"

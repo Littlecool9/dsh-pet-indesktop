@@ -286,6 +286,54 @@ class SpriteBubbleFollower:
         if callable(callback):
             callback(self._sprite)
 
+    def rebind(self, overlay, origin=None) -> None:
+        """换到另一张 overlay 窗继续跟随（多窗跨屏移交用）。
+
+        ``remove_sprite`` 会把该 sprite 的**全部位置监听**摘掉（``_position_listeners``
+        整条 pop），只调 ``set_origin`` 是不够的：气泡此后不再跟宠走，实机表现就是
+        "气泡停在跨屏前的位置"。所以移交必须走这里——重新注册到目标窗、把节流定时器
+        也换父对象（它持有对本方的强引用，跟着旧窗会活到旧窗销毁），再更新原点。
+        """
+        if self._closed:
+            return
+        old = self._overlay
+        if old is overlay:
+            self.set_origin(QPoint(origin) if origin is not None else
+                            overlay.geometry().topLeft())
+            return
+        try:
+            old.remove_position_listener(self._sprite, self)
+        except Exception:
+            logger.debug("overlay: 摘旧窗位置监听失败（旧窗已销毁）", exc_info=True)
+        self._overlay = overlay
+        timer = getattr(self, "_follow_timer", None)
+        if timer is not None:
+            try:
+                # 换父之前先停一拍：在飞的那一拍是**旧窗**的节流任务，跨窗后执行等于
+                # 拿新锚点补一次旧节奏的 flush。停掉即可，下一次 `_on_sprite_moved`
+                # 会按需重新 start，跟随不会断。
+                #
+                # **不要**把这里写成"这就是长跑原生崩溃的原因"：加了本行之后，单进程
+                # 全量长跑不再复现 access violation（4 次未崩、其中 3 次全绿），但没有
+                # 原生栈、也没有"只撤掉这一行"的反向实验——因果未证明，属"生命周期防护
+                # 后未再复现"。边界写在 docs/RELEASE-v4.3.4.md 第七节。
+                timer.stop()
+                timer.setParent(overlay)
+            except Exception:
+                logger.debug("overlay: 跟随定时器换父对象失败", exc_info=True)
+        try:
+            overlay.add_position_listener(self._sprite, self)
+        except Exception:
+            logger.debug("overlay: 注册新窗位置监听失败", exc_info=True)
+        self._origin = QPoint(origin) if origin is not None else overlay.geometry().topLeft()
+        self._follow_pending = False
+        bubble = self.bubble
+        if bubble is not None and bubble.isVisible():
+            try:
+                bubble.reposition(self.anchor())
+            except Exception:
+                logger.debug("overlay: 气泡换窗后重定位失败", exc_info=True)
+
     def set_origin(self, origin: QPoint) -> None:
         """全局原点变化后更新锚点原点（壳层在原点真变时调用；换屏重建同款）。
 

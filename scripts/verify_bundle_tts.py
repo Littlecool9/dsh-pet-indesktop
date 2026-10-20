@@ -29,20 +29,31 @@ not a package``）就继续构建，产物静默缺 TTS；用户拿到包后点�
 用法：
     python scripts/verify_bundle_tts.py --app-dir dist-onedir/dsh-pet-standalone-webm-chat
     python scripts/verify_bundle_tts.py --exe <path to exe>
+    python scripts/verify_bundle_tts.py --environment
 
-退出码：0 通过；2 目录/exe 缺失；3 清单读不出来；4 缺模块；5 打包机没装 edge-tts。
+退出码：0 通过；2 目录/exe 缺失；3 清单读不出来；4 缺模块；5 打包机没装 edge-tts；
+6 构建环境版本不满足 requirements；7 包内元数据缺失或版本与构建环境不一致。
 stdout 末行打印 JSON 摘要（ASCII），供构建脚本记录。
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import sys
 from pathlib import Path
 
+from packaging.requirements import Requirement
+from packaging.version import InvalidVersion, Version
+
 # 底部兜底清单：即使闭包测量退化（例如打包机装了 edge-tts 但 import 抛错被吞），
 # 这些模块也必须在包里。`tabulate` 在列——它是 PYZ-only 的那类依赖。
+#
+# `keyring` 在列（2026-10-17）：语音报时的收费后端（MiMo / 豆包）把 API Key 存系统
+# 钥匙串，而 **no-chat 变体原先把它和 `pet.chat` 一起排除**——用户填了 Key、界面报
+# 「已保存」，主宠进程读到的却是空串，收费后端永远自报「没配 Key」。静默、且看不见，
+# 所以放进这份清单：任何变体少带它，构建期就判红（退出码 4）。
 MINIMUM_MODULES = (
     "edge_tts",
     "edge_tts.communicate",
@@ -51,7 +62,70 @@ MINIMUM_MODULES = (
     "aiohttp",
     "aiohttp.client",
     "certifi",
+    "keyring",
 )
+
+# **平台专用**兜底：只在"目标平台就是它"时要求。
+#
+# 三端共用一个 `verify()`：`build_linux.sh` / `build_macos.sh` 调的就是这个函数。
+# 干净的 Linux/macOS 构建不会安装下面这些 Windows-only 依赖，无条件要求会把本来
+# 正确的产物判红（astra 第 13 轮指出的跨平台回归）。要修的是"条件"，不是给另外两个
+# 平台也补一份收集参数。
+#
+# `win32ctypes`（pywin32-ctypes）是**本项目选定的** keyring Windows 后端依赖——不是
+# "不显式收就必然不可用"：PyInstaller 自带的 hook 通常收得到它（实测 4.3.3 与 4.3.4 的
+# exe 内嵌 PYZ 里 `win32ctypes.*` 都在），`keyring.backends.Windows` 在 ImportError 时
+# 还会回退到 pywin32 的 `pywintypes`/`win32cred`。钉进门禁的理由是：那条收集是**隐式**
+# 的，与 keyring 版本失配时会静默丢，而症状（凭据只活在写它的进程内存里、界面仍说
+# "已保存"）在用户侧看不见。显式声明让它在构建期就可知。
+WINDOWS_ONLY_MODULES = (
+    "win32ctypes.pywin32.win32cred",
+)
+
+
+def platform_modules(platform: str | None = None) -> tuple[str, ...]:
+    """目标平台必须随包的平台专用模块（纯函数，便于按平台直接断言）。"""
+    target = sys.platform if platform is None else platform
+    return WINDOWS_ONLY_MODULES if target.startswith("win") else ()
+
+
+def required_version() -> str:
+    """Read the same constraint pip uses; there is no second minimum to drift."""
+    requirements = Path(__file__).resolve().parents[1] / "requirements.txt"
+    for line in requirements.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("edge-tts"):
+            return str(Requirement(line.strip()).specifier)
+    raise ValueError("requirements.txt does not declare edge-tts")
+
+
+def verify_environment() -> tuple[int, dict]:
+    required = required_version()
+    try:
+        installed = importlib.metadata.version("edge-tts")
+    except importlib.metadata.PackageNotFoundError:
+        return 5, {"error": "edge-tts-not-installed-in-build-env", "required_version": required}
+    summary = {"build_version": installed, "required_version": required}
+    try:
+        compatible = Version(installed) in Requirement(f"edge-tts{required}").specifier
+    except InvalidVersion:
+        compatible = False
+    if not compatible:
+        return 6, {**summary, "error": "unsupported-edge-tts-build-version"}
+    return 0, summary
+
+
+def bundle_versions(exe: Path) -> set[str]:
+    roots = [exe.parent / "_internal"]
+    if exe.parent.name == "MacOS" and exe.parent.parent.name == "Contents":
+        roots = [exe.parent.parent / "Resources", exe.parent.parent / "Frameworks"]
+    versions = set()
+    for root in roots:
+        for metadata in root.glob("*.dist-info/METADATA"):
+            distribution = importlib.metadata.PathDistribution(metadata.parent)
+            if distribution.metadata.get("Name", "").lower().replace("_", "-") == "edge-tts":
+                if distribution.version:
+                    versions.add(distribution.version)
+    return versions
 
 
 def _has_packable_source(module) -> bool:
@@ -193,12 +267,21 @@ def find_exe(app_dir: Path) -> Path | None:
 
 def verify(app_dir: Path | None, exe: Path | None) -> tuple[int, dict]:
     """返回 (退出码, JSON 摘要)。"""
+    code, versions = verify_environment()
+    if code:
+        return code, versions
     if exe is None:
         if app_dir is None or not app_dir.is_dir():
             return 2, {"error": "app-dir-missing", "app_dir": str(app_dir)}
         exe = find_exe(app_dir)
         if exe is None or not exe.is_file():
             return 2, {"error": "exe-not-found", "app_dir": str(app_dir)}
+
+    bundled = bundle_versions(exe)
+    if bundled != {versions["build_version"]}:
+        return 7, {**versions, "error": "edge-tts-bundle-version-mismatch-or-missing",
+                   "bundle_versions": sorted(bundled), "exe": str(exe)}
+    versions["bundle_version"] = next(iter(bundled))
 
     closure = import_closure()
     if closure is None:
@@ -208,7 +291,8 @@ def verify(app_dir: Path | None, exe: Path | None) -> tuple[int, dict]:
                     "只警告不报错，产物会静默缺 TTS）",
             "exe": str(exe),
         }
-    required = set(MINIMUM_MODULES) | {m for m in closure if m == "edge_tts" or m.startswith("edge_tts.")}
+    required = (set(MINIMUM_MODULES) | set(platform_modules())
+                | {m for m in closure if m == "edge_tts" or m.startswith("edge_tts.")})
     # 闭包里其余的第三方依赖（aiohttp / tabulate / certifi 及其传递依赖）也要在包里。
     required |= {m.split(".")[0] for m in closure}
 
@@ -219,6 +303,7 @@ def verify(app_dir: Path | None, exe: Path | None) -> tuple[int, dict]:
 
     missing = missing_modules(present, required)
     summary = {
+        **versions,
         "exe": str(exe),
         "frozen_modules": len(present),
         "required_modules": len(required),
@@ -235,15 +320,19 @@ def main(argv=None) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--app-dir", help="onedir 产物目录（或 macOS 的 .app）")
     group.add_argument("--exe", help="产物主程序路径")
+    group.add_argument("--environment", action="store_true", help="只检查打包环境依赖版本")
     args = parser.parse_args(argv)
 
-    code, summary = verify(
+    code, summary = verify_environment() if args.environment else verify(
         Path(args.app_dir).resolve() if args.app_dir else None,
         Path(args.exe).resolve() if args.exe else None,
     )
-    if code == 0:
+    if code == 0 and args.environment:
+        print(f"[tts] build edge-tts {summary['build_version']} OK ({summary['required_version']})")
+    elif code == 0:
         print(f"[tts] bundle TTS stack OK "
-              f"({summary['required_modules']} modules required, "
+              f"(edge-tts {summary['bundle_version']}; "
+              f"{summary['required_modules']} modules required, "
               f"{summary['frozen_modules']} frozen)")
     elif code in (4,):
         print(f"[tts] FAIL missing TTS modules: {', '.join(summary['missing'])}", file=sys.stderr)

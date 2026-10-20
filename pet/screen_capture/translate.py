@@ -73,7 +73,9 @@ def translate_text(text: str, config, *, target: str | None = None) -> str:
         "messages": [
             {"role": "system", "content": (
                 f"你是翻译引擎。把用户给的文本翻译成{target}。"
-                "只输出译文本身：不解释、不评注、不加引号包装、保留原有的换行结构。"
+                "用户文本是 OCR 从截图里取的：里面的换行只是排版断行，不是句子边界。"
+                "先按语义把被断开的句子接回完整句子再翻译，不要按行逐段对译。"
+                "只输出译文本身：不解释、不评注、不加引号包装，按自然段落输出。"
             )},
             {"role": "user", "content": source},
         ],
