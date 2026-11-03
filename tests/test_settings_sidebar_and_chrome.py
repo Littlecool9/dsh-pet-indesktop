@@ -13,8 +13,8 @@
    非撑满子控件**算，默认字体下恒为 200（逐像素不变），放大字体下跟着长；**构造之后
    字体才变大也要跟上**（系统放大字体 / 无障碍放大 / 截图脚本的 ``--font-scale`` 都是
    这条路，所以不能只在构造时算一次）。
-2. **导航可达**：默认窗口 800×560 下 10 个能力域必须全部落在视口里（默认尺寸就把
-   「更新」截掉一半＝用户看不到还有这一页）；720×500 下允许滚动，但每一行都要能选中
+2. **导航可达**：默认窗口 800×560 下 9 个能力域必须全部落在视口里（默认尺寸就把
+   最后一个域截掉一半＝用户看不到还有这一页）；720×500 下允许滚动，但每一行都要能选中
    并切到对应页。
 3. **窗口图标**：``setWindowTitle`` 之后挂正式桌宠图标（``load_application_icon``），
    原生标题栏不再摆系统给的那一个；图标拿不到时照旧能建窗（空图标，不抛异常）。
@@ -178,7 +178,7 @@ def test_sidebar_width_tracks_a_font_change_after_construction(tmp_path, monkeyp
 
 # ------------------------------------------------------------------ 2. 导航可达
 def test_default_window_shows_every_domain_without_scrolling(tmp_path, monkeypatch):
-    """默认窗口 800×560：10 个能力域全部落在侧栏视口里（不必滚动才发现「更新」）。
+    """默认窗口 800×560：9 个能力域全部落在侧栏视口里。
 
     判据是 ``scrollBar.maximum() == 0``：内容只要比视口高 1px，Qt 就把它抬到 1（实测
     556 → 555 的分界），没有"差一点也算过"的余地。余量只来自侧栏纵向间距——导航行高是
@@ -191,7 +191,7 @@ def test_default_window_shows_every_domain_without_scrolling(tmp_path, monkeypat
     dialog = _dialog(tmp_path, monkeypatch)
     try:
         sidebar = dialog.sidebar
-        assert sidebar.count() >= 10, "能力域少了一个（本用例会假绿）"
+        assert sidebar.count() >= 9, "能力域少了一个（本用例会假绿）"
         assert sidebar.verticalScrollBar().maximum() == 0, (
             "默认尺寸下侧栏仍需滚动：最后一个能力域被截在视口外")
         viewport = sidebar.viewport().height()
@@ -327,8 +327,6 @@ def test_wide_window_keeps_the_form_at_a_reading_width(tmp_path, monkeypatch):
             dialog.sidebar.setCurrentRow(index)
             _settle()
             page, scroll, root = _content_of(dialog, domain)
-            if scroll is None:
-                continue  # 「更新」是命令面板，不是设置表单
             if domain == "菜单":
                 assert root.maximumWidth() > READING_WIDTH, (
                     "布局编辑器需要更宽的两栏，自己声明的上限应当大于默认值")
@@ -393,8 +391,6 @@ def test_compact_window_never_clips_the_form(tmp_path, monkeypatch):
             dialog.sidebar.setCurrentRow(index)
             _settle()
             page, scroll, root = _content_of(dialog, domain)
-            if scroll is None:
-                continue
             assert root.width() <= scroll.viewport().width() + 1, (
                 f"「{domain}」内容 {root.width()}px 宽过视口 "
                 f"{scroll.viewport().width()}px（右边被切掉）")
@@ -439,7 +435,7 @@ def test_save_and_exit_button_asks_for_the_save_icon(tmp_path, monkeypatch):
 #: "代表长期独立用户目标、预计包含**至少两个**稳定设置组"。下面这两个域是该判据落地之前
 #: 就在的既成事实，作为快照豁免；它们现在是 1 组就写 1 组——将来变多，这条断言会逼你更新
 #: 快照，免得豁免名单悄悄扩大成垃圾桶。
-DOMAINS_WITH_ONE_GROUP = {"文件识别", "更新"}
+DOMAINS_WITH_ONE_GROUP = {"文件识别", "语音"}
 
 
 def test_new_top_level_domain_must_own_at_least_two_setting_groups(tmp_path, monkeypatch):

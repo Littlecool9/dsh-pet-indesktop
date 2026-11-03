@@ -18,7 +18,6 @@ from collections import deque
 
 from PySide6.QtCore import QTimer
 
-from . import catalog
 from . import quiet_mode
 from . import window_placement
 
@@ -285,8 +284,8 @@ def sprite_in_flight(host, sprite=None) -> bool:
     """该 sprite 是否正在飞行（气泡门禁里的**飞行分量**，不含设置页抑制）。
 
     只有需要区分两种抑制的调用方才用它：飞行期是瞬时的（鱼飞几秒），上屏
-    推迟到落地即可；设置页抑制期是长时的用户意图，节日提醒/语音报时在这期间
-    仍按既有语义退到气泡位直写展示（见 ``festival_service._bubble``）。
+    推迟到落地即可；设置页抑制期是长时的用户意图，语音报时在这期间仍按既有
+    语义退到气泡位直写展示。
     无该接口的 host（PetWindow / 测试替身）恒 False。
     """
     checker = getattr(host, "_sprite_in_flight", None)
@@ -733,58 +732,6 @@ def show_random_self_talk(host) -> bool:
 
     host._last_self_talk_text = value
     return host._show_self_talk_text(value)
-
-
-def self_talk_speak_enabled(host) -> bool:
-    """点击自言自语是否朗读（缺配置或配置损坏时按默认关闭，与 config.py 一致）。"""
-    cfg = getattr(host, "cfg", None)
-    if cfg is None:
-        return False
-    try:
-        return bool(cfg.get("self_talk_speak_enabled", False))
-    except Exception:
-        return False
-
-
-def speak_click_self_talk(host, text: str) -> None:
-    """把点击自言自语**实际显示的那句话**交给语音通道读出来。
-
-    刻意复用语音报时服务的音频通道（窗口的 ``on_self_talk_speak`` 由 app 接线到
-    ``AppShell.speak_self_talk``）：报时 / 节日提醒 / 点击自言自语共用一条音频
-    通道，才能像节日提醒那样在结构上保证不叠音。
-
-    通道缺失、开关关闭或播报失败都只降级为「有气泡没声音」，绝不影响点击本身。
-    """
-    stripped = str(text or "").strip()
-    if not stripped or not self_talk_speak_enabled(host):
-        return
-    speaker = getattr(host, "on_self_talk_speak", None)
-    if not callable(speaker):
-        return
-    try:
-        speaker(stripped)
-    except Exception:
-        logging.getLogger("dsh-pet-standalone").exception("点击自言自语语音播报失败")
-
-
-def show_click_self_talk(host, click_name: str) -> bool:
-    """优先播放当前点击动画绑定的台词；未绑定则回退全局随机自言自语。
-
-    显示成功后把实际显示的文本一并朗读（图片气泡没有文本，自然不出声），
-    使"听到的"与"看到的"永远是同一句。
-    """
-    character_id = str(host.cfg.get('character', catalog.DEFAULT_CHARACTER))
-    texts = host.cfg.click_talk_texts_for(character_id, click_name)
-    if texts:
-        value = random.choice(texts)
-        shown = host._show_self_talk_text(value)
-    else:
-        host._last_self_talk_text = None
-        shown = host._show_random_self_talk()
-        value = getattr(host, "_last_self_talk_text", None)
-    if shown and value:
-        speak_click_self_talk(host, value)
-    return shown
 
 
 def on_self_talk_timeout(host) -> None:

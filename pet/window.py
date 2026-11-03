@@ -85,7 +85,7 @@ from . import window_screen
 from . import window_alerts
 from .animation_thumbnail import decode_representative_frame
 from .speech_bubble import PetSpeechBubble, list_self_talk_images
-from .fun_image_popup import oijingjing_image_path, resolve_fun_asset
+from .asset_paths import default_self_talk_image_dir, resolve_asset_path
 from .context_menu import populate_context_menu as _populate_context_menu
 from .context_menus.shared import release_menu_tree, take_deferred_menu_callbacks
 from . import physics as physics_mod
@@ -131,7 +131,7 @@ def _resolve_self_talk_image_dir(raw: str) -> str:
     candidate = Path(raw).expanduser()
     if candidate.is_absolute() and not candidate.is_dir():
         return ''
-    return str(resolve_fun_asset(raw, oijingjing_image_path().parent))
+    return str(resolve_asset_path(raw, default_self_talk_image_dir()))
 
 
 # 直播捕获兼容模式下窗口标题（普通顶层窗口需要可见标题，供直播姬/OBS 选择）
@@ -385,12 +385,9 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self.on_open_quick_chat = None
         self.on_open_chat_settings = None
         self.on_show_balance = None
-        self.on_show_weather = None
-        self.on_check_update = None
         self.on_look_synced = None
         self.on_look_screen = None
         self.on_open_modern_settings = None
-        self.on_restore_fun_windows = None
         self.on_spawn_pet = None
         self.on_clear_spawned_pets = None
         # 由 app 注入：「恢复默认设置」后的运行态对齐（位置回默认落位，issue #220）
@@ -444,7 +441,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self.pet_opacity: int = int(_float_or_default(config.get('pet_opacity', 100), 100, 10, 100))
         self._applied_opacity: float | None = None  # 已应用到窗口的不透明度
         self.click_show_balance: bool = bool(config.get('click_show_balance', False))
-        self.click_show_self_talk: bool = bool(config.get('click_show_self_talk', False))
         self.animation_gap_seconds: float = max(0.0, min(3600.0, float(config.get('animation_gap_seconds', 0.0))))
         self._animation_gap_active = False
         self._animation_gap_timer = QTimer(self)
@@ -3256,11 +3252,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
                 play_release_sound(self._press_sound_pair, volume)
             if not self._try_open_quick_chat_from_bubble(g):
                 self._on_click()
-                # 每日一签：每天第一次点桌宠给一行提示（钩子由 app.py 以公有属性
-                # 注入，未注入时无操作——与语音报时的窗口钩子同一手法）。
-                hint = getattr(self, "on_user_interaction", None)
-                if callable(hint):
-                    hint()
         self._dragging = False
         self._interaction_state = "IDLE"
         self._press_global = None
@@ -3320,8 +3311,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         consume_click = getattr(self, '_effects_consume_click', None)
         if callable(consume_click) and consume_click():
             return  # 边缘探头激活：点击由探头状态机消费（转直/重置倒计时）
-        if callable(self.on_restore_fun_windows):
-            self.on_restore_fun_windows()
         # 直连黄金回旋 / 无点击素材时立即旋转；返回 True 表示本次点击已被效果层消费。
         route_spin = getattr(self, '_effects_route_click_golden_spin', None)
         if callable(route_spin) and route_spin():
@@ -3339,12 +3328,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             self._schedule_click_sound()
         if self.click_show_balance and callable(self.on_show_balance):
             self.on_show_balance(self)
-        elif self.click_show_self_talk:
-            # 点击自言自语是**独立开关**：只认 ``click_show_self_talk``，不再搭
-            # 「气泡自言自语」总开关（那是周期气泡的开关；两者绑在一起会让"只想
-            # 点击听声"的用户无从开启——设置页里这三行也因此曾被一起隐藏）。
-            if self._show_click_self_talk(click_name):
-                self._schedule_self_talk(after_display=True)
 
     def _schedule_click_sound(self) -> None:
         if not self.click_sound_enabled:
@@ -3652,10 +3635,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         """Compatibility delegation (window_alerts.show_random_self_talk)."""
         return window_alerts.show_random_self_talk(self, *args, **kwargs)
 
-    def _show_click_self_talk(self, *args, **kwargs):
-        """Compatibility delegation (window_alerts.show_click_self_talk)."""
-        return window_alerts.show_click_self_talk(self, *args, **kwargs)
-
     def _on_self_talk_timeout(self, *args, **kwargs):
         """Compatibility delegation (window_alerts.on_self_talk_timeout)."""
         return window_alerts.on_self_talk_timeout(self, *args, **kwargs)
@@ -3866,7 +3845,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self._self_talk_max_interval = max(self._self_talk_min_interval, float(self.cfg.get('self_talk_max_interval', DEFAULT_SELF_TALK_MAX_INTERVAL)))
         self._throw_speed_cap = physics_mod.throw_speed_cap(self.cfg.get('throw_strength'))
         self.click_show_balance = bool(self.cfg.get('click_show_balance', False))
-        self.click_show_self_talk = bool(self.cfg.get('click_show_self_talk', False))
         self._schedule_self_talk()
         # Phase 1：主动识屏/Agent 联动按配置懒装配或同步。
         self.sync_optional_services()

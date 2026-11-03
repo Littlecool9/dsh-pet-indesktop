@@ -31,7 +31,6 @@ from .music_lyric_controller import (
 from .music_title import FOOBAR_FORMAT_MAX_CHARS
 from .config import (
     DEFAULT_CONTEXT_MENU_APPEARANCE,
-    DEFAULT_MENU_EASTER_EGG,
     DEFAULT_SELF_TALK_BUBBLE_STYLE,
     DEFAULT_SELF_TALK_DURATION_SECONDS,
     DEFAULT_SELF_TALK_IMAGE_CHANCE,
@@ -41,7 +40,6 @@ from .config import (
     _float_or_default,
 )
 from .context_menus.icons import vector_widget_icon
-from .fun_image_popup import oijingjing_image_path, resolve_fun_asset
 from .persona_phrases import PUBLIC_DIALOGUE_EVENTS, phrase_keys
 from .persona_template import build_persona_template
 from .settings_widgets import (
@@ -414,8 +412,6 @@ def build_pet_controls(host) -> None:
     if host.include_ai:
         host.click_balance_check = ToggleSwitch(host)
         host.click_balance_check.setChecked(bool(host.config.get("click_show_balance", False)))
-    host.click_self_talk_check = ToggleSwitch(host)
-    host.click_self_talk_check.setChecked(bool(host.config.get("click_show_self_talk", False)))
     host.click_self_talk_speak_check = ToggleSwitch(host)
     host.click_self_talk_speak_check.setChecked(bool(host.config.get("self_talk_speak_enabled", False)))
     host.self_talk_voice_precache_check = ToggleSwitch(host)
@@ -576,10 +572,6 @@ def build_pet_controls(host) -> None:
     host.bubble_text_scale_spin.setRange(50, 300)
     host.bubble_text_scale_spin.setSuffix(" %")
     host.bubble_text_scale_spin.setValue(int(host.config.get("bubble_text_scale", 100)))
-    host.click_talk_bindings_btn = QPushButton("编辑…", host)
-    host.click_talk_bindings_btn.setObjectName("clickTalkBindingsButton")
-    host.click_talk_bindings_btn.clicked.connect(host._open_click_talk_bindings)
-
     # Agent 联动：agent_link 配置（思考文案编辑已移除；后续音效/专属层共用此引用）
     agent_link_cfg = host.config.get("agent_link", {})
 
@@ -775,18 +767,6 @@ def build_pet_controls(host) -> None:
     host.dark_background_picker = color_picker("dark_background")
     host.dark_foreground_picker = color_picker("dark_foreground")
     host.dark_hover_picker = color_picker("dark_hover")
-
-    egg = host.config.get("menu_easter_egg", DEFAULT_MENU_EASTER_EGG)
-    host.egg_enabled_check = ToggleSwitch(host)
-    host.egg_enabled_check.setChecked(bool(egg.get("enabled", True)))
-    host.egg_title_edit = _line_edit(str(egg.get("title") or "厉害了我的鲸"), width=240)
-    host.egg_hint_edit = _line_edit(str(egg.get("hint") or "请点击"), width=160)
-    avatar = resolve_fun_asset(egg.get("avatar"), oijingjing_image_path())
-    image_dir = resolve_fun_asset(egg.get("image_dir"), oijingjing_image_path().parent)
-    host.egg_avatar_picker = ResourcePathPicker(str(avatar.resolve()), parent=host)
-    host.egg_image_dir_picker = ResourcePathPicker(
-        str(image_dir.resolve()), directory=True, image_preview=True, parent=host,
-    )
 
 # ------------------------------------------------------------ 主动识屏
     if sys.platform == "win32" and host.include_ai:

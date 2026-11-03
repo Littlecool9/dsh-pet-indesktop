@@ -31,10 +31,8 @@
 经典缓存的查找按 ``<md5>.*`` 枚举，不认死扩展名，外部脚本那份 wav 照样命中。
 
 
-**名单**：每只宠**自己 slot 档案**里的自言自语（``self_talk_texts`` 是每宠键）＋该宠
-各角色**点击动画绑定**台词（``character_profiles.<角色>.click_talk_bindings.<动画id>``），
-跨宠按文本去重。读错配置层的后果是 slot≠0 的宠在**别人的名单**上生成、点击时命中不到
-→ 回退在线合成，音色变成另一个人。
+**名单**：每只宠**自己 slot 档案**里的自言自语（``self_talk_texts`` 是每宠键），
+跨宠按文本去重。读错配置层的后果是 slot≠0 的宠在**别人的名单**上生成。
 
 **开关**：``self_talk_voice_precache_enabled`` 默认关闭。开一次要在本机写几十个音频文件，
 只有明确开启的用户才付这笔合成开销与磁盘占用。
@@ -208,7 +206,7 @@ def pick_voice(text: str) -> str:
 
 
 def collect_lines(config) -> list[tuple[str, str]]:
-    """单只宠要预缓存的台词：自言自语 + 该宠各角色点击动画绑定，按文本去重。
+    """单只宠要预缓存的台词：自言自语，按文本去重。
 
     ``config`` 必须是**这只宠**的配置视图（每宠键要走 slot 档案）：主配置那份只是
     slot0 的兜底，拿它统一读会让别的宠在 slot0 的名单上生成。
@@ -230,23 +228,6 @@ def collect_lines(config) -> list[tuple[str, str]]:
     for text in texts:
         add(text, "全局自言自语")
 
-    try:
-        profiles = config.data.get("character_profiles")
-    except Exception:
-        profiles = None
-    if isinstance(profiles, dict):
-        for character_id in profiles:
-            try:
-                bindings = config.click_talk_bindings(character_id)
-            except Exception:
-                continue
-            if not isinstance(bindings, dict):
-                continue
-            for action_id, lines in bindings.items():
-                if not isinstance(lines, list):
-                    continue
-                for line in lines:
-                    add(line, f"点击绑定[{character_id} / {action_id}]")
     return out
 
 

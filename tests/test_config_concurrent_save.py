@@ -42,7 +42,7 @@ for line in sys.stdin:
 def writers(tmp_path):
     seed = Config(base=tmp_path)
     seed.data['character_aliases'] = {'removed': 'old', 'kept': 'keep'}
-    seed.set('weather_city', 'old city')
+    seed.set('pnpm_bin', 'old city')
     assert seed.save()
     processes = []
 
@@ -77,10 +77,10 @@ def _disk(cfg):
 def test_subprocess_disjoint_and_same_key_commit_order(writers):
     cfg, start = writers
     first, second = start(), start()
-    assert _commit(first, set=[(['weather_city'], 'first'), (['on_top'], False)])
-    assert _commit(second, set=[(['weather_city'], 'second'), (['no_move'], True)])
+    assert _commit(first, set=[(['pnpm_bin'], 'first'), (['on_top'], False)])
+    assert _commit(second, set=[(['pnpm_bin'], 'second'), (['no_move'], True)])
     raw = _disk(cfg)
-    assert raw['weather_city'] == 'second'
+    assert raw['pnpm_bin'] == 'second'
     assert raw['on_top'] is False
     assert raw['no_move'] is True
 
@@ -107,9 +107,9 @@ def test_subprocess_reset_rejects_old_dirty_snapshot(writers):
     old, resetter = start(), start()
     assert _commit(resetter, op='reset')
     after = cfg.path.read_bytes()
-    assert not _commit(old, set=[(['weather_city'], 'late city')])
+    assert not _commit(old, set=[(['pnpm_bin'], 'late city')])
     assert cfg.path.read_bytes() == after
-    assert _disk(cfg)['weather_city'] == ''
+    assert _disk(cfg)['pnpm_bin'] == ''
 
 
 def test_deleted_default_not_restored_by_reload_or_normalize(tmp_path):
@@ -180,7 +180,7 @@ def test_normalization_and_repeated_deletion(tmp_path):
     assert cfg.save()
     assert _disk(cfg)['quiet_minutes_default'] >= 0
     cfg.data.pop('quiet_minutes_default')
-    cfg.set('weather_city', 'city')
+    cfg.set('pnpm_bin', 'city')
     assert cfg.save()
     assert cfg.save()
     assert 'quiet_minutes_default' not in _disk(cfg)
@@ -188,7 +188,7 @@ def test_normalization_and_repeated_deletion(tmp_path):
 
 def test_reset_partial_failure_is_safe_and_retryable(tmp_path, monkeypatch):
     cfg = Config(base=tmp_path)
-    cfg.set('weather_city', 'old city')
+    cfg.set('pnpm_bin', 'old city')
     assert cfg.save()
     old = Config(base=tmp_path)
     before = cfg.path.read_bytes()
@@ -196,12 +196,12 @@ def test_reset_partial_failure_is_safe_and_retryable(tmp_path, monkeypatch):
         patch.setattr(config_mod, 'atomic_replace_with_retry',
                       lambda *args: (_ for _ in ()).throw(OSError('injected')))
         assert cfg.reset_to_defaults() is False
-    assert cfg.get('weather_city') == 'old city'
+    assert cfg.get('pnpm_bin') == 'old city'
     assert cfg.path.read_bytes() == before
-    old.set('weather_city', 'late city')
+    old.set('pnpm_bin', 'late city')
     assert old.save() is False
     assert cfg.reset_to_defaults()
-    assert _disk(cfg)['weather_city'] == ''
+    assert _disk(cfg)['pnpm_bin'] == ''
 
 
 def test_first_save_race_only_commits_changed_keys(tmp_path):
@@ -269,7 +269,7 @@ def test_nested_directory_lock_save_is_reentrant(tmp_path):
 
 def test_partial_reset_cannot_be_laundered_by_reload(tmp_path, monkeypatch):
     cfg = Config(base=tmp_path)
-    cfg.set('weather_city', 'old city')
+    cfg.set('pnpm_bin', 'old city')
     assert cfg.save()
     old = Config(base=tmp_path)
     with monkeypatch.context() as patch:
@@ -284,13 +284,13 @@ def test_partial_reset_cannot_be_laundered_by_reload(tmp_path, monkeypatch):
     assert fresh.save() is False
     assert cfg.path.read_bytes() == before
     assert fresh.reset_to_defaults()
-    assert Config(base=tmp_path).get('weather_city') == ''
+    assert Config(base=tmp_path).get('pnpm_bin') == ''
 
 
 @pytest.mark.parametrize('phase', ['begin', 'config', 'complete'])
 def test_reset_each_write_failure_is_recoverable(tmp_path, monkeypatch, phase):
     cfg = Config(base=tmp_path)
-    cfg.set('weather_city', 'old city')
+    cfg.set('pnpm_bin', 'old city')
     assert cfg.save()
     before = cfg.path.read_bytes()
     real_write = cwl.atomic_write_json
@@ -308,13 +308,13 @@ def test_reset_each_write_failure_is_recoverable(tmp_path, monkeypatch, phase):
             patch.setattr(config_mod, 'atomic_replace_with_retry',
                           lambda *args: (_ for _ in ()).throw(OSError('injected')))
         assert cfg.reset_to_defaults() is False
-    assert cfg.get('weather_city') == 'old city'
+    assert cfg.get('pnpm_bin') == 'old city'
     if phase != 'complete':
         assert cfg.path.read_bytes() == before
     if phase != 'begin':
         assert Config(base=tmp_path).save() is False
     assert cfg.reset_to_defaults()
-    assert Config(base=tmp_path).get('weather_city') == ''
+    assert Config(base=tmp_path).get('pnpm_bin') == ''
 
 
 @pytest.mark.parametrize('token', [7, 'old-token'])
@@ -347,12 +347,12 @@ def test_dirty_config_reload_cannot_rebind_to_completed_reset(tmp_path):
     cfg = Config(base=tmp_path)
     assert cfg.save()
     old = Config(base=tmp_path)
-    old.set('weather_city', 'draft')
+    old.set('pnpm_bin', 'draft')
     assert cfg.reset_to_defaults()
     before = cfg.path.read_bytes()
     old.reload()
     assert old.save() is False
-    assert old.get('weather_city') == 'draft'
+    assert old.get('pnpm_bin') == 'draft'
     assert cfg.path.read_bytes() == before
 
 

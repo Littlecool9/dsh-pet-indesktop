@@ -356,25 +356,6 @@ def test_domain_names_land_on_their_representative_rows(tmp_path, monkeypatch):
         dialog.close()
 
 
-def test_check_update_is_a_command_and_stays_out_of_the_index(tmp_path, monkeypatch):
-    """「检查更新」是按钮不是设置行：按既有口径不进索引，不为它破例。
-
-    它是「更新」页上的 ``QPushButton``（`pet/update_settings.py`），与侧栏的
-    「恢复默认设置 / 保存并退出」同类——候选集只装 ``SettingRow``，命令给不出行
-    落点。要让它可搜得先给按钮建落点模型，那是另一件事。
-    """
-    from pet.settings_search import ROW_ALIASES
-
-    assert not any("检查更新" in token for token in ROW_ALIASES), (
-        "别名表不该为命令类控件破例")
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        assert _matches(dialog, "检查更新") == []
-        assert dialog.search_status.text() == "未找到匹配的设置"
-    finally:
-        dialog.close()
-
-
 def test_new_aliases_keep_the_existing_first_hits(tmp_path, monkeypatch):
     """补别名**只能追加**候选：补之前已正确的首条命中逐条不变。
 
@@ -587,36 +568,6 @@ def test_ctrl_f_focuses_the_search_box(tmp_path, monkeypatch):
         shortcut.activated.emit()
 
         assert dialog.focusWidget() is dialog.search_edit, "Ctrl+F 应该把焦点送进搜索框"
-    finally:
-        dialog.close()
-        dialog.deleteLater()
-
-
-def test_author_rows_are_searchable_and_jump_to_the_update_page(tmp_path, monkeypatch):
-    """「更新」页的作者账号行也进搜索索引：搜 BiliBili / 抖音 能跳过去。
-
-    它们不是 SettingRow（没有配置键），但按同形暴露 label/hint_label，所以同一套
-    匹配函数就能覆盖——不必为"可搜"改掉那一块的排版。
-    """
-    from pet import settings_search
-    from pet.settings_about import AuthorRow
-
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        rows = dialog._search_rows
-        assert any(isinstance(row, AuthorRow) for row in rows), "作者行必须进索引"
-
-        matches = settings_search.find_matches(rows, "bilibili")
-        assert matches, "搜平台名要有命中"
-        assert all(isinstance(row, AuthorRow) for row in matches)
-
-        handles = settings_search.find_matches(rows, "快乐小咸鱼")
-        assert handles, "搜账号名也要有命中"
-
-        dialog._search_settings("bilibili")
-        page = dialog.pages.currentWidget()
-        assert page is not None and page.isAncestorOf(matches[0]), (
-            "命中项在「更新」页，翻页要跳过去")
     finally:
         dialog.close()
         dialog.deleteLater()

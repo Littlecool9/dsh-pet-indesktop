@@ -5,13 +5,10 @@
 
     MB      module
   4.75  pet.balance            （档位文案/价格提示表；默认配置从不查余额）
-  2.95  pet.festival_service   （连带 festival/festival_calendar/festival_data
-  ＋五份节日文案表；总开关默认关闭）
 
-合计 ~7.7MB Python 堆在启动时白白常驻。两个 import 已收到真正的构造/使用点
-（``AppShell._ensure_festival_service`` / ``_show_balance_payload`` /
+这个 import 已收到真正的构造/使用点（``_show_balance_payload`` /
 ``_island_tier_hint`` / ``_balance_worker``），本测试用**子进程**验证「只
-import pet.app 不会带出它们」——进程内断言不可靠，别的用例可能已经导入过。
+import pet.app 不会带出它」——进程内断言不可靠，别的用例可能已经导入过。
 
 刻意不拦的模块（有实测理由，见 PR 报告「未采纳方向」）：
 ``pet.window``（被 platform_win 模块级导入，overlay 拓扑也绕不开）、
@@ -31,8 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _CHILD = r'''
 import json, sys
 import pet.app  # noqa: F401 - 被测：只导入入口模块，不起 QApplication
-deferred = ["pet.balance", "pet.festival_service", "pet.festival_data",
-            "pet.festival_quotes_cn", "pet.festival_quotes_west_movie"]
+deferred = ["pet.balance"]
 print(json.dumps({name: name in sys.modules for name in deferred}))
 '''
 
@@ -53,15 +49,4 @@ def test_importing_app_defers_balance_module():
     assert loaded['pet.balance'] is False, (
         'pet.balance（4.75MB 档位文案表）不得在 import pet.app 时常驻：'
         '默认配置不查余额，它必须留到 _show_balance_payload/_island_tier_hint'
-    )
-
-
-def test_importing_app_defers_festival_modules():
-    loaded = _run_child()
-    offenders = [name for name in (
-        'pet.festival_service', 'pet.festival_data',
-        'pet.festival_quotes_cn', 'pet.festival_quotes_west_movie',
-    ) if loaded[name]]
-    assert not offenders, (
-        f'节日提醒总开关默认关闭，这些模块不该在 import pet.app 时载入: {offenders}'
     )

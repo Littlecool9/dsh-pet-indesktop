@@ -16,8 +16,8 @@
     cfg/scale/change_scale/playback_speed/set_playback_speed  → 被点 sprite + 各自那份 config
     on_open_chat / on_open_chat_settings                      → PetInstance.open_chat*
     on_open_modern_settings                                   → OverlayShell.open_settings_for
-    on_show_balance / on_check_update / on_open_todo_panel /
-    on_voice_chime_* / on_festival_*                          → AppShell（进程级服务）
+    on_show_balance / on_open_todo_panel /
+    on_voice_chime_*                                          → AppShell（进程级服务）
     toggle_agent_link                                         → agent_link_manager（共享 manager）
     toggle_proactive_enabled / set_proactive_option           → proactive_watcher（共享监视器）
     trigger_golden_spin / look_at_screen / rename_character   → 壳的 sprite 等价实现（作用被点 sprite）
@@ -98,7 +98,7 @@ class SpriteMenuFacade:
 
     @property
     def _app_shell(self):
-        """AppShell（app.py）：余额/更新/待办/报时/节日/设置进程等进程级服务。"""
+        """AppShell（app.py）：余额/待办/报时/设置进程等进程级服务。"""
         return getattr(self._instance, "shell", None)
 
     def _hosts(self) -> tuple:
@@ -391,35 +391,6 @@ class SpriteMenuFacade:
         return lambda *_ignored: fn(host)
 
     @property
-    def on_show_weather(self):
-        """「查看天气」：``AppShell.show_weather``；父窗同样是发起 sprite 的呈现器。
-
-        与 ``on_show_balance`` 的差别只有一条：**不**受聊天能力门控——天气取的是
-        独立外部数据源，没有聊天/DSL 变体也不该消失。
-        """
-        fn = _first_callable(self._hosts(), ("show_weather",))
-        if fn is None:
-            return None
-        host = self._service_host()
-        return lambda *_ignored: fn(host)
-
-    @property
-    def on_check_update(self):
-        """「检查更新」：``AppShell.check_update``（窗口版是 ``_slot_wrap`` 包装，
-        这里壳本身即唯一窗，无需槽位前缀）。
-
-        父窗同 ``on_show_balance`` 传壳：传 OverlayWindow 会在
-        ``target.show_bubble`` 抛 AttributeError——而那句在
-        ``self._update_checking = True`` 之后、复位 connect 之前，异常会让
-        本次会话永久不再检查更新。
-        """
-        fn = _first_callable(self._hosts(), ("check_update",))
-        if fn is None:
-            return None
-        shell = self._shell
-        return lambda *_ignored: fn(shell)
-
-    @property
     def on_open_todo_panel(self):
         return _first_callable(self._hosts(), ("open_todo_panel",))
 
@@ -441,24 +412,6 @@ class SpriteMenuFacade:
     @property
     def on_toggle_voice_chime(self):
         return _first_callable(self._hosts(), ("toggle_voice_chime",))
-
-    @property
-    def on_festival_now(self):
-        return _first_callable(self._hosts(), ("trigger_festival_now",))
-
-    @property
-    def on_toggle_festival(self):
-        return _first_callable(self._hosts(), ("toggle_festival_reminder",))
-
-    @property
-    def on_divination_draw(self):
-        """「抽支签」：``AppShell.trigger_divination_draw``。
-
-        **必须在 facade 上存在**：注册表的可用性判定是
-        ``callable(getattr(pet, "on_divination_draw", None))``，门面不代理这个属性，
-        overlay 菜单就会**静默少一项**（语音报时/节日四项同样依赖各自的代理）。
-        """
-        return _first_callable(self._hosts(), ("trigger_divination_draw",))
 
     def _behavior(self, sprite=None):
         """该 sprite **所在宿主**的行为控制器。

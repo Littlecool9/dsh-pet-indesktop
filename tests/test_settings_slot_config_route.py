@@ -76,7 +76,6 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
         dialog.pet_opacity_spin.setValue(35)
         dialog.edge_probe_check.setChecked(True)
         dialog.voice_chime_page.enabled_check.setChecked(True)
-        dialog.divination_speak_check.setChecked(True)   # 「互动 · 抽签」的念签开关
         assert dialog._write_config() is True
     finally:
         dialog.deleteLater()
@@ -85,7 +84,6 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
     assert on_disk["pet_opacity"] == 35, "窗口级键必须落主配置"
     assert on_disk["edge_probe_enabled"] is True, "拖拽探头必须落主配置"
     assert on_disk["voice_chime_enabled"] is True, "语音报时必须落主配置"
-    assert on_disk["divination_speak"] is True, "抽签的念签开关必须落主配置"
     assert "scale" not in on_disk
     assert _read_json(_slot_path(main.dir, 0))["scale"] == 0.5
 
@@ -93,7 +91,6 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
     assert slot_on_disk.get("pet_opacity") != 35, "非 per-slot 键一个字节都不该进 slot 文件"
     assert slot_on_disk.get("edge_probe_enabled") is not True
     assert slot_on_disk.get("voice_chime_enabled") is not True
-    assert slot_on_disk.get("divination_speak") is not True
 
 
 def test_child_save_keeps_per_slot_keys_in_the_slot_file(tmp_path, app):
@@ -266,7 +263,7 @@ def test_routed_save_reloads_main_before_writing(tmp_path):
     ``_write_config`` 那条端到端路径见下一条。
     """
     main = Config(base=tmp_path)
-    main.set("mem_min_size_mb", 50.0)
+    main.set("balance_refresh_minutes", 11)
     assert main.save() is True
     cfg = Config(base=tmp_path, instance_id="slot-1")
     routed = settings_slot_config.route_settings_config(cfg)
@@ -274,26 +271,26 @@ def test_routed_save_reloads_main_before_writing(tmp_path):
 
     routed.set("pet_opacity", 30)
     external = Config(base=tmp_path)
-    external.set("mem_min_size_mb", 123.0)
+    external.set("balance_refresh_minutes", 42)
     assert external.save() is True
 
     assert routed.save() is True
     on_disk = _read_json(main.path)
     assert on_disk["pet_opacity"] == 30, "本次要改的键要落盘"
-    assert on_disk["mem_min_size_mb"] == 123.0, "外部并发改动被陈旧内存快照盖回去了"
+    assert on_disk["balance_refresh_minutes"] == 42, "外部并发改动被陈旧内存快照盖回去了"
 
 
 def test_child_save_does_not_roll_back_external_main_change(tmp_path, app):
     """设置窗开着时主配置被外部改写 → 子宠页保存（整表写主配置）不得盖回该键。"""
     main = Config(base=tmp_path)
-    main.set("mem_min_size_mb", 50.0)
+    main.set("balance_refresh_minutes", 11)
     assert main.save() is True
     cfg = Config(base=tmp_path, instance_id="slot-1")
 
     dialog = _dialog(cfg)
     try:
         external = Config(base=tmp_path)
-        external.set("mem_min_size_mb", 123.0)
+        external.set("balance_refresh_minutes", 42)
         assert external.save() is True
 
         dialog.pet_opacity_spin.setValue(30)
@@ -303,7 +300,7 @@ def test_child_save_does_not_roll_back_external_main_change(tmp_path, app):
 
     on_disk = _read_json(main.path)
     assert on_disk["pet_opacity"] == 30, "本次要改的键要落盘"
-    assert on_disk["mem_min_size_mb"] == 123.0, "外部并发改动被陈旧内存快照盖回去了"
+    assert on_disk["balance_refresh_minutes"] == 42, "外部并发改动被陈旧内存快照盖回去了"
 
 
 # ------------------------------------------------------------ 5. 分流键的清洗口径
@@ -356,67 +353,6 @@ def test_child_page_keeps_clean_slot_values(tmp_path, app):
         assert dialog.bubble_text_scale_spin.value() == 150
     finally:
         dialog.deleteLater()
-
-
-# ------------------------------------------------------------ 6. 点击台词绑定保存
-def _save_click_talk_binding(config, action_id: str, text: str) -> str:
-    """走真实对话框保存一条绑定（`编辑…` 按钮那条路），返回实际角色 id。"""
-    from pet.click_talk_dialog import ClickTalkBindingsDialog
-
-    dialog = ClickTalkBindingsDialog(config, click_names=[action_id])
-    try:
-        dialog.text_edit.setPlainText(text)
-        dialog._save()
-        return dialog.character_id
-    finally:
-        dialog.deleteLater()
-
-
-def test_child_click_talk_bindings_save_keeps_external_main_change(tmp_path, app):
-    """子宠页保存点击台词绑定：外部并发改动不得被回滚，绑定要真进主配置。
-
-    旧行为：``set_click_talk_bindings`` 经 ``__getattr__`` 转发到 ``Config``——那里
-    直接改内存 + ``self.save()``（**整表**写）。设置进程的内存快照从启动起就陈旧，
-    那次整表写会把设置窗开着期间主进程/托盘改过的键一起盖回去。
-    """
-    main = Config(base=tmp_path)
-    main.set("mem_min_size_mb", 50.0)
-    assert main.save() is True
-    cfg = Config(base=tmp_path, instance_id="slot-1")
-
-    dialog = _dialog(cfg)
-    try:
-        external = Config(base=tmp_path)
-        external.set("mem_min_size_mb", 123.0)
-        assert external.save() is True
-
-        character_id = _save_click_talk_binding(dialog.config, "click1", "你好呀")
-        assert dialog.config.click_talk_bindings(character_id) == {"click1": ["你好呀"]}
-    finally:
-        dialog.deleteLater()
-
-    on_disk = _read_json(main.path)
-    assert on_disk["mem_min_size_mb"] == 123.0, "外部并发改动被陈旧内存快照盖回去了"
-    assert on_disk["character_profiles"][character_id]["click_talk_bindings"] == {
-        "click1": ["你好呀"]}, "绑定必须写进主配置（进程级数据）"
-
-
-def test_click_talk_binding_save_writes_main_config_even_without_page_save(tmp_path, app):
-    """绑定对话框自己的「保存」即落盘：设置页没再点保存（或直接关窗）也不丢。
-
-    路由把落盘收口在 ``save`` 的 reload → 重放 pending → save 上，但
-    ``Config.set_click_talk_bindings`` 的既契约是"保存即落盘"；两者都要满足。
-    """
-    main = Config(base=tmp_path)
-    assert main.save() is True
-    cfg = Config(base=tmp_path, instance_id="slot-1")
-    routed = settings_slot_config.route_settings_config(cfg)
-
-    character_id = _save_click_talk_binding(routed, "click2", "在的")
-
-    on_disk = _read_json(main.path)
-    assert on_disk["character_profiles"][character_id]["click_talk_bindings"] == {
-        "click2": ["在的"]}
 
 
 # ------------------------------------------------------------ 7. 置灰摘除（路由接通后真生效）
@@ -548,10 +484,7 @@ def test_routed_keys_cover_the_runtime_per_slot_read_surface(tmp_path):
     assert "collision_enabled" in settings_slot_config.SLOT_ROUTED_KEYS
     assert "user_customized" in settings_slot_config.SLOT_LOCAL_KEYS
     for main_only in ("pet_opacity", "voice_chime_enabled", "edge_probe_enabled",
-                      "dynamic_island", "context_menu_appearance",
-                      # 每日一签：「互动 · 抽签」那三行是**进程级**键（签一天一支、
-                      # 状态只有一份），子宠页改它同样只该落主配置。
-                      "divination_enabled", "divination_speak", "divination_hint"):
+                      "dynamic_island", "context_menu_appearance"):
         assert main_only not in settings_slot_config.SLOT_ROUTED_KEYS
 
 

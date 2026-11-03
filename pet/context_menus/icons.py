@@ -270,14 +270,6 @@ def vector_menu_icon(menu: QMenu, name: str, size: int | None = None) -> QIcon:
         painter.drawLine(QPointF(5.0, 5.5), QPointF(11.0, 5.5))
         painter.drawLine(QPointF(8.0, 4.0), QPointF(8.0, 12.0))
         painter.drawArc(QRectF(5.2, 5.0, 5.6, 6.0), 70 * 16, 220 * 16)
-    elif name == "update":
-        painter.drawArc(QRectF(2.0, 2.0, 12.0, 12.0), 35 * 16, 285 * 16)
-        painter.drawPolygon(QPolygonF([QPointF(10.7, 1.8), QPointF(14.0, 2.5), QPointF(12.0, 5.3)]))
-    elif name == "download":
-        painter.drawLine(QPointF(8.0, 2.0), QPointF(8.0, 10.0))
-        painter.drawLine(QPointF(4.8, 7.0), QPointF(8.0, 10.2))
-        painter.drawLine(QPointF(11.2, 7.0), QPointF(8.0, 10.2))
-        painter.drawLine(QPointF(3.0, 13.5), QPointF(13.0, 13.5))
     elif name == "file":
         painter.drawRoundedRect(QRectF(2.5, 1.5, 9.5, 13.0), 1.6, 1.6)
         painter.drawLine(QPointF(5.0, 5.5), QPointF(11.0, 5.5))
@@ -291,16 +283,6 @@ def vector_menu_icon(menu: QMenu, name: str, size: int | None = None) -> QIcon:
             gear.append(QPointF(8.0 + cos(angle) * radius, 8.0 + sin(angle) * radius))
         painter.drawPolygon(gear)
         painter.drawEllipse(QPointF(8.0, 8.0), 2.15, 2.15)
-    elif name == "weather":
-        # 晴：太阳本体 + 八道短射线（与整体单色描边语言一致）
-        painter.drawEllipse(QPointF(8.0, 8.0), 3.4, 3.4)
-        for index in range(8):
-            angle = index * pi / 4
-            inner, outer = 5.0, 7.0
-            painter.drawLine(
-                QPointF(8.0 + cos(angle) * inner, 8.0 + sin(angle) * inner),
-                QPointF(8.0 + cos(angle) * outer, 8.0 + sin(angle) * outer),
-            )
     elif name == "play":
         painter.drawPolygon(QPolygonF([QPointF(4.0, 2.5), QPointF(13.0, 8.0), QPointF(4.0, 13.5)]))
     elif name == "pet":

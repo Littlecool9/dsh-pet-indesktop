@@ -150,9 +150,9 @@ def _section(dialog, domain: str, title: str, tab_key: str | None = None) -> Set
             elif isinstance(widget, SettingsSection) and _title_of(widget) == title:
                 return widget
             elif type(widget) is QWidget:
-                # 域装配可能先起一层普通容器再往里放卡片（2026-10-14「语音」域就是：
-                # 一张语音报时平卡 + 节日页自建卡片组）。这些容器没有自己的标题，
-                # 只是布局层，递归进去找，别让分组在测试眼里"消失"。
+                # 域装配可能先起一层普通容器再往里放卡片（「语音」域就是：一张
+                # 语音报时平卡）。这些容器没有自己的标题，只是布局层，递归进去找，
+                # 别让分组在测试眼里"消失"。
                 hit = find(widget)
                 if hit is not None:
                     return hit
@@ -265,22 +265,15 @@ def test_agent_box_and_phrase_box_are_prebuilt_widgets_in_the_table(tmp_path, mo
         dialog.close()
 
 
-# ------------------------------------------------------------------- 语音域：3 + 3 组
-def test_voice_and_festival_domains_split_into_groups(tmp_path, monkeypatch):
-    """语音报时与节日提醒各自**自建卡片**交给「语音」域：语音报时整组占一张平卡
-    （含基础设置 / 合成后端折叠编排 / 凭据组 / 语音 / 台词歌词的全部行），节日提醒按
-    何时提醒 / 提醒哪些日子 / 怎么提醒 / 你的生日 / 少用项 分卡。行数与行归属一个不变
-    ——只是不再由本域按「一组行」拼小分组（那样页面容器会散架、分组标题会跟着丢）。"""
+# ------------------------------------------------------------------- 语音域
+def test_voice_domain_keeps_its_self_built_cards(tmp_path, monkeypatch):
+    """语音报时**自建卡片**交给「语音」域：整组占一张平卡（含基础设置 / 合成后端
+    折叠编排 / 凭据组 / 语音 / 台词歌词的全部行）。行数与行归属一个不变——只是不再
+    由本域按「一组行」拼小分组（那样页面容器会散架、分组标题会跟着丢）。"""
     dialog = _dialog(tmp_path, monkeypatch)
     try:
-        # 「语音」域现在是一层自建容器：顶层放一张「语音报时」平卡 + 节日页自建的卡片组。
-        # _top_level_titles 只看直接子块，所以这里分两段断言：顶层第一块是语音报时，
-        # 其余（节日提醒那几张）在它下面的子容器里。
         top = _top_level_titles(_content(dialog, "语音"))
-        assert top[:1] == ["语音报时"], top
-        all_titles = [label.text() for label in _content(dialog, "语音").findChildren(QLabel, "sectionTitle")]
-        for title in ("语音报时", "何时提醒", "提醒哪些日子", "怎么提醒", "你的生日", "少用项"):
-            assert title in all_titles, f"「语音」域丢了卡片：{title}"
+        assert top == ["语音报时"], top
         # 语音报时整组：既有行一个不少，外加 provider 化带来的引擎/后端字段行。
         voice_rows = [row.objectName().replace("settingRow_", "")
                       for row in _section(dialog, "语音", "语音报时").rows]
@@ -296,23 +289,6 @@ def test_voice_and_festival_domains_split_into_groups(tmp_path, monkeypatch):
                     "voice_chime_mimo_model", "voice_chime_mimo_voice", "voice_chime_mimo_style",
                     "voice_chime_sapi_voice", "voice_chime_sapi_rate"):
             assert key in voice_rows, f"「语音报时」缺后端字段行：{key}"
-        # 节日提醒按卡归属
-        expected = {
-            "何时提醒": ("festival_reminder_enabled", "festival_reminder_mode",
-                     "festival_reminder_count", "festival_reminder_times"),
-            "提醒哪些日子": ("festival_reminder_cn", "festival_reminder_solar_terms",
-                        "festival_reminder_west"),
-            "怎么提醒": ("festival_reminder_speak", "festival_reminder_animation",
-                     "festival_reminder_show_quote"),
-            "你的生日": ("festival_birthday",),
-            "少用项": ("festival_custom_quotes_cn", "festival_custom_quotes_west",
-                    "festival_preview"),
-        }
-        for title, keys in expected.items():
-            rows = [row.objectName().replace("settingRow_", "")
-                    for row in _section(dialog, "语音", title).rows]
-            for key in keys:
-                assert key in rows, f"「{title}」丢了行：{key}"
         # 「立即试听」仍在 SettingRow 里（历史事故：没包进行里就不会被域收集搬运）。
         assert _page(dialog, "语音").isAncestorOf(_row(dialog, "voice_chime_preview"))
         assert "待分类（开发期）" not in [
@@ -362,7 +338,7 @@ def _blocks_of(domain_content: QWidget) -> list[tuple[str, QWidget]]:
     """页内容顶层块（分区 / 折叠框），测试自己走布局顺序（不调被测函数自证）。
 
     2026-10-14 起域装配可能先起一层**普通容器**再把卡片放进去（「语音」域就是：
-    一张「语音报时」平卡 + 节日页自建的卡片组）。这层没有标题、只是布局层，所以
+    一张「语音报时」平卡）。这层没有标题、只是布局层，所以
     这里也要穿透——否则测试看到的块比用户看到的少，会得出"跳转条格数不对"的假结论。
     """
     blocks = []
@@ -542,13 +518,13 @@ def test_anchor_bar_converges_in_both_directions(tmp_path, monkeypatch):
     """
     dialog = _dialog(tmp_path, monkeypatch)
     try:
-        # 1000×1000 下「常规」装得下（534px < 视口），「语音」装不下（2456px）——
-        # 一个对话框里同时拿到短页与长页两个样本。
+        # 1000×1000 下「常规」装得下（约 580px < 视口），「AI 与对话」装不下（约 1800px，
+        # 8 个区）——一个对话框里同时拿到短页与长页两个样本。
         dialog.resize(1000, 1000)
         dialog.show()
         app.processEvents()
         # 一轮一个域（都停在**当前页**上：非当前页不参与布局，量不到真几何）。
-        for domain, expect_hidden in (("常规", True), ("语音", False)):
+        for domain, expect_hidden in (("常规", True), ("AI 与对话", False)):
             page, bar = _select(dialog, domain)
             scroll = page.findChild(QScrollArea, "settingsScroll")
             blocks = _blocks_of(_content(dialog, domain))
@@ -574,18 +550,18 @@ def test_anchor_bar_follows_the_window_height(tmp_path, monkeypatch):
         dialog.resize(1000, 1000)
         dialog.show()
         app.processEvents()
-        page, bar = _select(dialog, "语音")
+        page, bar = _select(dialog, "AI 与对话")
         scroll = page.findChild(QScrollArea, "settingsScroll")
-        blocks = _blocks_of(_content(dialog, "语音"))
+        blocks = _blocks_of(_content(dialog, "AI 与对话"))
         assert _expect_bar_hidden(bar, blocks, scroll) is False, (
-            f"前提：1000 高时语音域仍然装不下（内容 {_needed_height(scroll)}px / "
+            f"前提：1000 高时「AI 与对话」域仍然装不下（内容 {_needed_height(scroll)}px / "
             f"可用 {_available_height(scroll, bar)}px）")
 
         overhead = dialog.height() - _available_height(scroll, bar)
         dialog.resize(1000, _needed_height(scroll) + overhead + 120)
         app.processEvents()
         assert _needed_height(scroll) <= _available_height(scroll, bar), (
-            f"前提：加高到 {dialog.height()} 之后语音域装得下（内容 "
+            f"前提：加高到 {dialog.height()} 之后「AI 与对话」域装得下（内容 "
             f"{_needed_height(scroll)}px / 可用 {_available_height(scroll, bar)}px）")
         assert bar.isHidden() is True, "装得下的页面不该摆跳转条"
 
@@ -782,7 +758,7 @@ def test_anchor_bar_holds_across_jump_resize_and_domain_navigation(tmp_path, mon
         assert bar.isHidden() is True, "拉回带内之后该收起来"
         assert _past_end_padding(dialog, BAND_DOMAIN) == 0, "装得下的页面不该留页尾空白"
         # 导航：带内再换域、再换回来，答案不许跟着上一页走
-        for domain in ("互动", BAND_DOMAIN, "语音", BAND_DOMAIN):
+        for domain in ("互动", BAND_DOMAIN, "AI 与对话", BAND_DOMAIN):
             _assert_bar_matches_criterion(dialog, domain, note="带内换域")
         _page_widget, bar = _select(dialog, BAND_DOMAIN)
         assert bar.isHidden() is True
@@ -930,8 +906,8 @@ def test_chips_name_their_section_and_take_keyboard_focus(tmp_path, monkeypatch)
         dialog.resize(900, 700)
         dialog.show()
         app.processEvents()
-        _page_widget, bar = _select(dialog, "语音")
-        blocks = _blocks_of(_content(dialog, "语音"))
+        _page_widget, bar = _select(dialog, "AI 与对话")
+        blocks = _blocks_of(_content(dialog, "AI 与对话"))
         assert [chip.text() for chip in _chips(bar)] == [title for title, _w in blocks]
         for chip in _chips(bar):
             assert chip.objectName() == "settingsPageAnchor"
@@ -952,19 +928,19 @@ def test_clicking_a_chip_top_aligns_the_section(tmp_path, monkeypatch):
         dialog.resize(720, 500)
         dialog.show()
         app.processEvents()
-        page, bar = _select(dialog, "语音")
+        page, bar = _select(dialog, "AI 与对话")
         scroll = page.findChild(QScrollArea, "settingsScroll")
-        # 2026-10-14 起「语音」域的语音卡就叫「语音报时」（旧的四张小卡不再进域）。
-        # 卡片 0「语音报时」天生在 y=0，验不出"顶对齐"；域尾的卡片又会被滚动范围
+        # 卡片 0「API 列表」天生在 y=0，验不出"顶对齐"；域尾的卡片又会被滚动范围
         # 夹住（滚到底也够不到 8px）。所以挑一个**中段、且滚得到**的卡片——
-        # 「提醒哪些日子」在 1416px 处，滚动范围 2046px，正合适。
-        target = _section(dialog, "语音", "提醒哪些日子")
+        # 720×500 下「视觉能力」约在 1165px 处，滚动范围约 1957px，正合适。
+        target = _section(dialog, "AI 与对话", "视觉能力")
+        _settle(4)  # 本页有换行标签，首拍布局后还会再长一截：量位置前先推平
         expected = target.mapTo(scroll.widget(), QPoint(0, 0)).y() - 8
         assert scroll.verticalScrollBar().maximum() > 0, "内容不够长，测不出滚动"
         assert expected <= scroll.verticalScrollBar().maximum(), (
             "所选目标超出一屏滚动范围，顶对齐验不出来（请换一个更靠前的卡片）")
 
-        chip = next(chip for chip in _chips(bar) if chip.text() == "提醒哪些日子")
+        chip = next(chip for chip in _chips(bar) if chip.text() == "视觉能力")
         chip.click()
         app.processEvents()
         assert scroll.verticalScrollBar().value() == max(0, expected)
@@ -1194,7 +1170,7 @@ def test_anchor_bar_and_descriptions_fit_the_compact_window(tmp_path, monkeypatc
         dialog.resize(720, 500)
         dialog.show()
         app.processEvents()
-        for domain in ("AI 与对话", "自动化与联动", "语音"):
+        for domain in ("AI 与对话", "自动化与联动"):
             page, bar = _select(dialog, domain)
             header = page.findChild(QWidget, "pageHeader")
             assert bar.isHidden() is False

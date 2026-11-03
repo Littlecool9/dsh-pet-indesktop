@@ -253,18 +253,6 @@ class SlotRoutedConfig:
         self._main.set_chat_settings(settings)
         self._pending_main["chat"] = self._main.data.get("chat")
 
-    def set_click_talk_bindings(self, character_id: str, bindings: dict) -> None:
-        """按 Config 同源清洗写入台词绑定，立即提交并维护路由 pending 状态。"""
-        profiles = self._main.data.get("character_profiles")
-        profiles = dict(profiles) if isinstance(profiles, dict) else {}
-        profile = profiles.get(str(character_id))
-        profile = dict(profile) if isinstance(profile, dict) else {}
-        profile["click_talk_bindings"] = bindings
-        profiles[str(character_id)] = profile
-        self._main.set("character_profiles", profiles)
-        self._pending_main["character_profiles"] = self._main.data.get("character_profiles")
-        self._flush_main()
-
     def reload(self):
         """从磁盘重读两份配置（主配置 + 这只宠的档案快照）。
 

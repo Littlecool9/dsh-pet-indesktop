@@ -513,9 +513,9 @@ class BehaviorController:
     def anim_of(self, sprite) -> str | None:
         """当前绑定的 clip 名（None = 尚未接管/未起播）。
 
-        只读访问器：点击台词绑定（``config.click_talk_texts_for``）要按"这次
-        点中了哪条 click 动画"查表，而 ``on_sprite_clicked`` 的返回值是
-        「是否消费点击」契约，不能挪用；故单开这一面，不改变点击语义。
+        只读访问器：调用方需要知道"这次点中了哪条 click 动画"（音乐唱歌判定、
+        点击反馈路由），而 ``on_sprite_clicked`` 的返回值是「是否消费点击」契约，
+        不能挪用；故单开这一面，不改变点击语义。
         """
         st = self._states.get(sprite)
         return st.anim if st is not None else None

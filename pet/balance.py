@@ -9,8 +9,8 @@
 v4.1 扩展（同步上游 dsh-pet 余额动画）：
 - 余额按 ¥20 满额折算为“已用百分比”，分 6 档触发不同余额动画；
 - DeepSeek 峰谷计价提示（北京时间：工作日 9-12/14-18 高峰，其余空闲；
-  周六/周日与**中国法定节假日**全天空闲——调休补班的周六/周日按官方口径
-  仍是空闲；下一高峰由 09/12/14/18 点边界逐点扫描得出）。
+  周六/周日全天空闲——调休补班的周六/周日按官方口径仍是空闲；下一高峰由
+  09/12/14/18 点边界逐点扫描得出）。
 """
 
 from __future__ import annotations
@@ -164,33 +164,14 @@ def _beijing_now(now: datetime | None = None) -> datetime:
     return now.astimezone(_BEIJING_TZ)
 
 
-def _statutory_holiday(day: date) -> str | None:
-    """查询该日是否为中国法定放假日（放假日名 / None）。
-
-    函数内 import `pet.festival_calendar`：它是唯一的 lunar-python 边界，
-    而 `tests/test_app_lazy_imports.py` 要求 `import pet.app` 常驻时不得连带
-    载入节日模块（实测 ~7.7MB），故不能在模块顶层引入。历法后端缺失时按
-    「无节假日数据」降级（返回 None），不阻断余额提示。
-    """
-    try:
-        from .festival_calendar import statutory_holiday_name
-    except ImportError:
-        return None
-    return statutory_holiday_name(day)
-
-
 def deepseek_pricing_tier(now: datetime | None = None) -> str:
     """DeepSeek 峰谷计价档位（北京时间）。
 
-    高峰：周一至周五（**不含中国法定节假日**）9:00–12:00、14:00–18:00；
-    其余为空闲（低谷）。周六/周日与法定节假日全天空闲——调休补班的周六/周日
-    按官方口径仍是空闲，不是工作日高峰。节假日安排表覆盖范围之外（2026-10-11
-    起）降级为只按星期规则判断。
+    高峰：周一至周五 9:00–12:00、14:00–18:00；其余为空闲（低谷）。
+    周六/周日全天空闲；调休补班的周六/周日按官方口径仍是空闲，不是工作日高峰。
     """
     bj = _beijing_now(now)
     if bj.weekday() >= 5:
-        return 'idle'
-    if _statutory_holiday(bj.date()):
         return 'idle'
     hour = bj.hour
     return 'peak' if (9 <= hour < 12) or (14 <= hour < 18) else 'idle'
@@ -199,7 +180,7 @@ def deepseek_pricing_tier(now: datetime | None = None) -> str:
 # 一天内的计价切换时刻：09:00 / 14:00 进入高峰，12:00 / 18:00 离开高峰。
 _PRICING_BOUNDARIES = (time(9, 0), time(12, 0), time(14, 0), time(18, 0))
 
-# 切换扫描窗口（天）：法定长假最长 8 天，叠加两端周末约 10 天，40 天留足余量。
+# 切换扫描窗口（天）：跨过整段周末也不过两三天，40 天留足余量。
 _PRICING_SCAN_DAYS = 40
 
 
@@ -207,8 +188,7 @@ def _next_pricing_switch(now: datetime | None = None) -> tuple[str, datetime]:
     """返回 (下一档位, 下一档位开始时间)，按北京时间计算。
 
     逐个扫描未来 09:00/12:00/14:00/18:00 边界，取**最早**一个档位与当前不同的
-    时刻。这样周末、法定节假日、连同调休补班后的空档都能被跨越，无需为每种
-    日历情形单独写分支。
+    时刻，跨越周末无需为每种日历情形单独写分支。
     """
     bj = _beijing_now(now)
     tz = bj.tzinfo or _BEIJING_TZ
@@ -223,7 +203,7 @@ def _next_pricing_switch(now: datetime | None = None) -> tuple[str, datetime]:
             tier = deepseek_pricing_tier(candidate)
             if tier != current:
                 return tier, candidate
-    # 扫描窗口内没有翻转（历法数据耗尽的远期日期才会走到这里）：退回次日 09:00。
+    # 扫描窗口内没有翻转（理论上不会发生）：退回次日 09:00。
     fallback = datetime.combine(day + timedelta(days=1), time(9, 0), tzinfo=tz)
     return deepseek_pricing_tier(fallback), fallback
 

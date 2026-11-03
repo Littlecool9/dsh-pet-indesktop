@@ -647,20 +647,6 @@ def test_pet_app_assigns_distinct_offsets_to_spawned_pets(tmp_path, monkeypatch)
     assert offsets == [1, 2]
 
 
-def test_pet_click_restores_fun_windows_even_without_click_animation():
-    from pet.window import PetWindow
-
-    restored = []
-
-    class FakePet:
-        _just_dragged = False
-        clicks = []
-        on_restore_fun_windows = lambda self: restored.append(True)
-
-    PetWindow._on_click(FakePet())
-    assert restored == [True]
-
-
 def test_modern_pet_context_menu_has_spawn_action_with_avatar_icon(monkeypatch):
     from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
@@ -829,7 +815,6 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
 
     import pet.window as window_mod
     import pet.context_menus.registry as registry_mod
-    import pet.context_menus.shared as shared_menu_mod
 
     class FakeConfig:
         def __init__(self):
@@ -851,7 +836,6 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
         on_open_chat = lambda self: None
         on_look_screen = lambda self: None
         on_show_balance = lambda self, parent=None: None
-        on_check_update = lambda self, parent=None: None
         on_open_chat_settings = lambda self: None
         on_open_modern_settings = lambda self: None
         on_spawn_pet = lambda self: None
@@ -879,18 +863,11 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(window_mod.autostart_mod, "is_enabled", lambda: False)
     monkeypatch.setattr(window_mod.catalog, "list_available_characters", lambda: ["shenshen"])
-    opened_urls = []
-    monkeypatch.setattr(
-        registry_mod.QDesktopServices,
-        "openUrl",
-        lambda url: opened_urls.append(url.toString()) or True,
-    )
     pet = FakePet()
     menu = QMenu()
     window_mod._populate_context_menu(menu, pet)
     labels = [action.text() for action in menu.actions() if not action.isSeparator()]
     expected_labels = [
-        "厉害了我的鲸",
         "AI 对话",
         "看看屏幕",
         "截图提问",
@@ -909,10 +886,6 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     expected_labels.append("待办提醒")  # 待办管理面板入口（所有平台）
     expected_labels.append("专注模式")
     expected_labels.append("免打扰")    # 免打扰入口（#208，四档时长子菜单）
-    if sys.platform == "win32":
-        expected_labels.append("回收内存")  # 「回收内存」菜单动作（#210）：仅 Windows
-    expected_labels.extend(["查看天气", "天气城市"])  # 天气入口（issue #209，所有平台）
-    expected_labels.append("抽支签")  # 每日一签（2026-10-15；设置入口在「互动 · 趣味」标签）
     # 立即报时/语音报时开关/今日节日/节日提醒开关：2026-09-19 起默认模板
     # visible: false，不上默认菜单（用户可在菜单编辑器加回）
     expected_labels.extend([
@@ -931,59 +904,14 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     ]
     assert next(action for action in menu.actions() if action.text() == "播放速率").menu() is not None
     assert next(action for action in menu.actions() if action.text() == "大小").menu() is not None
-    tools = next(action.menu() for action in menu.actions() if action.text() == "工具与帮助")
-    next(action for action in tools.actions() if action.text() == "打开网页版 DeepSeek").trigger()
-    assert opened_urls == [shared_menu_mod.DEEPSEEK_WEB_URL]
     # 模板模式已迁入设置；默认菜单不再用低频迁移命令占据根菜单。
     assert all("旧版菜单" not in action.text() for action in menu.actions())
     menu.close()
     app.processEvents()
 
 
-def test_divination_draw_reports_where_to_turn_it_back_on(tmp_path):
-    """总开关关掉时点「抽支签」不静默无反应：气泡里的落点必须是设置页的真实归属。
-
-    这句话里的「互动 · 趣味」是**外部契约**（用户照着去找）：每日一签 2026-10-15 曾
-    挂在只有一个组的「趣味」一级域，2026-10-17 按 ``docs/SETTINGS-CHANGE-GATES.md``
-    的准入（新一级域须"预计包含至少两个稳定设置组"）判不合格，行已归位到「互动」域
-    的第四个页内标签（该标签原叫「抽签」，2026-10-18 改回「趣味」）。文案不跟着改，
-    用户就会按提示去找一个不存在的标签。
-
-    只借 ``AppShell`` 的两个方法（关闭路径只碰 ``config`` / ``win`` / 懒建服务），
-    不构造真壳——素材库、ffmpeg、托盘都不需要。配置落在 ``tmp_path``，不读真实配置。
-    """
-    from types import SimpleNamespace
-
-    from pet.app import AppShell
-    from pet.config import Config
-
-    class _Win:
-        def __init__(self):
-            self.bubbles = []
-
-        def show_bubble(self, text, duration_ms=0):  # noqa: N802 - 对齐产品签名
-            self.bubbles.append(text)
-
-    config = Config(base=tmp_path)
-    config.set("divination_enabled", False)
-    assert config.save() is True
-    win = _Win()
-    host = SimpleNamespace(config=config, win=win, divination_service=None)
-    host._ensure_divination_service = lambda: AppShell._ensure_divination_service(host)
-
-    AppShell.trigger_divination_draw(host)
-
-    assert win.bubbles, "关掉总开关后点菜单必须给一句去处提示（不许静默无反应）"
-    assert "互动 · 趣味" in win.bubbles[-1], f"落点不是设置页的真实归属：{win.bubbles[-1]!r}"
-    assert "抽签" not in win.bubbles[-1], "标签已改名「趣味」，文案不许再指向旧名"
-    # 关掉总开关时只报去处、**一个状态都不写**（不落「今天抽过」的假记录）。
-    # 注意 config.data 里本来就有出厂默认的空 dict（Config._initial_data），
-    # 所以这里判的是"没有被写进内容"，不是"键不存在"。
-    assert config.data.get("divination_state") in (None, {}), "关掉时不该写任何抽签状态"
-
-
 def test_pure_pet_context_menu_keeps_web_but_hides_harness():
-    """纯桌宠（无 Chat/DSH 联动）右键菜单去掉 DeepSeek Harness，保留网页版。"""
+    """纯桌宠（无 Chat/DSH 联动）右键菜单去掉 DeepSeek Harness。"""
     from PySide6.QtWidgets import QApplication, QMenu
 
     from pet.context_menu import populate_context_menu
@@ -1027,7 +955,6 @@ def test_pure_pet_context_menu_keeps_web_but_hides_harness():
     assert "启动 dsh web 界面" not in labels
     assert "启动桌面端界面" not in labels
     assert "停止服务" not in labels
-    assert "打开网页版 DeepSeek" in labels
     menu.close()
     app.processEvents()
 
@@ -1178,193 +1105,6 @@ def test_modern_checked_action_is_painted_in_reserved_right_slot():
     app.processEvents()
 
 
-def test_modern_menu_starts_with_ojingjing_entry_and_uses_pet_avatar(monkeypatch):
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QPixmap
-    from PySide6.QtWidgets import QApplication, QMenu, QWidget
-
-    from pet.context_menu import populate_context_menu
-
-    class Config(dict):
-        def get(self, key, default=None):
-            return super().get(key, default)
-
-    class Pet:
-        cfg = Config(character="shenshen", on_top=False)
-        on_open_chat = on_open_modern_settings = None
-        idles = turns = moves = clicks = acts = []
-        playback_speed = scale = 1.0
-        drag_physics = no_move = False
-        on_spawn_pet = lambda self: None
-
-        def icon_pixmap(self, size=64):
-            pixmap = QPixmap(size, size)
-            pixmap.fill(Qt.GlobalColor.blue)
-            return pixmap
-
-        def __getattr__(self, _name):
-            return lambda *_args, **_kwargs: None
-
-    app = QApplication.instance() or QApplication([])
-    menu = QMenu()
-    pet = Pet()
-    populate_context_menu(menu, pet)
-    first_action = menu.actions()[0]
-    assert first_action.text() == "厉害了我的鲸"
-    entry = menu.findChild(QWidget, "ojingjingMenuEntry")
-    assert entry is not None
-    assert entry.height() == 39
-    assert entry.findChild(QWidget, "ojingjingAvatar") is not None
-    assert entry.findChild(QWidget, "ojingjingClickAccessory") is not None
-    controls = next(action.menu() for action in menu.actions() if action.text() == "桌宠控制")
-    spawn = next(action for action in controls.actions() if action.text() == "生小肥鱼")
-    pixmap = spawn.icon().pixmap(18, 18)
-    center = pixmap.toImage().pixelColor(pixmap.width() // 2, pixmap.height() // 2)
-    assert center.blue() > center.red() + 80
-    menu.close()
-    app.processEvents()
-
-
-def test_ojingjing_windows_are_frameless_stackable_and_closeable():
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QPushButton
-
-    from pet.fun_image_popup import OjingjingWindowManager
-
-    app = QApplication.instance() or QApplication([])
-    manager = OjingjingWindowManager()
-    first = manager.open_window(show=False)
-    second = manager.open_window(show=False)
-    app.processEvents()
-    assert len(manager.windows) == 2
-    assert first.windowFlags() & Qt.WindowType.FramelessWindowHint
-    assert first.property("cascadeOffset") != second.property("cascadeOffset")
-    labels = {button.text() for button in second.findChildren(QPushButton)}
-    assert labels == {"关闭", "全部关闭"}
-    manager.close_all()
-    app.processEvents()
-    assert manager.windows == []
-
-
-def test_ojingjing_uses_popup_directory_random_images_and_drag_helpers(monkeypatch):
-    from PySide6.QtCore import QPoint
-    from PySide6.QtWidgets import QApplication
-
-    import pet.fun_image_popup as popup_mod
-
-    app = QApplication.instance() or QApplication([])
-    paths = popup_mod.popup_image_paths()
-    assert len(paths) >= 2
-    assert popup_mod.oijingjing_image_path() == Path("assets/big_blue_fat_fish/ojingjing.jpg").resolve()
-    picks = iter((paths[0], paths[1]))
-    monkeypatch.setattr(popup_mod.random, "choice", lambda _paths: next(picks))
-    manager = popup_mod.OjingjingWindowManager()
-    first = manager.open_window(show=False)
-    second = manager.open_window(show=False)
-    assert first.property("sourceImage") != second.property("sourceImage")
-    first.move(30, 40)
-    first.begin_drag_at(QPoint(100, 100))
-    first.drag_to(QPoint(125, 135))
-    assert first.pos() == QPoint(55, 75)
-    first.end_drag()
-    manager.close_all()
-    app.processEvents()
-
-
-def test_ojingjing_invalid_empty_or_unreadable_directory_falls_back(tmp_path):
-    import pet.fun_image_popup as popup_mod
-
-    fallback = popup_mod.oijingjing_image_path().parent
-    missing = tmp_path / "missing"
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    unreadable = tmp_path / "unreadable"
-    unreadable.mkdir()
-    (unreadable / "broken.jpg").write_bytes(b"not-an-image")
-
-    for configured in (missing, empty, unreadable):
-        paths = popup_mod.popup_image_paths(configured)
-        assert paths
-        assert all(path.parent == fallback for path in paths)
-
-    assert popup_mod.resolve_fun_asset(missing, fallback) == fallback
-
-
-def test_ojingjing_menu_entry_defers_window_until_menu_exec_returns(monkeypatch):
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    import pet.context_menus.fun_entry as fun_entry
-    from pet.context_menus.shared import take_deferred_menu_callbacks
-
-    app = QApplication.instance() or QApplication([])
-    calls = []
-    monkeypatch.setattr(fun_entry, "open_ojingjing_window", lambda config: calls.append(config))
-    menu = QMenu()
-    entry = fun_entry.OjingjingMenuEntry(menu, {"title": "彩蛋"})
-    menu.show()
-    app.processEvents()
-
-    entry._activate()
-    assert calls == []
-    callbacks = take_deferred_menu_callbacks(menu)
-    assert len(callbacks) == 1
-    callbacks[0]()
-    assert calls == [{"title": "彩蛋"}]
-    entry.close()
-    menu.close()
-    app.processEvents()
-
-
-def test_ojingjing_menu_entry_reports_unexpected_open_error(monkeypatch):
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    import pet.context_menus.fun_entry as fun_entry
-
-    app = QApplication.instance() or QApplication([])
-    warnings = []
-
-    def fail(_config):
-        raise RuntimeError("图片解码失败")
-
-    monkeypatch.setattr(fun_entry, "open_ojingjing_window", fail)
-    monkeypatch.setattr(
-        fun_entry.QMessageBox,
-        "warning",
-        lambda _parent, title, message: warnings.append((title, message)),
-    )
-    menu = QMenu()
-    entry = fun_entry.OjingjingMenuEntry(menu)
-    entry._activate()
-    assert warnings == [("彩蛋图片不可用", "图片解码失败")]
-    entry.close()
-    app.processEvents()
-
-
-def test_popup_manager_restores_all_existing_windows_before_new_window():
-    from pet.fun_image_popup import OjingjingWindowManager
-
-    class FakeWindow:
-        def __init__(self):
-            self.calls = []
-
-        def show(self):
-            self.calls.append("show")
-
-        def raise_(self):
-            self.calls.append("raise")
-
-        def activateWindow(self):
-            self.calls.append("activate")
-
-    manager = OjingjingWindowManager()
-    first = FakeWindow()
-    second = FakeWindow()
-    manager.windows = [first, second]
-    manager.restore_all()
-    assert first.calls == ["show", "raise"]
-    assert second.calls == ["show", "raise", "activate"]
-
-
 def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, monkeypatch):
     from PySide6.QtCore import QSize, Qt
     from PySide6.QtWidgets import QApplication, QListWidget, QStackedWidget
@@ -1386,7 +1126,7 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
     assert isinstance(dialog.sidebar, QListWidget)
     assert isinstance(dialog.pages, QStackedWidget)
     # 2026-09-19 新增「文件识别」域（拖文件解读，settings_file_interpret）。
-    expected_pages = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别", "更新"]
+    expected_pages = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别"]
     assert [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())] == expected_pages
     assert dialog.pages.count() == len(expected_pages)
     assert dialog.search_edit.placeholderText() == "搜索设置…"
@@ -1400,12 +1140,8 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
         "应用启动", "窗口与系统", "动画与移动", "点击反馈", "自言自语",
         "显示", "菜单外观", "对话窗口", "已配置应用", "内容与布局",
         "模型与连接", "视觉能力",
-        # 「语音」总域只收 TTS 类设置（2026-09-17 定稿口径）：语音报时 + 节日提醒。
-        # 2026-10-14 起两页各自**自建卡片**交给本域（语音报时 = 基础设置/合成后端/
-        # 语音/台词歌词，节日提醒 = 何时提醒/提醒哪些日子/怎么提醒/你的生日/少用项）：
-        # 不再由本域按「一组行」拼小分组，因此这里钉的是各页自己的卡片标题。
+        # 「语音」总域只收 TTS 类设置（2026-09-17 定稿口径）。
         "语音报时", "基础设置", "合成后端", "语音", "台词/歌词",
-        "何时提醒", "提醒哪些日子", "怎么提醒", "你的生日", "少用项",
     }.issubset(set(section_titles))
     if hasattr(dialog, "pro_enabled_check"):
         # 「自动化与联动」的「主动识屏」不再是一张压平的大卡（同上）。
@@ -1422,7 +1158,7 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
     assert {"生成参数（高级）", "碰撞参数（高级）", "高级配色"}.issubset(
         set(advanced_titles)
     )
-    assert {"浅色主题", "深色主题", "彩蛋入口"}.issubset(set(section_titles))
+    assert {"浅色主题", "深色主题"}.issubset(set(section_titles))
     scale_row = dialog.findChild(settings_mod.QWidget, "settingRow_scale")
     assert scale_row is not None
     assert scale_row.findChild(settings_mod.QLabel, "settingLabel").text() == "桌宠大小"
@@ -1569,136 +1305,6 @@ def test_modern_settings_progressively_reveals_dependent_controls(tmp_path, monk
     app.processEvents()
 
 
-def test_click_self_talk_rows_follow_their_own_toggle(tmp_path, monkeypatch):
-    """点击侧的朗读 / 预缓存 / 台词绑定跟随「点击触发自言自语」，不被周期气泡开关藏起来。
-
-    本轮用户反馈的直接原因：默认配置（两个开关都关）下这三个开关连同「点击触发
-    自言自语」一起被隐藏，新功能在设置页里等于不存在。现在只有周期气泡的细项随
-    「气泡自言自语」，点击侧跟随它自己的开关。
-
-    「细项」的分界点见 :func:`test_click_only_self_talk_exposes_the_shared_content_rows`：
-    节奏项（最短/最长间隔、配图大小）只属于周期链路；两条链路**共读**的内容项
-    （显示时间/候选内容/图片目录/配图概率）任一开启即显示。
-    """
-    from PySide6.QtWidgets import QApplication
-
-    import pet.modern_settings_dialog as settings_mod
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    config = Config(tmp_path)
-    assert config.get("click_show_self_talk") is False
-    assert config.get("self_talk_enabled") is False
-    dialog = settings_mod.ModernSettingsDialog(config, include_ai=True)
-
-    def row(key: str):
-        found = dialog.findChild(settings_mod.SettingRow, f"settingRow_{key}")
-        assert found is not None, key
-        return found
-
-    click_side = ("click_self_talk_speak", "click_self_talk_precache", "click_talk_bindings")
-
-    # 默认：顶层开关可见（否则功能无从发现），它的后续项跟随它 → 关着时隐藏
-    assert not row("click_self_talk").isHidden()
-    assert all(row(key).isHidden() for key in click_side)
-
-    dialog.click_self_talk_check.setChecked(True)
-    assert all(not row(key).isHidden() for key in click_side)
-    # 周期气泡仍关着：只属于周期链路的节奏项保持隐藏（内容项见下一个用例）
-    assert row("self_talk_min").isHidden()
-
-    dialog.self_talk_check.setChecked(True)
-    assert not row("self_talk_min").isHidden()
-    assert all(not row(key).isHidden() for key in click_side)
-
-    dialog.click_self_talk_check.setChecked(False)
-    assert all(row(key).isHidden() for key in click_side)
-    assert not row("self_talk_min").isHidden()
-
-    dialog.close()
-    app.processEvents()
-
-
-def test_click_only_self_talk_exposes_the_shared_content_rows(tmp_path, monkeypatch):
-    """只开「点击触发自言自语」时，点击链路真正会用的那批内容项必须可直接编辑。
-
-    两条链路读的是**同一份**内容配置：``window_alerts.show_click_self_talk`` 落到
-    ``_show_random_self_talk``，那里取 ``self_talk_texts`` / ``self_talk_images`` /
-    ``self_talk_image_chance``，显示时长取 ``self_talk_duration_seconds``。显隐旧模型
-    却整组挂在「气泡自言自语」上——只想要点击出内容的用户，必须先打开一个他不用
-    的周期功能才能改候选文本。
-
-    新契约：这四项按「周期或点击任一开启」显示且可编辑；节奏两项（最短/最长间隔）
-    只属于周期链路。显隐切换不得改变保存写回的键（不新增配置键）。
-    """
-    from PySide6.QtWidgets import QApplication
-
-    import pet.modern_settings_dialog as settings_mod
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    dialog = settings_mod.ModernSettingsDialog(_slot0_config(tmp_path), include_ai=True)
-
-    def row(key: str):
-        found = dialog.findChild(settings_mod.SettingRow, f"settingRow_{key}")
-        assert found is not None, key
-        return found
-
-    def stored_keys():
-        """两份配置文件的**键集**（全局 config.json + 这只宠的 slot0 档案）。"""
-        base = Config(base=tmp_path).dir
-        profile = json.loads((base / "config-slot-0.json").read_text(encoding="utf-8"))
-        return set(Config(base=tmp_path).data), set(profile)
-
-    content_rows = (
-        "self_talk_duration", "self_talk_texts",
-        "self_talk_images", "self_talk_image_chance",
-    )
-    rhythm_rows = ("self_talk_min", "self_talk_max")
-
-    # 两个开关都关：内容项与节奏项都藏起来（没有链路会用到它们）
-    assert all(row(key).isHidden() for key in content_rows + rhythm_rows)
-
-    dialog.click_self_talk_check.setChecked(True)
-    assert all(not row(key).isHidden() for key in content_rows), (
-        "只开点击时，点击链路要用的内容项必须显示")
-    assert all(row(key).isHidden() for key in rhythm_rows), (
-        "节奏项只属于周期链路，点击链路不用它，不该跟着冒出来")
-
-    # 可编辑：不是只画出来，控件本身要能改（用户就是来改这些的）
-    editors = {
-        "self_talk_duration": dialog.self_talk_duration_spin,
-        "self_talk_texts": dialog.texts_edit,
-        "self_talk_images": dialog.self_talk_image_dir_picker,
-        "self_talk_image_chance": dialog.self_talk_image_chance_spin,
-    }
-    for key, widget in editors.items():
-        assert widget.isEnabled(), key
-    assert dialog.texts_edit.isReadOnly() is False
-
-    # 改动可落盘：内容项写回原位（键不变、值跟着控件走）
-    dialog.texts_edit.setPlainText("只开点击写的候选")
-    dialog.self_talk_image_chance_spin.setValue(70)
-    dialog.self_talk_duration_spin.setValue(6.0)
-    assert dialog._write_config() is True
-    keys_when_visible = stored_keys()
-
-    dialog.click_self_talk_check.setChecked(False)
-    assert all(row(key).isHidden() for key in content_rows)
-    assert dialog._write_config() is True
-    assert stored_keys() == keys_when_visible, "显隐切换不得引入新的配置键"
-
-    reloaded = _slot0_config(tmp_path)
-    assert reloaded.get("self_talk_texts") == ["只开点击写的候选"]
-    assert reloaded.get("self_talk_image_chance") == 70
-    assert reloaded.get("self_talk_duration_seconds") == 6.0
-
-    dialog.close()
-    app.processEvents()
-
-
 def test_modern_settings_toggle_dependencies_hide_complete_setting_groups(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
@@ -1738,12 +1344,6 @@ def test_modern_settings_toggle_dependencies_hide_complete_setting_groups(tmp_pa
     assert row("dynamic_island_custom_text").isHidden()
     dialog.island_info_check.setChecked(True)
     assert not row("dynamic_island_custom_text").isHidden()
-
-    egg_children = [row(key) for key in ("egg_title", "egg_hint", "egg_avatar", "egg_image_dir")]
-    dialog.egg_enabled_check.setChecked(False)
-    assert all(child.isHidden() for child in egg_children)
-    dialog.egg_enabled_check.setChecked(True)
-    assert all(not child.isHidden() for child in egg_children)
 
     collision_children = [
         row(key) for key in (
@@ -2483,165 +2083,6 @@ def test_template_reopen_reuses_original_visible_menu_position(monkeypatch):
     app.processEvents()
 
 
-def test_menu_easter_egg_and_modern_theme_fields_are_configurable(tmp_path):
-    from pet.config import Config
-
-    config = Config(tmp_path)
-    appearance = config.get("context_menu_appearance")
-    assert appearance["ui_font_size"] == 13
-    assert appearance["translucent"] is True
-    assert appearance["light_background"] == "#ffffff"
-    assert appearance["dark_background"] == "#252525"
-    egg = config.get("menu_easter_egg")
-    assert egg["enabled"] is True
-    assert egg["title"] == "厉害了我的鲸"
-    assert egg["avatar"] == "assets/big_blue_fat_fish/ojingjing.jpg"
-    assert egg["image_dir"] == "assets/big_blue_fat_fish"
-    config.set("menu_easter_egg", {"title": "秘密入口", "hint": "打开", "enabled": False})
-    config.set("context_menu_appearance", {
-        "theme": "dark", "ui_font": "PingFang SC", "ui_font_size": 16,
-        "translucent": False, "opacity": 0.7,
-        "light_background": "bad", "dark_background": "#111213",
-    })
-    assert config.get("menu_easter_egg")["title"] == "秘密入口"
-    assert config.get("menu_easter_egg")["enabled"] is False
-    assert config.get("context_menu_appearance")["ui_font_size"] == 16
-    assert config.get("context_menu_appearance")["light_background"] == "#ffffff"
-    assert config.get("context_menu_appearance")["dark_background"] == "#111213"
-
-
-def test_easter_egg_config_preserves_custom_paths(tmp_path):
-    from pet.config import Config
-
-    config = Config(tmp_path)
-    config.set("menu_easter_egg", {
-        "avatar": "/custom/avatar.png",
-        "image_dir": "/custom/images",
-    })
-    custom = config.get("menu_easter_egg")
-    assert custom["avatar"] == "/custom/avatar.png"
-    assert custom["image_dir"] == "/custom/images"
-
-
-def test_easter_egg_path_and_color_controls_use_native_pickers(tmp_path, monkeypatch):
-    from PySide6.QtGui import QColor
-    from PySide6.QtWidgets import QApplication
-
-    import pet.modern_settings_dialog as settings_mod
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    image = (tmp_path / "avatar.webp").resolve()
-    image.write_bytes(b"image")
-    image_dir = tmp_path.resolve()
-    monkeypatch.setattr(settings_mod.QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(image), ""))
-    monkeypatch.setattr(settings_mod.QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(image_dir))
-    monkeypatch.setattr(settings_mod.QColorDialog, "getColor", lambda *args, **kwargs: QColor("#123456"))
-    dialog = settings_mod.ModernSettingsDialog(Config(tmp_path / "cfg"), include_ai=False)
-    dialog.egg_avatar_picker.choose()
-    dialog.egg_image_dir_picker.choose()
-    dialog.light_background_picker.choose()
-    assert dialog.egg_avatar_picker.text() == str(image)
-    assert dialog.egg_image_dir_picker.text() == str(image_dir)
-    assert dialog.light_background_picker.text() == "#123456"
-    assert "*.webp" in dialog.egg_avatar_picker.name_filter
-    dialog.close()
-    app.processEvents()
-
-
-def test_easter_egg_menu_text_elides_when_content_is_too_long():
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    from pet.context_menus.fun_entry import OjingjingMenuEntry
-
-    app = QApplication.instance() or QApplication([])
-    menu = QMenu()
-    entry = OjingjingMenuEntry(menu, {"title": "非常长的彩蛋标题" * 10, "hint": "非常长的提示" * 8})
-    entry.resize(224, 39)
-    app.processEvents()
-    assert entry.title_label.displayText().endswith("…")
-    assert entry.click_accessory.displayText().endswith("…")
-    entry.close()
-    menu.close()
-    app.processEvents()
-
-
-def test_easter_egg_first_row_font_tracks_modern_menu_ui_size():
-    from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    from pet.context_menus.fun_entry import OjingjingMenuEntry
-
-    app = QApplication.instance() or QApplication([])
-    menu = QMenu()
-    font = QFont(menu.font())
-    font.setPixelSize(17)
-    menu.setFont(font)
-    entry = OjingjingMenuEntry(menu, {})
-    assert entry.title_label.font().pixelSize() == 17
-    assert entry.click_accessory.font().pixelSize() == 15
-    entry.close()
-    menu.close()
-    app.processEvents()
-
-
-def test_easter_egg_text_remains_readable_in_the_dark_menu_theme():
-    from PySide6.QtGui import QPalette
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    from pet.context_menus.fun_entry import OjingjingMenuEntry
-    from pet.context_menus.menu_styles.modern import apply_modern_menu_style
-
-    app = QApplication.instance() or QApplication([])
-    menu = QMenu()
-    apply_modern_menu_style(menu, {"theme": "dark"})
-    entry = OjingjingMenuEntry(menu, {"title": "彩蛋入口", "hint": "请点击"})
-    entry.show()
-    app.processEvents()
-
-    title_color = entry.title_label.palette().color(QPalette.ColorRole.WindowText)
-    accessory_image = entry.click_accessory.grab().toImage()
-    accessory_lightness = max(
-        accessory_image.pixelColor(x, y).lightness()
-        for x in range(accessory_image.width())
-        for y in range(accessory_image.height())
-    )
-    assert title_color.lightness() >= 180
-    assert accessory_lightness >= 160
-
-    entry.close()
-    menu.close()
-    app.processEvents()
-
-
-def test_easter_egg_hover_surface_stays_dark_in_the_dark_menu_theme():
-    from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QEnterEvent
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    from pet.context_menus.fun_entry import OjingjingMenuEntry
-    from pet.context_menus.menu_styles.modern import apply_modern_menu_style
-
-    app = QApplication.instance() or QApplication([])
-    menu = QMenu()
-    apply_modern_menu_style(menu, {"theme": "dark", "dark_hover": "#3a3a3a"})
-    entry = OjingjingMenuEntry(menu, {"title": "彩蛋入口", "hint": "请点击"})
-    entry.show()
-    QApplication.sendEvent(
-        entry,
-        QEnterEvent(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1)),
-    )
-    app.processEvents()
-
-    image = entry.grab().toImage()
-    hover_surface = image.pixelColor(4, entry.height() // 2)
-    assert hover_surface.lightness() < 100
-
-    entry.close()
-    menu.close()
-    app.processEvents()
-
-
 def test_modern_menu_exposes_no_template_switch_action():
     """旧版菜单与它的「切换到…菜单」入口一起退役：注册表里不再有该动作。
 
@@ -3000,65 +2441,6 @@ def test_cleanup_old_pet_logs(tmp_path):
     assert fresh.exists() and other.exists()
 
 
-def test_check_update_failure_reports_and_reentry_guard(tmp_path, monkeypatch):
-    """审查 P1-01/GLM-L3 回归：更新检查线程异常收口回 GUI + 重入防护。
-
-    （修复批复审 P2：payload 不再带重复前缀；重入必须在请求进行中验证，
-    且完成后必须能再次发起。）
-    """
-    import threading
-    import time
-
-    from PySide6.QtWidgets import QApplication
-
-    from pet import app as app_mod
-    from pet.app import AppShell
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    owner = AppShell(app, Config(tmp_path))
-
-    gate = threading.Event()
-
-    def boom():
-        gate.wait(5)
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(app_mod.updater, "latest_release", boom)
-    owner.check_update(parent=None)
-    first_bridge = owner._update_bridge
-    results = []
-    first_bridge.done.connect(lambda ok, payload: results.append((bool(ok), str(payload))))
-
-    # 请求进行中再次调用 → 闸门拦截，不换 bridge、不起新线程
-    owner.check_update(parent=None)
-    assert owner._update_bridge is first_bridge
-    assert owner._update_checking is True
-
-    gate.set()
-    deadline = time.monotonic() + 5
-    while not results and time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-    assert results == [(False, "boom")]  # 前缀由 UI 层统一加，payload 不带
-
-    # 完成后闸门放行，可再次发起
-    deadline = time.monotonic() + 5
-    while owner._update_checking and time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-    assert owner._update_checking is False
-    gate.clear()
-    owner.check_update(parent=None)
-    assert owner._update_bridge is not first_bridge
-    # 收尾：放行第二个线程，避免泄漏到后续测试
-    gate.set()
-    deadline = time.monotonic() + 5
-    while owner._update_checking and time.monotonic() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-
-
 def test_modern_settings_reject_saves_config(tmp_path):
     """审查 DS-M9 回归：Esc（reject）路径与 X 一样落盘。"""
     from PySide6.QtWidgets import QApplication
@@ -3085,7 +2467,6 @@ def test_settings_image_directories_use_preview_but_audio_folders_do_not(tmp_pat
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     dialog = settings_mod.ModernSettingsDialog(Config(tmp_path), include_ai=True)
     assert dialog.self_talk_image_dir_picker.preview_button is not None
-    assert dialog.egg_image_dir_picker.preview_button is not None
     assert dialog.click_sound_picker.folder_picker.preview_button is None
     dialog.reject()
     app.processEvents()

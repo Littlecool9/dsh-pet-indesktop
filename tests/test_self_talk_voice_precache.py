@@ -120,8 +120,6 @@ def fake_tts():
 def _cfg(tmp_path, *, backend: str = "", **extra) -> Config:
     cfg = Config(base=tmp_path)
     cfg.set("self_talk_texts", ["好女孩……", "再陪你一会儿。"])
-    # 第二条与全局台词重复：名单必须去重，同一句不该合成两遍。
-    cfg.set_click_talk_bindings("shenshen", {"click-1": ["绑定的专属台词。", "好女孩……"]})
     # 预缓存开关默认关着（产品默认），这里默认打开：本文件的 `run_precache` 用例
     # 验的都是"开关开着时这一批怎么跑"，关着那一侧由 start_precache / AppShell 的
     # 用例单独守。
@@ -234,7 +232,7 @@ def test_changing_the_voice_marks_the_old_line_as_uncached(tmp_path, fake_tts):
     provider.calls.clear()
     stats = stv.run_precache(cfg)
     assert "好女孩……" in provider.calls, "新音色必须重新合成"
-    assert stats["made"] == 3
+    assert stats["made"] == 2
     second = stv.find_audio(cfg.dir, "好女孩……", cfg)
     assert second is not None and second != first, "新音色的产物落在新键上"
 
@@ -259,7 +257,7 @@ def test_classic_text_wav_still_hits_but_never_outranks_the_current_flavor(tmp_p
     stats = stv.run_precache(cfg)
 
     assert "好女孩……" in provider.calls, "经典缓存不能压掉按当前音色的合成"
-    assert stats["made"] == 3
+    assert stats["made"] == 2
     fresh = stv.find_audio(cfg.dir, "好女孩……", cfg)
     assert fresh is not None and fresh != classic, "当前配置的产物优先于经典缓存"
 
@@ -310,13 +308,11 @@ def test_precache_names_the_file_after_the_resolved_voice(tmp_path, fake_tts):
 # --------------------------------------------------------------- 名单与音色
 
 
-def test_collect_lines_includes_bindings_and_dedupes(tmp_path):
+def test_collect_lines_reads_the_per_pet_self_talk_texts(tmp_path):
     lines = stv.collect_lines(_cfg(tmp_path))
     texts = [text for text, _source in lines]
 
-    assert texts.count("好女孩……") == 1, "全局与绑定重复的台词只收一次"
-    assert "绑定的专属台词。" in texts
-    assert any("点击绑定" in source for text, source in lines if text == "绑定的专属台词。")
+    assert texts == ["好女孩……", "再陪你一会儿。"]
 
 
 def test_collect_all_lines_reads_each_pet_own_slot_scope(tmp_path):
@@ -381,22 +377,22 @@ def test_run_precache_synthesizes_with_the_configured_backend(tmp_path, fake_tts
 
     stats = stv.run_precache(cfg)
 
-    assert stats["made"] == 3 and stats["failed"] == 0 and stats["skipped"] == 0
+    assert stats["made"] == 2 and stats["failed"] == 0 and stats["skipped"] == 0
     target = stv.find_audio(cfg.dir, "好女孩……", cfg)
     assert target is not None and target.is_file()
-    assert sorted(provider.calls) == ["再陪你一会儿。", "好女孩……", "绑定的专属台词。"]
+    assert sorted(provider.calls) == ["再陪你一会儿。", "好女孩……"]
 
 
 def test_run_precache_skips_lines_that_already_have_audio(tmp_path, fake_tts):
     provider = fake_tts()
     cfg = _cfg(tmp_path, backend=provider.id)
     stv.run_precache(cfg)  # 先按当前音色补齐，拿到"当前配置的产物"
-    cached = stv.find_audio(cfg.dir, "绑定的专属台词。", cfg)
+    cached = stv.find_audio(cfg.dir, "好女孩……", cfg)
     provider.calls.clear()
 
     stats = stv.run_precache(cfg)
 
-    assert stats["made"] == 0 and stats["skipped"] == 3
+    assert stats["made"] == 0 and stats["skipped"] == 2
     assert cached is not None and cached.read_bytes() == _wav(), "已缓存的句子不该被重合成覆盖"
     assert provider.calls == []
 
@@ -407,7 +403,7 @@ def test_run_precache_keeps_going_after_one_failure(tmp_path, fake_tts):
 
     stats = stv.run_precache(cfg)
 
-    assert stats["made"] == 2 and stats["failed"] == 1
+    assert stats["made"] == 1 and stats["failed"] == 1
     assert stv.find_audio(cfg.dir, "再陪你一会儿。", cfg) is not None
     assert stv.find_audio(cfg.dir, "好女孩……", cfg) is None
 
@@ -419,7 +415,7 @@ def test_run_precache_never_publishes_a_truncated_clip(tmp_path, fake_tts):
 
     stats = stv.run_precache(cfg)
 
-    assert stats["failed"] == 1 and stats["made"] == 2
+    assert stats["failed"] == 1 and stats["made"] == 1
     assert stv.find_audio(cfg.dir, "好女孩……", cfg) is None
     leftovers = [p.name for p in _cache_dir(cfg.dir).iterdir() if p.name.startswith(stv.TEMP_PREFIX)]
     assert leftovers == [], f"临时文件没清干净：{leftovers}"
@@ -471,7 +467,7 @@ def test_local_service_override_still_writes_the_classic_wav(tmp_path, monkeypat
 
     stats = stv.run_precache(cfg)
 
-    assert stats["made"] == 3 and stats["failed"] == 0
+    assert stats["made"] == 2 and stats["failed"] == 0
     assert calls["synth"], "覆盖模式下必须真的调自建服务"
     assert all(payload["voice"].count("-") == 1 for payload in calls["synth"]), "必须带声线名"
     assert provider.calls == [], "覆盖模式优先：不该同时动注册表后端"
@@ -489,7 +485,7 @@ def test_local_service_failure_falls_back_to_the_registry(tmp_path, fake_tts, mo
         stats = stv.run_precache(cfg)
 
     assert calls["synth"] == [], "服务不可用就不该继续往它发合成请求"
-    assert stats["made"] == 3, "必须落回注册表后端，而不是一个文件都不生成"
+    assert stats["made"] == 2, "必须落回注册表后端，而不是一个文件都不生成"
     assert provider.calls, "落回的证据：假后端被调用"
     assert "不可用" in caplog.text, "降级必须留下提示"
 
@@ -502,7 +498,7 @@ def test_local_service_partial_failure_is_reported(tmp_path, monkeypatch, fake_t
 
     stats = stv.run_precache(cfg)
 
-    assert stats["made"] == 2 and stats["failed"] == 1
+    assert stats["made"] == 1 and stats["failed"] == 1
     assert provider.calls == [], "覆盖模式优先：单句失败也不该改走注册表"
     assert stv.cached_audio(cfg.dir, "再陪你一会儿。") is not None
 

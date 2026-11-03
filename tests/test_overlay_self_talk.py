@@ -9,11 +9,9 @@
 覆盖：
 1. ``_init_self_talk`` 状态装配 + 周期定时器：timeout → 气泡收到文本，
    并按 ``after_display`` 重排（+显示时长）；
-2. 点击 sprite → ``click_show_self_talk`` 出泡且重排定时器；
-3. 逐动画台词：``click_talk_texts_for`` 绑定过的动画名出绑定文本，
-   并把实际显示的文本交给朗读通道；
-4. 显隐对称：隐藏期 timer 停、恢复重排；
-5. 配图分支：命中图片时走 ``SpriteBubbleFollower.show_image``（刀 1）。
+2. 点击 sprite → 只走点击音效/余额分支（点击台词功能已删除）；
+3. 显隐对称：隐藏期 timer 停、恢复重排；
+4. 配图分支：命中图片时走 ``SpriteBubbleFollower.show_image``（刀 1）。
 
 纪律：同步直调（信号 emit / handler 直调，不 sleep 赌时序）；假屏 + 真实
 PetSprite 复用既有测试件；全部 offscreen。
@@ -39,14 +37,7 @@ app = QApplication.instance() or QApplication([])
 
 # ---------------------------------------------------------------- 脚手架
 class TalkConfig(cap.CapConfig):
-    """CapConfig + 点击动画台词绑定表（``Config.click_talk_texts_for`` 的最小等价物）。"""
-
-    def __init__(self, tmp_path, values=None, bindings=None):
-        super().__init__(tmp_path, values)
-        self._bindings = dict(bindings or {})
-
-    def click_talk_texts_for(self, character_id, click_name):
-        return list(self._bindings.get(str(click_name)) or [])
+    """自言自语最小配置面。"""
 
 
 def _talk_values(**over):
@@ -63,9 +54,9 @@ def _talk_values(**over):
     return values
 
 
-def _make_shell(tmp_path, values=None, *, bindings=None):
+def _make_shell(tmp_path, values=None):
     """真实 PetSprite + RichLibrary 的壳（点击链路需要 click 素材池）。"""
-    config = TalkConfig(tmp_path, values, bindings)
+    config = TalkConfig(tmp_path, values)
     instance = cap.CapInstance(config)
     screen = cap.FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040))
     shell = OverlayShell(
@@ -210,59 +201,10 @@ def _click_sprite(shell):
     shell.overlay.mouseReleaseEvent(event)
 
 
-def test_click_shows_self_talk_and_reschedules(tmp_path):
-    """点击 sprite → 出气泡 + after_display 重排定时器（window.py:3370-3377 语义）。"""
-    shell, _config = _make_shell(
-        tmp_path, _talk_values(click_show_self_talk=True))
-    try:
-        shell.overlay.show()
-        assert shell.behavior.anim_of(shell.sprite) is None  # 尚未接管
-
-        _click_sprite(shell)
-
-        assert shell._speech_bubble is not None
-        assert shell._speech_bubble._raw_text == "自言自语台词"
-        assert shell._self_talk_timer.interval() == 6000  # after_display=True
-    finally:
-        _cleanup(shell)
-
-
-def test_click_uses_bound_talk_text_for_current_anim_and_speaks(tmp_path):
-    """逐动画台词：绑定过的 click 动画名出绑定文本，并把同一句交给朗读通道。"""
-    shell, _config = _make_shell(
-        tmp_path,
-        _talk_values(click_show_self_talk=True, self_talk_speak_enabled=True),
-        bindings={"click1": ["绑定台词"]},
-    )
-    spoken: list[str] = []
-    shell.on_self_talk_speak = spoken.append
-    try:
-        shell.overlay.show()
-        _click_sprite(shell)
-
-        assert shell.behavior.anim_of(shell.sprite) == "click1"  # 点击 clip 已绑定
-        assert shell._speech_bubble._raw_text == "绑定台词"
-        assert spoken == ["绑定台词"]  # 听到的 == 看到的
-    finally:
-        _cleanup(shell)
-
-
-def test_click_without_binding_falls_back_to_random_self_talk(tmp_path):
-    """未绑定当前动画 → 回退全局随机自言自语（window_alerts.py:474-477）。"""
-    shell, _config = _make_shell(
-        tmp_path, _talk_values(click_show_self_talk=True))
-    try:
-        shell.overlay.show()
-        _click_sprite(shell)
-        assert shell._speech_bubble._raw_text == "自言自语台词"
-    finally:
-        _cleanup(shell)
-
-
 def test_click_with_self_talk_off_keeps_bubble_quiet(tmp_path):
     """点击自言自语关闭 → 点击只出动画，不出气泡也不排程。"""
     shell, _config = _make_shell(
-        tmp_path, _talk_values(self_talk_enabled=False, click_show_self_talk=False))
+        tmp_path, _talk_values(self_talk_enabled=False))
     try:
         shell.overlay.show()
         _click_sprite(shell)
@@ -275,7 +217,7 @@ def test_click_with_self_talk_off_keeps_bubble_quiet(tmp_path):
 def test_click_show_balance_routes_to_shell_show_balance(tmp_path):
     """click_show_balance 优先：转 ``AppShell.show_balance``（window.py:3370-3371）。"""
     shell, _config = _make_shell(
-        tmp_path, _talk_values(click_show_balance=True, click_show_self_talk=True))
+        tmp_path, _talk_values(click_show_balance=True))
     calls: list = []
     shell._instance.shell = type(
         "_Shell", (), {"show_balance": lambda self, parent=None: calls.append(parent)})()
@@ -309,9 +251,6 @@ def test_refresh_settings_hot_reloads_self_talk_fields(tmp_path):
         shell.refresh_settings()
         assert shell._self_talk_timer.isActive() is True  # 打开即重排
 
-        config.set("click_show_self_talk", True)
-        shell.refresh_settings()
-        assert shell.click_show_self_talk is True
     finally:
         _cleanup(shell)
 

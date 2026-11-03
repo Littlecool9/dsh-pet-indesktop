@@ -2,7 +2,7 @@
 """overlay 拓扑下的 app 级宿主回退（批 B3）聚焦测试。
 
 背景：overlay 拓扑不建 ``PetWindow``（``PetInstance.win`` / ``AppShell.win`` 恒
-None），而一批 app 级服务仍只认 ``win``：完整聊天窗打不开、报时/节日/待办落到
+None），而一批 app 级服务仍只认 ``win``：完整聊天窗打不开、报时/待办落到
 系统通知、定时余额直接 return、省电开关保存后不生效、隐藏提示读不到托盘、设置页
 已开时静默无反应。
 
@@ -32,7 +32,6 @@ import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
 from pet.app import AppShell, PetInstance
 from pet.config import Config
-from pet.festival_service import FestivalReminderService
 from pet.overlay_shell import OverlayShell, _SettingsIdentity
 from pet.pet_sprite import PetSprite
 from pet.todo_reminder import TodoReminderService
@@ -354,7 +353,7 @@ class _LegacyBubble:
 def test_show_bubble_returns_delivery_verdict_on_both_topologies(tmp_path):
     """overlay 壳与 legacy ``PetWindow`` 的 ``show_bubble`` 返回同一套契约。
 
-    交付确认制（免打扰汇报 / 待办 / 报时 / 节日）靠这个返回值判断"到底上没上
+    交付确认制（免打扰汇报 / 待办 / 报时）靠这个返回值判断"到底上没上
     屏"：两套拓扑必须同义——真上屏 True，让路/抑制 False，且绝不返回 None
     （legacy 早期成功失败都返回 None，只能当"已展示"，误判出静默丢失）。
     """
@@ -385,21 +384,16 @@ def test_show_bubble_returns_delivery_verdict_on_both_topologies(tmp_path):
         _teardown(overlay)
 
 
-def test_voice_chime_and_festival_bubble_on_overlay_host(tmp_path):
-    """报时/节日提醒宿主 = 壳（此前 win 恒 None → 直接落系统通知）。"""
+def test_voice_chime_bubble_on_overlay_host(tmp_path):
+    """报时宿主 = 壳（此前 win 恒 None → 直接落系统通知）。"""
     shell, inst, overlay = _make_overlay_app(tmp_path)
     try:
         overlay.overlay.show()
         chime = VoiceChimeService(shell)
         chime.apply_config()
-        festival = FestivalReminderService(shell)
-        festival.apply_config()
 
         chime._bubble("现在是上午九点整。")
         assert "九点" in _bubble_text(overlay)
-
-        festival._bubble("今天是春节。")
-        assert "春节" in _bubble_text(overlay)
         assert shell._toast_windows == [], "落了气泡就不该再弹系统通知"
     finally:
         _teardown(overlay)
@@ -424,7 +418,7 @@ def _chime_quiet_listeners() -> list:
 def test_chime_construction_without_stop_leaves_quiet_listener(tmp_path, request):
     """P3：构造即挂的免打扰监听确实会在**进程级共享表**里留一条。
 
-    本文件此前正是这样漏的：``test_voice_chime_and_festival_bubble_on_overlay_host``
+    本文件此前正是这样漏的：``test_voice_chime_bubble_on_overlay_host``
     构造 ``VoiceChimeService`` 却从不 ``stop()``（只测一拍内的气泡落点），而清理
     fixture 只长在 ``tests/test_voice_chime_service.py`` 里——模块级 autouse 不跨文件，
     而 ``reset_shared_quiet_state()`` 只复位状态、**不动监听表**（订阅表是订阅方的

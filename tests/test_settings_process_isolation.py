@@ -294,7 +294,6 @@ def test_apply_external_config_change_fans_out_to_all_instances(tmp_path, monkey
     shell._apply_balance_timer = lambda: None
     shell._sync_todo_service = lambda: None
     shell._sync_chime_service = lambda: None
-    shell._sync_festival_service = lambda: None
     shell._apply_external_config_change()
     for inst in shell._instances:
         inst.win.refresh_pet_settings.assert_called_once_with()
@@ -555,14 +554,13 @@ def test_modern_settings_finished_delegates_to_shell_apply_chain(tmp_path):
 # ------------------------------------------- 6. standalone 试听 / runtime 避让
 
 def test_standalone_preview_uses_local_channel(tmp_path, monkeypatch):
-    """standalone 试听改走本地通道；进程内实例不挂 on_festival_now。"""
+    """standalone 试听改走本地通道。"""
     import pet.modern_settings_dialog as settings_mod
     import pet.settings_standalone as standalone_mod
 
     _qapp()
     seen = []
     monkeypatch.setattr(standalone_mod, "preview_voice_chime", lambda dialog, text="": seen.append(("chime", text)))
-    monkeypatch.setattr(standalone_mod, "preview_festival", lambda dialog: seen.append(("festival", "")))
     dialog = settings_mod.ModernSettingsDialog(Config(base=tmp_path), include_ai=False, standalone=True)
     inproc = settings_mod.ModernSettingsDialog(Config(base=tmp_path / "inproc"), include_ai=False)
     try:
@@ -570,11 +568,6 @@ def test_standalone_preview_uses_local_channel(tmp_path, monkeypatch):
         assert inproc.standalone is False
         dialog.voice_chime_page.preview_requested.emit("")
         assert seen == [("chime", "")]
-        assert callable(getattr(dialog, "on_festival_now", None))
-        dialog.on_festival_now()
-        assert seen[-1] == ("festival", "")
-        # 进程内实例没有该属性：节日页向上查找仍会穿过对话框落到 PetWindow
-        assert not hasattr(inproc, "on_festival_now")
     finally:
         dialog.deleteLater()
         inproc.deleteLater()
@@ -594,26 +587,6 @@ def test_frozen_standalone_missing_tts_points_to_app_update(tmp_path, monkeypatc
         assert not button.isEnabled()
         assert "更新" in button.toolTip()
         assert "pip install" not in button.toolTip()
-    finally:
-        dialog.deleteLater()
-
-
-def test_standalone_festival_preview_shows_notice_without_speech(tmp_path, monkeypatch):
-    """节日试听本地演示：文案经宿主 system_notify 可见；语音默认关不触发合成。"""
-    import pet.settings_standalone as standalone_mod
-    from pet.modern_settings_dialog import ModernSettingsDialog
-
-    _qapp()
-    notices = []
-    monkeypatch.setattr(standalone_mod, "show_transient_notice", lambda text: notices.append(text))
-    config = Config(base=tmp_path)
-    config.set("festival_reminder_speak", False)
-    dialog = ModernSettingsDialog(config, include_ai=False, standalone=True)
-    try:
-        assert callable(dialog.on_festival_now)
-        dialog.on_festival_now()
-        assert notices, "节日试听必须给出可见文案（standalone 不许静默失效）"
-        assert dialog._standalone_host._chime is None, "语音关时不该建音频通道"
     finally:
         dialog.deleteLater()
 

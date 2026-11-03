@@ -86,7 +86,6 @@ SETTINGS_DOMAIN_NAV = (
     ("自动化与联动", "automation"),
     ("语音", "sound"),
     ("文件识别", "file"),
-    ("更新", "update"),
 )
 
 BROWSER_CONTROL_STYLESHEET = """

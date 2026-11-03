@@ -16,7 +16,7 @@
 覆盖：
 1. overlay 树 ≡ build_modern_menu(PetWindow)（注册表 + 用户编排 + 图标分组）；
 2. 显式清单：用户点名的缺失条目（AI 对话/黄金回旋/显示本轮消费/音乐子菜单/
-   边缘探头/大小/DeepSeek Harness/打开网页版 DeepSeek/主动识屏/Agent 联动/
+   边缘探头/大小/DeepSeek Harness/主动识屏/Agent 联动/
    网络信息）逐项在树里；
 3. 无聊天变体：聊天门条目在两侧一起消失；
 4. 音乐服务不可达 → 整组隐藏；
@@ -78,7 +78,6 @@ REQUIRED_LABELS = (
     "边缘探头",
     "大小",
     "DeepSeek Harness",
-    "打开网页版 DeepSeek",
     "主动识屏",
     "Agent 联动",
     "网络信息",
@@ -118,12 +117,6 @@ class _StubAppShell:
     def show_balance(self, parent=None):
         self._record("show_balance", parent)
 
-    def show_weather(self, parent=None):
-        self._record("show_weather", parent)
-
-    def check_update(self, parent=None):
-        self._record("check_update", parent)
-
     def open_todo_panel(self):
         self._record("open_todo_panel")
 
@@ -135,12 +128,6 @@ class _StubAppShell:
 
     def toggle_voice_chime(self):
         self._record("toggle_voice_chime")
-
-    def trigger_festival_now(self):
-        self._record("trigger_festival_now")
-
-    def toggle_festival_reminder(self):
-        self._record("toggle_festival_reminder")
 
     def open_settings_process(self, instance=None):
         self._record("open_settings_process", instance)
@@ -206,18 +193,14 @@ def _reference_window(config, *, chat=True):
     win.on_open_chat = (lambda: None) if chat else None
     win.on_open_chat_settings = (lambda: None) if chat else None
     win.on_show_balance = (lambda parent=None: None) if chat else None
-    win.on_show_weather = lambda parent=None: None
     win.on_look_screen = win.look_at_screen if chat else None
     win.on_open_modern_settings = lambda: None
     win.on_spawn_pet = lambda: None
     win.on_clear_spawned_pets = lambda: None
-    win.on_check_update = lambda parent=None: None
     win.on_open_todo_panel = lambda: None
     win.on_network_info = lambda: None
     win.on_voice_chime_now = lambda text="": None
     win.on_toggle_voice_chime = lambda: None
-    win.on_festival_now = lambda: None
-    win.on_toggle_festival = lambda: None
     win.on_switch_character = lambda character_id: None
     return win
 
@@ -405,9 +388,11 @@ def test_music_menu_lyric_align_availability_matches_the_registry(tmp_path):
     config = Config(base=tmp_path)
     config.set("music_lyric_enabled", True)
     win = _reference_window(config)
+    menus = []  # 保活根菜单：QMenu 无父时被 GC 会连带删除其 action
     try:
         def _align_action():
             menu = QMenu()
+            menus.append(menu)
             build_modern_menu(menu, win)
             music = next(a.menu() for a in menu.actions() if a.text() == "音乐")
             return next(a for a in music.actions() if a.text() == "歌词对齐")
@@ -449,8 +434,7 @@ def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
         controls = _find(menu, "桌宠控制").menu()
         assert _find(controls, "生小肥鱼") is not None
         tools = _find(menu, "工具与帮助").menu()
-        for label in ("DeepSeek Harness", "打开网页版 DeepSeek", "网络信息",
-                      "GitHub 项目页"):
+        for label in ("DeepSeek Harness", "网络信息"):
             assert _find(tools, label) is not None
     finally:
         shell._delete_runtime_marker()
@@ -480,30 +464,6 @@ def test_music_submenu_offers_every_player_a_launch_entry(tmp_path):
         assert expected in labels, f"音乐子菜单缺 {key} 的启动入口：{labels}"
     launch = [text for text in labels if text.startswith("打开")]
     assert len(launch) == len(set(launch)) == 4, f"启动入口重复或数量不对：{launch}"
-
-
-def test_divination_entry_appears_when_app_shell_provides_the_callback(tmp_path):
-    """回调存在 → overlay 菜单必须出现「抽支签」。
-
-    真 app 里回调来自 ``AppShell.trigger_divination_draw``（app.py），门面
-    ``SpriteMenuFacade`` **必须显式代理** ``on_divination_draw``：注册表的可用性
-    判定是 ``callable(getattr(facade, "on_divination_draw", None))``，漏代理就
-    **静默少一项**——2026-10-15 林小姐截图发现的就是这一条（模板里 visible: true
-    也照样不显示）。
-
-    这里不能靠"和 PetWindow 对齐"那条拦：脚手架两侧都没有 app 回调，
-    包含关系照样成立，红不了。所以要显式把回调装上再断言。
-    """
-    shell, instance, _config = _make_overlay(tmp_path)
-    try:
-        instance.shell.trigger_divination_draw = lambda: None
-        labels = _all_labels(build_sprite_full_menu(shell))
-        assert "抽支签" in labels, "回调可用时「抽支签」必须出现在 overlay 菜单里"
-        # 反向：把回调摘掉，这一项必须消失（可用性判定真的在起作用，不是硬编码显示）
-        del instance.shell.trigger_divination_draw
-        assert "抽支签" not in _all_labels(build_sprite_full_menu(shell))
-    finally:
-        shell._delete_runtime_marker()
 
 
 def test_harness_launcher_gets_widget_dialog_parent(tmp_path, monkeypatch):

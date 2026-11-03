@@ -1591,7 +1591,7 @@ class VoiceChimeService:
         from . import window_alerts
         app = self._app
         win = getattr(app, "win", None)
-        # 免打扰（含全屏等效）判定在**可见性判断之前**（同 festival_service）：
+        # 免打扰（含全屏等效）判定在**可见性判断之前**：
         # 宿主隐藏时若先看 isVisible，报时提醒会走系统通知，免打扰压不住也不进
         # 暂存队列。这里的暂存只针对**气泡**：语音由 _fire / _handle_synthesized
         # 的静音闸丢弃（不补播，理由见 _fire 的说明）。

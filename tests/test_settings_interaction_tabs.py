@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「互动」域页内分标签（点击与音效 / 自言自语 / 天气 / 趣味）的聚焦回归。
+"""「互动」域页内分标签（点击与音效 / 自言自语 / 快捷键）的聚焦回归。
 
 背景：主人反馈「设置界面有点乱，单页面太多东西」。互动域原先 18 行 / 3 组**平铺、
 零折叠**，是本仓库最长的"无折叠"域之一；「菜单」域已用 ``SettingsTabContainer``
@@ -19,23 +19,19 @@ import pytest
 pytest.importorskip("PySide6")
 
 EXPECTED_SIDEBAR = [
-    "常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别", "更新",
+    "常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别",
 ]
 # 标签键/名：键给代码（稳定），名给用户（可读）。顺序 = 使用顺序。
-# 「天气」（issue #209，2026-10-07）与「点击显示余额」同族——都是"桌宠替你看一眼
-# 外部数据"的互动面，故挂在同一个域里当第三个同级任务，而不是新开侧栏域；
-# 「抽签」（每日一签，2026-10-15）同族（用户主动拉一次、桌宠给一个结果），是第四个。
-# 「快捷键」（2026-10-18）是第五个：用户怎么唤出这三个动作，同属"人宠交互"面。
-EXPECTED_TABS = (("click", "点击与音效"), ("self_talk", "自言自语"), ("weather", "天气"),
-                 ("divination", "趣味"), ("hotkeys", "快捷键"))
+# 「快捷键」（2026-10-18）是第三个：用户怎么唤出这三个动作，同属"人宠交互"面。
+EXPECTED_TABS = (("click", "点击与音效"), ("self_talk", "自言自语"), ("hotkeys", "快捷键"))
 
 # 每组行各自应该落在哪个标签
 ROWS_BY_TAB = {
     "hotkeys": ("hotkey_open_chat", "hotkey_look_screen", "hotkey_screen_capture"),
     "click": (
         "mouse_through", "click_sound", "click_sound_pack", "click_sound_volume",
-        "click_sound_preview", "click_balance", "click_self_talk", "click_self_talk_speak",
-        "click_self_talk_precache", "click_talk_bindings", "golden_spin_click",
+        "click_sound_preview", "click_balance", "click_self_talk_speak",
+        "click_self_talk_precache", "golden_spin_click",
         "golden_spin_direct",
     ),
     "self_talk": (
@@ -43,9 +39,6 @@ ROWS_BY_TAB = {
         "self_talk_max", "self_talk_texts", "self_talk_images", "self_talk_image_scale",
         "self_talk_image_chance",
     ),
-    "weather": ("weather_enabled", "weather_city", "weather_city_list"),
-    "divination": ("divination_enabled", "divination_speak", "divination_preview",
-                   "divination_hint"),
 }
 
 
@@ -104,14 +97,13 @@ def test_every_interaction_row_routes_to_its_tab_and_is_reachable(dialog):
     """每行都能由标签键路由到，且父开关打开后在所属标签里可见（分页没丢功能）。
 
     半数行另有**父开关显隐联动**（既有契约，见 test_desktop_pet_features 的依赖显隐
-    用例与 test_click_self_talk_speech）：``self_talk_*`` 细项随「气泡自言自语」、
-    ``click_self_talk_*`` / ``click_talk_bindings`` 随「点击触发自言自语」、
-    ``click_sound_*`` 细项随「点击音效」、``golden_spin_direct`` 随「点击回旋」。
-    所以先把这四个父开关全打开，再断言"激活标签后确实看得到"。
+    用例）：``self_talk_*`` 细项随「气泡自言自语」、``click_sound_*`` 细项随
+    「点击音效」、``golden_spin_direct`` 随「点击回旋」。所以先把这三个父开关全打开，
+    再断言"激活标签后确实看得到"。
     """
     from pet.settings_widgets import SettingsTabContainer
 
-    for parent in ("self_talk_check", "click_self_talk_check", "click_sound_check", "golden_spin_click_check"):
+    for parent in ("self_talk_check", "click_sound_check", "golden_spin_click_check"):
         getattr(dialog, parent).setChecked(True)
     tabs = _interaction_page(dialog).findChild(SettingsTabContainer, "settingsTaskTabs")
     for tab_key, keys in ROWS_BY_TAB.items():
@@ -180,8 +172,6 @@ def test_sections_keep_their_titles_inside_the_tabs(dialog):
 
     assert section_titles("click") == ["输入", "点击反馈"]
     assert section_titles("self_talk") == ["自言自语"]
-    assert section_titles("weather") == ["天气"]
-    assert section_titles("divination") == ["抽签"]
 
 
 def test_click_speak_toggle_starts_unchecked_like_the_config_default(dialog):
@@ -214,27 +204,6 @@ def test_every_setting_row_still_lives_in_a_domain_page(dialog):
     assert isinstance(_interaction_page(dialog), QWidget)
 
 
-# —— 每日一签（「互动 · 抽签」）归位后的四条聚焦口径 ——————————————————
-# 它 2026-10-15 曾以一个只有一组「抽签」的**一级域【趣味】**进设置页，靠把侧栏
-# 布局间距 3→0 / 导航行距 1→0 挤进 800×560。2026-10-17 按
-# docs/SETTINGS-CHANGE-GATES.md 的准入（新一级域须"预计包含至少两个稳定设置组"）
-# 判不合格：域撤回、行归位到「互动」页内第四个标签，侧栏间距与行高一个都不动。
-
-def test_divination_rows_hang_off_the_interaction_domain_not_a_new_sidebar_domain(dialog):
-    """侧栏仍是 10 个域，且没有叫「趣味」的一级域——抽签的行在「互动」域里。"""
-    from pet.settings_widgets import SettingsTabContainer
-
-    labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
-    assert labels == EXPECTED_SIDEBAR
-    assert "趣味" not in labels, "只有一组的「趣味」一级域不得存在（设置门准入不合格）"
-
-    page = _interaction_page(dialog)
-    tabs = page.findChild(SettingsTabContainer, "settingsTaskTabs")
-    tabs.setCurrentKey("divination")
-    for key in ROWS_BY_TAB["divination"]:
-        assert page.isAncestorOf(_row(dialog, key)), f"{key} 必须落在「互动」域页里"
-
-
 def test_sidebar_spacing_and_row_height_are_not_squeezed(dialog):
     """侧栏间距 3 / 导航行距 1 / 行高 ≥34 全部保持原值（不许为新域压间距）。
 
@@ -252,47 +221,3 @@ def test_sidebar_spacing_and_row_height_are_not_squeezed(dialog):
     assert SIDEBAR_ROW_HEIGHT == 34
     assert dialog.sidebar.sizeHintForRow(0) >= SIDEBAR_ROW_HEIGHT
 
-
-def test_divination_rows_are_searchable_and_search_switches_to_their_tab(dialog):
-    """搜「抽签」/「每日一签」都能到行，且自动切到「抽签」标签（否则结果在视野外）。"""
-    from pet.settings_widgets import SettingsTabContainer
-
-    app = _qapp()
-    tabs = _interaction_page(dialog).findChild(SettingsTabContainer, "settingsTaskTabs")
-    for query, key in (("抽签", "divination_enabled"), ("每日一签", "divination_enabled"),
-                       ("试听今天的签", "divination_preview")):
-        tabs.setCurrentKey("click")
-        dialog.search_edit.setText(query)
-        for _ in range(3):
-            app.processEvents()
-        assert dialog.sidebar.currentItem().text() == "互动", f"搜「{query}」没跳到互动域"
-        assert tabs.currentKey() == "divination", f"搜「{query}」没切到抽签标签"
-        assert _row(dialog, key).isVisibleTo(tabs) is True, f"搜「{query}」的行不可见"
-    dialog.search_edit.setText("")
-    app.processEvents()
-
-
-def test_divination_toggles_take_part_in_the_default_marks_but_the_preview_button_does_not(dialog):
-    """三个开关可比较默认值（进「已修改」标记）；「试听」是按钮行，不参与。
-
-    口径见 ``pet/settings_default_marks.py``：只认四类控件，行键与顶层配置键同名时
-    不必显式登记（先查表再回落）。抽签三行正好落在"同名回落"这条路径上，所以这里
-    钉的既是标记覆盖面，也是"没有第二张默认值表"。
-    """
-    registered = {row.objectName()[len("settingRow_"):] for row, _c, _d in dialog._default_mark_rows}
-    for key in ("divination_enabled", "divination_speak", "divination_hint"):
-        assert key in registered, f"{key} 应有可比默认值（进标记覆盖面）"
-    assert "divination_preview" not in registered, "按钮行不参与默认值标记"
-
-    from pet.settings_widgets import SettingsTabContainer
-
-    tabs = _interaction_page(dialog).findChild(SettingsTabContainer, "settingsTaskTabs")
-    tabs.setCurrentKey("divination")
-    speak = _row(dialog, "divination_speak")
-    assert speak.control.isChecked() is False
-    # 用 isHidden（显式 hide/show 的意图）而不是 isVisible：本 fixture 没有 show() 窗口，
-    # isVisible 在整棵树上恒为 False，量不到"这一行自己出没出标记"。
-    assert speak.modified_mark.isHidden() is True, "默认态不该有标记"
-    speak.control.setChecked(True)
-    _qapp().processEvents()
-    assert speak.modified_mark.isHidden() is False, "改成非默认值就该出标记"

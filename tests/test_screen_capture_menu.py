@@ -136,7 +136,7 @@ def test_saved_user_layout_gets_the_new_entry_merged_in(tmp_path):
         "schema_version": 1,
         "layout_id": "user",
         "nodes": [
-            {"type": "action", "id": "ojingjing", "visible": True},
+            {"type": "action", "id": "chat", "visible": True},
             {"type": "action", "id": "look_screen", "visible": True},
             {"type": "action", "id": "modern_settings", "visible": True},
             {"type": "action", "id": "quit", "visible": True},

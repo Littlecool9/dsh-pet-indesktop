@@ -11,10 +11,7 @@
    wav，要走通得先引入解码/转码；QMediaPlayer 是原服务里现成的播放通路，
    复用比自建最小实现更少新代码、更少行为分叉。
 
-2. **节日试听**：复用 ``FestivalReminderService.remind_now``（文案组装与让位逻辑
-   同源），文本走宿主 ``system_notify``、语音走上面那条本地音频通道。
-
-3. **避让桌宠位置**：没有 parent 窗口可读几何，改读配置目录里的 runtime 状态文件
+2. **避让桌宠位置**：没有 parent 窗口可读几何，改读配置目录里的 runtime 状态文件
    （桌宠启动/移动时写的 ``pet-runtime-v2-*.json`` / ``runtime-*.json``）。
 """
 
@@ -78,11 +75,10 @@ def _standalone_chime_class():
 
 
 class _StandaloneHost:
-    """VoiceChimeService / FestivalReminderService 的最小宿主。
+    """VoiceChimeService 的最小宿主。
 
-    两个服务只依赖 ``config`` / ``win`` / ``system_notify`` /
-    ``ensure_audio_channel`` 这组鸭子面（见 voice_chime_service._bubble 与
-    festival_service._speak），不需要真正的 AppShell。
+    服务只依赖 ``config`` / ``win`` / ``system_notify`` / ``ensure_audio_channel``
+    这组鸭子面（见 voice_chime_service._bubble），不需要真正的 AppShell。
     """
 
     def __init__(self, config, parent=None) -> None:
@@ -91,13 +87,12 @@ class _StandaloneHost:
         self.win = None
         self._parent = parent
         self._chime = None
-        self._festival = None
 
     def system_notify(self, title: str, message: str, **_kwargs) -> None:
         show_transient_notice(message)
 
     def ensure_audio_channel(self):
-        """节日语音复用报时服务的音频通道（与进程内同一条通路）。"""
+        """复用的报时音频通道（与进程内同一条通路）。"""
         return self.chime_service()
 
     def chime_service(self):
@@ -105,16 +100,9 @@ class _StandaloneHost:
             self._chime = _standalone_chime_class()(self)
         return self._chime
 
-    def festival_service(self):
-        if self._festival is None:
-            from .festival_service import FestivalReminderService
-
-            self._festival = FestivalReminderService(self)
-        return self._festival
-
     def shutdown(self) -> None:
         """设置窗关闭/进程退出：停掉在跑的音频通道（飞行中的合成结果一并作废）。"""
-        for service in (self._chime, self._festival):
+        for service in (self._chime,):
             if service is None:
                 continue
             try:
@@ -141,14 +129,6 @@ def preview_voice_chime(dialog, text: str = "") -> None:
     if host is None:
         return
     host.chime_service().say_now(text)
-
-
-def preview_festival(dialog) -> None:
-    """节日设置页「立即试听」：本地演示今日节日（文案+可选语音）。"""
-    host = getattr(dialog, "_standalone_host", None)
-    if host is None:
-        return
-    host.festival_service().remind_now()
 
 
 def standalone_pet_geometry(config):
@@ -183,9 +163,5 @@ def install_standalone_hooks(dialog) -> None:
         return
     host = _StandaloneHost(dialog.config, parent=dialog)
     dialog._standalone_host = host  # 强引用保活：服务/播放器都挂在宿主上
-    # 节日试听：FestivalSettingsPage 沿 parent 链向上找 on_festival_now（进程内由
-    # PetWindow 提供）。独立进程只在对话框这一层挂同名属性；进程内实例不设该属性，
-    # 因此查找仍会穿过对话框落到 PetWindow，行为逐位不变。
-    dialog.on_festival_now = lambda: preview_festival(dialog)
     _guard_voice_preview(dialog)
     dialog.finished.connect(lambda _result: host.shutdown())

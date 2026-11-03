@@ -555,13 +555,13 @@ def test_routed_main_dict_edit_preserves_external_other_leaf(tmp_path):
 
 def test_routed_old_pending_does_not_cross_global_reset(tmp_path):
     routed, main, _cfg = _routed(tmp_path)
-    routed.set('weather_city', 'old draft')
+    routed.set('pnpm_bin', 'old draft')
     assert main.reset_to_defaults()
     before = main.path.read_bytes()
     routed.reload()
     assert routed.save() is False
     assert main.path.read_bytes() == before
-    assert routed._pending_main['weather_city'] == 'old draft'
+    assert routed._pending_main['pnpm_bin'] == 'old draft'
 
 
 # ------------------------------------------------------------------ 6. 键集单一来源

@@ -4,16 +4,15 @@
 用户需求：鱼飞行过程中不弹气泡；被撞飞瞬间若已有气泡立即关闭；飞行结束后
 提醒队列正常恢复。
 
-缺口成因：气泡入口里有一半直写控件（提醒队列 / 自言自语 / 节日播报 / 语音
-报时 / 识屏答复），它们只读设置页抑制位 ``_bubble_suppressed``——而那个位同时
+缺口成因：气泡入口里有一半直写控件（提醒队列 / 自言自语 / 语音报时 /
+识屏答复），它们只读设置页抑制位 ``_bubble_suppressed``——而那个位同时
 是 proactive/联动节流信号（multi_window_shared / agent_link / todo_reminder
 读它），飞行期置真会把主动搭话与联动一起掐掉。故飞行态另开一位：行为层报
 边沿（``BehaviorController.on_flight_changed``），壳按 sprite 维护飞行集合，
 全部气泡入口统一读 ``OverlayShell._bubble_blocked(sprite)``。
 
 覆盖：
-1. 起飞边沿收气泡、飞行期各入口（show_bubble / 自言自语 / 提醒 / 节日播报 /
-   语音报时）全部不弹，且提醒入队不丢、落地照常弹出（含粘滞审批提醒重挂）；
+1. 起飞边沿收气泡、飞行期各入口（show_bubble / 自言自语 / 提醒 / 语音报时）全部不弹，且提醒入队不丢、落地照常弹出（含粘滞审批提醒重挂）；
 2. 按 sprite 判定：飞的那只禁泡，其他宠（含子宠自言自语宿主）不受影响；
 3. 起飞预热同一飞行窗口只向 ``_WARM_EXECUTOR`` 提交一次（B2），落地复位、
    下一次飞行照旧预热（去重只覆盖本次飞行，不是永久跳过）。
@@ -35,7 +34,6 @@ from PySide6.QtWidgets import QApplication
 import pet.sprite_behavior as sprite_behavior_mod
 import tests.test_sprite_behavior as beh
 import tests.test_sprite_menu_facade as fac
-from pet.festival_service import FestivalReminderService
 from pet.pet_sprite import INTERACTION_NORMAL, INTERACTION_THROWN
 from pet.sprite_behavior import STATE_IDLE, STATE_THROWN, BehaviorController
 from pet.voice_chime_service import VoiceChimeService
@@ -238,7 +236,7 @@ def test_flight_bubble_child_flight_leaves_main_alone(tmp_path):
 
 # ---------------------------------------------------------------- 服务层播报
 class _ServiceApp:
-    """节日/报时服务眼里的应用壳：只用到 ``win`` / ``system_notify``。
+    """报时服务眼里的应用壳：只用到 ``win`` / ``system_notify``。
 
     ``win`` 是真 ``OverlayShell``（走真门禁），本替身只是服务构造面的边界。
     """
@@ -251,19 +249,16 @@ class _ServiceApp:
         self.notices.append((title, message))
 
 
-def test_flight_bubble_drops_festival_and_voice_chime_announcements(tmp_path):
-    """飞行期节日播报 / 语音报时（一次性播报）直接丢弃：不冒泡、不改道系统通知。"""
+def test_flight_bubble_drops_voice_chime_announcements(tmp_path):
+    """飞行期语音报时（一次性播报）直接丢弃：不冒泡、不改道系统通知。"""
     shell, _lib = _make_shell(tmp_path)
     service_app = _ServiceApp(shell)
-    festival_self = SimpleNamespace(
-        _app=service_app, BUBBLE_DURATION_MS=FestivalReminderService.BUBBLE_DURATION_MS)
     chime_self = SimpleNamespace(
         _app=service_app, _cfg={"show_bubble": True},
         BUBBLE_DURATION_MS=VoiceChimeService.BUBBLE_DURATION_MS)
     try:
         _take_off(shell)
 
-        FestivalReminderService._bubble(festival_self, "节日快乐")
         VoiceChimeService._bubble(chime_self, "现在十二点")
 
         assert shell._speech_bubble._raw_text == "", "飞行期一次性播报不得冒泡"
@@ -272,9 +267,8 @@ def test_flight_bubble_drops_festival_and_voice_chime_announcements(tmp_path):
 
         _land(shell)
 
-        FestivalReminderService._bubble(festival_self, "节日快乐")
-        assert shell._speech_bubble._raw_text == "节日快乐", \
-            "落地后照常播报（门禁只覆盖飞行期，不是把功能关掉）"
+        VoiceChimeService._bubble(chime_self, "现在十二点")
+        assert shell._speech_bubble._raw_text == "现在十二点",             "落地后照常播报（门禁只覆盖飞行期，不是把功能关掉）"
     finally:
         shell._delete_runtime_marker()
 

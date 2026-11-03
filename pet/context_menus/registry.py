@@ -5,40 +5,26 @@ import sys
 from dataclasses import dataclass
 from typing import Callable
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMenu, QWidgetAction
 
-from ..config import DEFAULT_MENU_EASTER_EGG
 from ..focus_ui import build_focus_menu
-from ..weather_menu import (
-    WEATHER_DISABLED_REASON,
-    add_show_weather,
-    add_weather_cities,
-    weather_menu_enabled,
-)
-from .fun_entry import add_ojingjing_entry
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
 from .shared import (
     MUSIC_ALIGN_DISABLED_REASON,
     NETWORK_INFO_DISABLED_REASON,
-    QUARK_PAN_URL,
-    REPO_URL,
     add_action,
     add_agent_link_menu,
     add_autostart,
     add_balance,
     add_clear_spawned_pets,
-    add_deepseek_web,
     add_drag_physics,
     add_edge_probe,
     add_golden_spin,
     add_harness,
     add_hide_pet,
     add_look_screen,
-    add_memory_trim,
     add_agent_cost,
     add_music_lyric_align,
     add_music_next,
@@ -68,7 +54,7 @@ from .shared import (
 
 
 ACTION_LABELS = {
-    "ojingjing": "厉害了我的鲸", "chat": "AI 对话", "look_screen": "看看屏幕",
+    "chat": "AI 对话", "look_screen": "看看屏幕",
     "screen_capture": "截图提问",
     "animations_hub": "播放动画", "character": "切换角色", "playback_speed": "播放速率",
     "size": "大小", "drag_physics": "拖动物理", "no_move": "不移动",
@@ -85,13 +71,8 @@ ACTION_LABELS = {
     "music_lyric_align": "歌词对齐",
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
-    "memory_trim": "回收内存",
-    "harness": "启动 DeepSeek Harness", "deepseek_web": "打开网页版 DeepSeek",
-    "check_update": "检查更新", "github_project": "GitHub 项目页",
-    "quark_download": "夸克网盘下载", "agent_link": "Agent 联动",
     "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
     "quiet_mode": "免打扰", "focus_mode": "专注模式",
-    "weather": "查看天气", "weather_cities": "天气城市",
     "network_info": "网络信息",
     "modern_settings": "桌宠设置", "quit": "退出",
 }
@@ -103,7 +84,7 @@ Enablement = Callable[[object], bool]
 
 
 ACTION_ICONS = {
-    "ojingjing": "pet", "chat": "chat", "look_screen": "screen",
+    "chat": "chat", "look_screen": "screen",
     "screen_capture": "size",
     "animations_hub": "play", "character": "character", "playback_speed": "speed",
     "size": "size", "drag_physics": "physics", "no_move": "pause",
@@ -116,17 +97,11 @@ ACTION_ICONS = {
     "music_open_qqmusic": "play", "music_open_kugou": "play",
     "music_open_soda": "play", "music_lyric_align": "play",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
-    "memory_trim": "clear",
-    "deepseek_web": "web", "check_update": "update", "github_project": "web",
-    "quark_download": "download", "agent_link": "automation",
     "proactive_screen": "screen", "todo_panel": "todo",
     "quiet_mode": "pause", "focus_mode": "pause",
-    "weather": "weather", "weather_cities": "weather",
     "network_info": "web",
     "modern_settings": "settings", "quit": "quit",
     "voice_chime_now": "chat", "voice_chime_toggle": "chat",
-    "divination_draw": "todo",
-    "festival_now": "todo", "festival_toggle": "todo",
 }
 
 CUSTOM_ICON_CHOICES = (
@@ -135,7 +110,7 @@ CUSTOM_ICON_CHOICES = (
     ("角色", "character"), ("速度", "speed"), ("尺寸", "size"),
     ("桌宠", "pet"), ("交互", "interaction"), ("置顶", "pin"),
     ("隐藏", "hide"), ("应用", "application"), ("余额", "balance"),
-    ("清除", "clear"), ("网页", "web"), ("下载", "download"), ("更新", "update"),
+    ("清除", "clear"), ("网页", "web"),
     ("自动化", "automation"), ("设置", "settings"), ("待办", "todo"),
 )
 
@@ -159,25 +134,6 @@ def _music_lyric_configured(pet) -> bool:
     （测试也会因此依赖机器状态）。没在播时改为置灰（见 enabled）。
     """
     return bool(pet.cfg.get("music_lyric_enabled", False))
-
-
-def _memory_trim_available(_pet) -> bool:
-    """「回收内存」只对 Windows 显示：其它平台没有 EmptyWorkingSet。
-
-    判定走 ``pet/memory_trim.py::is_supported``（与执行层同一判据），不另写一份
-    ``sys.platform`` 比较——菜单给不给看和执行能不能跑必须是同一个真相。
-    """
-    from .. import memory_trim
-
-    return memory_trim.is_supported()
-
-
-# 「查看天气 / 天气城市」的判据与原因文案收在共享建造器模块（`weather_menu`），
-# 这里只做转发：开关真值只有一份，注册表的 enabled 与建造器写的 tooltip 同源。
-# （历史背景：旧版扁平菜单曾直调建造器绕过注册表，门只写在注册表上就会漏；
-# 旧版菜单已于 2026-10-08 退役，但"判定收在建造器里"的口径保持不动。）
-_WEATHER_DISABLED_REASON = WEATHER_DISABLED_REASON
-_weather_enabled = weather_menu_enabled
 
 
 def _music_align_ready(pet) -> bool:
@@ -217,8 +173,8 @@ def _flag_toggle_spec(key: str, on_label: str, off_label: str, icon: str,
                       callback: str):
     """布尔开关菜单项的规约工厂：按配置当前值翻转标签，点击回回调。
 
-    语音报时开关与节日提醒开关此前逐字同构，这里把「读配置 → 选标签 →
-    add_action」收成一处；标签翻转、图标、回调与 close_on_trigger 语义逐点
+    语音报时开关此前把「读配置 → 选标签 → add_action」内联在建造器里，这里
+    收成一处；标签翻转、图标、回调与 close_on_trigger 语义逐点
     不变。注意 `enabled` 只影响展示标签，不影响回调可用性（可用性仍由
     `MenuActionSpec.available` 的 `_callback_available` 判定）。
     """
@@ -248,59 +204,11 @@ _build_voice_chime_toggle = _flag_toggle_spec(
     "on_toggle_voice_chime",
 )
 
-_build_festival_toggle = _flag_toggle_spec(
-    "festival_reminder_enabled", "关闭节日提醒", "启用节日提醒", "todo",
-    "on_toggle_festival",
-)
-
-
-def _build_festival_now(menu, pet):
-    return add_action(menu, "今日节日", "todo", pet.on_festival_now, close_on_trigger=True)
-
-
-def _build_divination_draw(menu, pet):
-    """「抽支签」：每天一支，点开即出（当天再点显示同一支）。"""
-    return add_action(menu, "抽支签", "todo", pet.on_divination_draw, close_on_trigger=True)
-
-
-def _build_check_update(menu, pet):
-    return add_action(menu, "检查更新", "update", lambda: pet.on_check_update(pet), close_on_trigger=True)
-
-
-def _build_github(menu, _pet):
-    return add_action(
-        menu,
-        "GitHub 项目页",
-        "web",
-        lambda: QDesktopServices.openUrl(QUrl(REPO_URL)),
-        close_on_trigger=True,
-    )
-
-
-def _build_quark(menu, _pet):
-    return add_action(
-        menu,
-        "夸克网盘下载",
-        "download",
-        lambda: QDesktopServices.openUrl(QUrl(QUARK_PAN_URL)),
-        close_on_trigger=True,
-    )
-
-
 class MenuActionRegistry:
     """Resolve capability-aware action IDs and render a resolved menu tree."""
 
     def __init__(self) -> None:
         self._specs = {
-            "ojingjing": MenuActionSpec(
-                lambda menu, pet: add_ojingjing_entry(
-                    menu, pet.cfg.get("menu_easter_egg", DEFAULT_MENU_EASTER_EGG)
-                ),
-                enabled=lambda pet: bool(
-                    pet.cfg.get("menu_easter_egg", DEFAULT_MENU_EASTER_EGG).get("enabled", True)
-                ),
-                disabled_reason="彩蛋入口已在设置中停用",
-            ),
             "chat": MenuActionSpec(_build_chat, _callback_available("on_open_chat")),
             "look_screen": MenuActionSpec(add_look_screen, _callback_available("on_look_screen")),
             # 「截图」单一入口（框选识屏）：动作在覆盖层松手后的动作条上选，
@@ -342,9 +250,6 @@ class MenuActionRegistry:
             # 运行时启用态表达（CONTEXT.md：Runtime Disabled 保留位置 + 解释原因）。
             "music_open_kugou": MenuActionSpec(add_music_open_kugou),
             "music_open_soda": MenuActionSpec(add_music_open_soda),
-            # 平台门在 menu_layout 的 available_actions 过滤里生效（非 Windows
-            # 整条不出现）；builder 自身也有同一道门，legacy 扁平布局直接调它。
-            "memory_trim": MenuActionSpec(add_memory_trim, _memory_trim_available),
             "golden_spin": MenuActionSpec(
                 add_golden_spin,
                 _callback_available("trigger_golden_spin"),
@@ -357,10 +262,6 @@ class MenuActionRegistry:
             ),
             "balance": MenuActionSpec(add_balance, _callback_available("on_show_balance")),
             "harness": MenuActionSpec(add_harness, _callback_available("on_open_chat")),
-            "deepseek_web": MenuActionSpec(lambda menu, pet: add_deepseek_web(menu)),
-            "check_update": MenuActionSpec(_build_check_update, _callback_available("on_check_update")),
-            "github_project": MenuActionSpec(_build_github),
-            "quark_download": MenuActionSpec(_build_quark, lambda _pet: sys.platform == "win32"),
             "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,
@@ -382,29 +283,8 @@ class MenuActionRegistry:
             "voice_chime_toggle": MenuActionSpec(
                 _build_voice_chime_toggle, _callback_available("on_toggle_voice_chime")
             ),
-            "festival_now": MenuActionSpec(
-                _build_festival_now, _callback_available("on_festival_now")
-            ),
-            "festival_toggle": MenuActionSpec(
-                _build_festival_toggle, _callback_available("on_toggle_festival")
-            ),
-            "divination_draw": MenuActionSpec(
-                _build_divination_draw, _callback_available("on_divination_draw")
-            ),
             # 天气：回调缺失 = 能力不可用（隐藏）；开关关掉 = 运行时置灰、位置保留
             # （CONTEXT.md 的 Capability Unavailable / Runtime Disabled 口径）。
-            "weather": MenuActionSpec(
-                add_show_weather,
-                _callback_available("on_show_weather"),
-                enabled=_weather_enabled,
-                disabled_reason=_WEATHER_DISABLED_REASON,
-            ),
-            "weather_cities": MenuActionSpec(
-                add_weather_cities,
-                _callback_available("on_show_weather"),
-                enabled=_weather_enabled,
-                disabled_reason=_WEATHER_DISABLED_REASON,
-            ),
             "network_info": MenuActionSpec(
                 add_network_info,
                 _callback_available("on_network_info"),
