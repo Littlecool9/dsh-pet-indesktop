@@ -10,8 +10,7 @@ deleted``，pytest 按 unraisable 判败（单独跑绿、全量红）。同一�
 成立：``overlay_shell`` 屏热插拔重建 overlay 窗时，在途帧交付打到旧窗。
 
 手法：``shiboken6.delete(obj)`` 同步销毁 C++ 侧、Python 包装器留下 —— 等价于
-「窗口已销毁但回调仍被持有」（tests/test_menu_layout.py、test_music_player_cache.py
-同款），不需要赌时序，也不启动真实 QTimer。
+「窗口已销毁但回调仍被持有」（tests/test_menu_layout.py 同款），不需要赌时序，也不启动真实 QTimer。
 """
 from __future__ import annotations
 

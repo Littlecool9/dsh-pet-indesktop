@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QV
 import pytest
 
 import pet.modern_settings_dialog as settings_mod
-from pet import settings_music, settings_page_guide
+from pet import settings_page_guide
 from pet.config import Config
 from pet.modern_settings_dialog import ModernSettingsDialog, SettingRow, SettingsSection
 from pet.settings_widgets import CollapsibleGroup, SettingsTabContainer
@@ -766,7 +766,7 @@ def test_anchor_bar_holds_across_jump_resize_and_domain_navigation(tmp_path, mon
 
 # ------------------------------------------------------- 页内标签域：整块内容的判据
 #: 页内标签域那条带用哪个标签页量：桌宠／动作与碰撞 6 个区，三平台都够
-#: （同域的 ``display_music`` 只有 3 个区，跳转条恒藏，量不出带；见
+#: （同域的 ``display`` 只有 1 个区，跳转条恒藏，量不出带；见
 #: ``test_anchor_bar_rebuilds_when_the_in_page_tab_changes``）。
 TAB_BAND_DOMAIN = "桌宠"
 TAB_BAND_KEY = "motion_collision"
@@ -853,9 +853,9 @@ def test_tab_page_bar_counts_the_tab_layer_not_just_the_page(tmp_path, monkeypat
             assert _visibility_history(bar) == [False] * 10, "稳定态不许来回翻"
 
             # 换标签：门槛按该标签重算，答案不许跟着上一个标签走。
-            tabs.setCurrentKey("display_music")
+            tabs.setCurrentKey("display")
             _settle(4)
-            assert bar.isHidden() is True, "只有 3 个区的标签页不摆跳转条"
+            assert bar.isHidden() is True, "只有 1 个区的标签页不摆跳转条"
             tabs.setCurrentKey(TAB_BAND_KEY)
             _settle(4)
             assert bar.isHidden() is False, "换回 6 个区的标签页要回来"
@@ -1139,12 +1139,11 @@ def test_anchor_bar_rebuilds_when_the_in_page_tab_changes(tmp_path, monkeypatch)
         app.processEvents()
         page, bar = _select(dialog, "桌宠")
         tabs = page.findChild(SettingsTabContainer)
-        assert tabs.keys() == ("display_music", "motion_collision")
+        assert tabs.keys() == ("display", "motion_collision")
 
-        assert tabs.currentKey() == "display_music"
-        assert [chip.text() for chip in _chips(bar)] == [
-            "显示", "音乐关联", settings_music.advanced_group_title(dialog)]
-        assert bar.isHidden() is True, "「显示与音乐」只有 3 个区"
+        assert tabs.currentKey() == "display"
+        assert [chip.text() for chip in _chips(bar)] == ["显示"]
+        assert bar.isHidden() is True, "「显示」只有 1 个区"
 
         tabs.setCurrentKey("motion_collision")
         app.processEvents()
@@ -1152,10 +1151,10 @@ def test_anchor_bar_rebuilds_when_the_in_page_tab_changes(tmp_path, monkeypatch)
         assert [chip.text() for chip in _chips(bar)] == [
             "动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼", "多开碰撞", "碰撞参数（高级）"]
 
-        tabs.setCurrentKey("display_music")
+        tabs.setCurrentKey("display")
         app.processEvents()
         assert bar.isHidden() is True
-        assert len(_chips(bar)) == 3
+        assert len(_chips(bar)) == 1
     finally:
         dialog.close()
 
@@ -1192,16 +1191,12 @@ def _titles_absent_on_this_platform(dialog) -> set[str]:
     三处平台闸门，都由实际构造结果回答：
 
     - 主动识屏整页只在 Windows 构造 ⇒ 它的四组在本平台不存在；
-    - 播放器高级组在「标题格式」行不存在时退化成不提标题格式的组名
-      （``settings_music.advanced_group_title``），另一个组名才是本平台的；
     - 「直播捕获（高级）」装的「直播捕获兼容」只在 Windows 建（可枚举的窗口是
       Windows 专属），整组在本平台不存在。
     """
     absent = set()
     if not _has_proactive(dialog):
         absent |= _PROACTIVE_TITLES
-    player_titles = {settings_music.PLAYER_GROUP_TITLE, settings_music.PLAYER_GROUP_TITLE_NO_FOOBAR}
-    absent |= player_titles - {settings_music.advanced_group_title(dialog)}
     if sys.platform != "win32":
         absent.add("直播捕获（高级）")
     return absent

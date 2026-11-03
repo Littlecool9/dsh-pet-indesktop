@@ -10,7 +10,6 @@ keyring>=25
 # 失配时会静默丢，症状（凭据只活在写它的进程内存里、界面仍显示"已保存"）用户侧看不见。
 pywin32-ctypes>=0.2.0; platform_system == "Windows"
 certifi>=2024.0.0
-pycaw>=0.0.13; platform_system == "Windows"
 tzdata>=2024.1
 
 # 语音报时（pet/voice_chime_service.py）的在线 TTS：edge-tts 走微软免费在线
@@ -20,33 +19,8 @@ tzdata>=2024.1
 # 存在动态导入，PyInstaller 静态分析收不全）。
 edge-tts>=7.3.1,<8
 
-# —— 歌词显示（可选）——
-# 「显示歌词」功能靠 Windows 系统媒体控制（SMTC）读取当前播放的曲目。
-# 不装不影响桌宠本体：歌词能力探测返回不可用，
-# 设置页的歌词开关置灰并说明原因，其余功能一切照旧。
-# 打包侧无需登记 hiddenimports：winrt 子模块由静态 import 连带收集（旧注释
-# 「必须登记，否则漏收」与实测矛盾，已删；复验证据见下面 winrt-Windows.Media 条）。
-winrt-Windows.Media.Control>=3.0; platform_system == "Windows"
-winrt-Windows.Foundation>=3.0; platform_system == "Windows"
-winrt-Windows.Foundation.Collections>=3.0; platform_system == "Windows"
-winrt-Windows.Storage.Streams>=3.0; platform_system == "Windows"
-# 媒体类型（音乐/视频）判定用：playback_type 的返回类型是
-# Windows.Media.MediaPlaybackType，定义它的枚举宿主包就是这一条。缺了它，
-# 访问 playback_type 会抛 AttributeError（本机未装该包时实测的正是这个错），
-# 于是"视频不当歌"静默退化成 Unknown（放行）——所以它是运行时依赖。
-#
-# 打包侧**无需新增 hiddenimports/collect**（2026-10 实测，PyInstaller 6.22.2）：
-# 只 static import winrt.windows.media.control 的冻结构建，产物里照样带上了
-# winrt/windows/media/__init__.py，frozen 程序读出的是
-# <MediaPlaybackType.MUSIC: 1>；本包此前也从未在任何构建脚本里登记过。
-winrt-Windows.Media>=3.0; platform_system == "Windows"
-
-# 歌词显示用它的「播放器进程在不在」判断来**避开 SMTC 的永久阻塞**
-# （见 pet/now_playing.py::player_process_running：进程不在就直接启动播放器、
-# 不碰 WinRT）。缺失时该判断按设计放行（宁可多试一次也不误伤），但这恰恰
-# 意味着 SMTC 卡住的那条路照旧会走——所以它是**运行时依赖**，必须在这里声明、
-# 并在三个构建脚本里 collect，否则打包版拿不到它，「避开阻塞」等于没生效。
-# 纯 Python、静态 import，PyInstaller 静态分析即可收集。
+# 开发/验证脚本（scripts/verify_focus_mode.py）用 psutil 枚举进程；纯 Python、
+# 静态 import，PyInstaller 静态分析即可收集。
 psutil>=5.9
 
 # —— 快速识屏：本地 OCR（pet/screen_capture/ocr.py + ocr_worker.py）——

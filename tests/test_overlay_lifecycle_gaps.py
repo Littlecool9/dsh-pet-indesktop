@@ -178,7 +178,7 @@ def test_stop_releases_spawned_libraries_and_inflight_provisions(tmp_path):
 
 # ---------------------------------------------------------------- 缺陷 13/14：退出收口
 def _raiser(message):
-    """必抛的收口步骤替身（模拟 shutdown_music_lyric 在半销毁环境抛错）。"""
+    """必抛的收口步骤替身（模拟退出收口在半销毁环境抛错）。"""
     def _boom():
         raise RuntimeError(message)
     return _boom
@@ -210,15 +210,14 @@ class _RecordingClip:
 def test_about_to_quit_runs_mandatory_steps_when_earlier_step_raises(tmp_path):
     """前置步骤抛错不得让位置持久化与在飞供给取消被整体跳过。
 
-    缺陷 13：``_on_about_to_quit`` 原是一条裸调用链——``shutdown_music_lyric``
-    （内部是无守卫的 ``timer.stop()``）/ ``bridge.close()`` / ``overlay.stop()``
-    任一抛错，排在后面的 ``save_position`` / ``save_spawned_positions`` /
+    缺陷 13：``_on_about_to_quit`` 原是一条裸调用链——``_close_quick_chat`` /
+    ``bridge.close()`` / ``overlay.stop()`` 任一抛错，排在后面的 ``save_position`` / ``save_spawned_positions`` /
     ``_cancel_frameseq_provisions`` 全部不执行：位置不落盘，在飞帧序列供给线程
     没人取消（库随壳析构活 QThread = Qt fatal）。
     """
     shell, _lib = _make_persistent_shell(tmp_path)
     calls = _record_mandatory_steps(shell)
-    shell.shutdown_music_lyric = _raiser("歌词收尾失败")
+    shell._close_quick_chat = _raiser("快速对话收尾失败")
     try:
         shell._on_about_to_quit()
 
@@ -272,7 +271,7 @@ def test_stop_still_releases_libraries_when_earlier_step_raises(tmp_path):
     shell.spawn_pet()
     child_lib = shell._spawned_libs[shell._spawned[0]]
     calls = _record_mandatory_steps(shell)
-    shell.shutdown_music_lyric = _raiser("歌词收尾失败")
+    shell._close_quick_chat = _raiser("快速对话收尾失败")
     try:
         shell.stop()
 

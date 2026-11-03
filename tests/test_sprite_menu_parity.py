@@ -15,14 +15,13 @@
 
 覆盖：
 1. overlay 树 ≡ build_modern_menu(PetWindow)（注册表 + 用户编排 + 图标分组）；
-2. 显式清单：用户点名的缺失条目（AI 对话/黄金回旋/显示本轮消费/音乐子菜单/
+2. 显式清单：用户点名的缺失条目（AI 对话/黄金回旋/显示本轮消费/
    边缘探头/大小/DeepSeek Harness/主动识屏/Agent 联动/
    网络信息）逐项在树里；
 3. 无聊天变体：聊天门条目在两侧一起消失；
-4. 音乐服务不可达 → 整组隐藏；
-5. 点击路由：每项落到窗口侧同一服务方法（等价性见 sprite_menu_facade 的
+4. 点击路由：每项落到窗口侧同一服务方法（等价性见 sprite_menu_facade 的
    方法 docstring）；
-6. close_on_trigger 命令在菜单关闭后必须派发（overlay 此前整类静默失效）。
+5. close_on_trigger 命令在菜单关闭后必须派发（overlay 此前整类静默失效）。
 
 纪律：offscreen；同步直调，不 sleep 赌时序。
 """
@@ -74,7 +73,6 @@ REQUIRED_LABELS = (
     "AI 对话",
     "黄金回旋",
     "显示本轮消费",
-    "音乐",
     "边缘探头",
     "大小",
     "DeepSeek Harness",
@@ -82,15 +80,6 @@ REQUIRED_LABELS = (
     "Agent 联动",
     "网络信息",
     "桌宠设置",
-)
-MUSIC_LABELS = (
-    "让人家歇一会儿嘛（暂停 / 播放）",
-    "给主人换一首（切歌）",
-    "人家想再听刚才那首（上一首）",
-    "人家今天不唱了（退出音乐模式）",
-    "歌词对齐",
-    "打开网易云音乐给主人放歌",
-    "打开QQ音乐给主人放歌",
 )
 CHAT_GATED_LABELS = ("AI 对话", "看看屏幕", "主动识屏", "DeepSeek 余额")
 # Windows 专有项：主动识屏 v1 依赖 win32 前台窗口/截屏能力（vision.py /
@@ -105,7 +94,7 @@ class _StubAppShell:
     """AppShell 服务面替身：只记调用（真实路由目标见 facade 方法 docstring）。
 
     刻意**不**用 ``__getattr__`` 兜底：兜底会让任意属性探测都"可调用"，
-    把宿主判定（``install_music_lyric`` 之类）伪装成存在。
+    把宿主能力判定伪装成存在。
     """
 
     def __init__(self) -> None:
@@ -321,10 +310,7 @@ def test_menu_is_grouped_under_submenus(tmp_path):
 
 # ---------------------------------------------------------------- 2. 显式清单
 def test_required_entries_all_present(tmp_path):
-    # 歌词四件套按 `music_lyric_enabled` 门控（注册表 available 过滤，默认关）：
-    # 要断言完整音乐子菜单就得把功能打开，与 test_menu_layout 同口径。
-    shell, _instance, _config = _make_overlay(
-        tmp_path, values={"music_lyric_enabled": True})
+    shell, _instance, _config = _make_overlay(tmp_path)
     try:
         menu = build_sprite_full_menu(shell)
         labels = _all_labels(menu)
@@ -340,11 +326,6 @@ def test_required_entries_all_present(tmp_path):
         # 顶层的补位条目），与窗口侧同一棵树
         controls = _find(menu, "桌宠控制").menu()
         assert _find(controls, "隐藏桌宠") is not None
-        music = _find(menu, "音乐").menu()
-        assert music is not None
-        music_labels = [a.text() for a in music.actions() if not a.isSeparator()]
-        for label in MUSIC_LABELS:
-            assert label in music_labels, f"音乐子菜单缺项：{label}"
     finally:
         shell._delete_runtime_marker()
 
@@ -371,64 +352,12 @@ def test_ai_settings_stays_merged_into_pet_settings_entry(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_music_menu_lyric_align_availability_matches_the_registry(tmp_path):
-    """音乐子菜单装有「歌词对齐」，且可用性语义与新版注册表逐点一致。
-
-    引导文案（首首无进度歌曲的一次性提示、设置页「显示歌词」行）都写着「用右键
-    菜单『音乐 → 歌词对齐』校正」；注册表里有 ``music_lyric_align``，共享建造器
-    必须同判据，否则用户按提示去找的那一项点了没反应。
-    """
-    from PySide6.QtWidgets import QMenu
-
-    from pet.context_menus.registry import MENU_ACTIONS
-    from pet.context_menus.shared import MUSIC_ALIGN_DISABLED_REASON, add_music_lyric_align
-    from pet.music_lyric import LyricLine
-    from pet.music_lyric_controller import MusicLyricController
-
-    config = Config(base=tmp_path)
-    config.set("music_lyric_enabled", True)
-    win = _reference_window(config)
-    menus = []  # 保活根菜单：QMenu 无父时被 GC 会连带删除其 action
-    try:
-        def _align_action():
-            menu = QMenu()
-            menus.append(menu)
-            build_modern_menu(menu, win)
-            music = next(a.menu() for a in menu.actions() if a.text() == "音乐")
-            return next(a for a in music.actions() if a.text() == "歌词对齐")
-
-        action = _align_action()
-        entries = [a.text() for a in action.menu().actions() if not a.isSeparator()]
-        assert entries == [
-            "回到开头（现在这句算开头）", "上一句", "下一句", "后退 5 秒", "前进 5 秒",
-        ], entries
-        # 没有控制器：置灰 + 写明原因（点了没反应是反模式），与注册表判定一致
-        assert action.isEnabled() is ("music_lyric_align" in MENU_ACTIONS.enabled_ids(win))
-        assert action.isEnabled() is False
-        assert action.toolTip() == MUSIC_ALIGN_DISABLED_REASON
-
-        # 位置靠本地时钟估算（网易云这类）→ 菜单可用；与注册表同判据
-        ctrl = MusicLyricController(win)
-        ctrl._title_line = "我在唱《t》"
-        ctrl._tracker.load([LyricLine(0.0, "第一句")], now=time.monotonic(),
-                           position=None)
-        win._music_lyric = ctrl
-        assert ctrl.align_available() is True
-
-        action = _align_action()
-        assert action.isEnabled() is True
-        assert action.isEnabled() is ("music_lyric_align" in MENU_ACTIONS.enabled_ids(win))
-        assert add_music_lyric_align is not None   # 共享建造器仍是唯一实现
-    finally:
-        win.close()
-
-
 def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
     shell, _instance, _config = _make_overlay(tmp_path)
     try:
         menu = build_sprite_full_menu(shell)
         labels = _all_labels(menu)
-        for label in ("AI 对话", "播放动画", "切换角色", "播放速率", "大小", "音乐",
+        for label in ("AI 对话", "播放动画", "切换角色", "播放速率", "大小",
                       "拖动物理", "边缘探头", "黄金回旋", "显示本轮消费", "桌宠设置"):
             assert label in labels, f"modern 树缺项：{label}"
         controls = _find(menu, "桌宠控制").menu()
@@ -438,32 +367,6 @@ def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
             assert _find(tools, label) is not None
     finally:
         shell._delete_runtime_marker()
-
-
-def test_music_submenu_offers_every_player_a_launch_entry(tmp_path):
-    """overlay 侧音乐子菜单给每个播放器一条「打开…给主人放歌」入口。
-
-    酷狗 / 汽水是后补的（此前只有网易云 / QQ音乐）：入口少了就是"用户按名字找不到
-    那个能放歌的项"。文案按 ``music_players`` 注册表逐键核对，不手抄标签（避免与
-    注册表漂移，也让四个键的映射抄错时立刻红）；窗口侧同一棵树由
-    ``test_menu_tree_matches_reference_petwindow`` 的逐项包含 + 兄弟顺序保证同源。
-    """
-    from pet import music_players
-
-    shell, _instance, _config = _make_overlay(
-        tmp_path, values={"music_lyric_enabled": True})
-    try:
-        music = _find(build_sprite_full_menu(shell), "音乐").menu()
-        assert music is not None
-        labels = [a.text() for a in music.actions() if not a.isSeparator()]
-    finally:
-        shell._delete_runtime_marker()
-
-    for key in ("netease", "qqmusic", "kugou", "soda"):
-        expected = f"打开{music_players.player_label(key)}给主人放歌"
-        assert expected in labels, f"音乐子菜单缺 {key} 的启动入口：{labels}"
-    launch = [text for text in labels if text.startswith("打开")]
-    assert len(launch) == len(set(launch)) == 4, f"启动入口重复或数量不对：{launch}"
 
 
 def test_harness_launcher_gets_widget_dialog_parent(tmp_path, monkeypatch):
@@ -541,31 +444,6 @@ def test_network_info_entry_enabled_by_default(tmp_path):
         action = _find_anywhere(build_sprite_full_menu(shell), "网络信息")
         assert action is not None and action.isEnabled() is True
     finally:
-        shell._delete_runtime_marker()
-
-
-# ---------------------------------------------------------------- 4. 音乐服务门
-def test_music_group_hidden_when_service_unavailable(tmp_path, monkeypatch):
-    shell, _instance, _config = _make_overlay(tmp_path)
-    try:
-        assert "音乐" in _all_labels(build_sprite_full_menu(shell))
-        monkeypatch.setattr(SpriteMenuFacade, "_music_host", lambda self: None)
-        assert "音乐" not in _all_labels(build_sprite_full_menu(shell))
-    finally:
-        shell._delete_runtime_marker()
-
-
-def test_music_service_host_is_the_overlay_shell(tmp_path):
-    shell, _instance, _config = _make_overlay(tmp_path)
-    try:
-        facade = SpriteMenuFacade(shell)
-        assert facade.music_service_available is True
-        controller = facade.install_music_lyric()
-        assert controller is shell._music_lyric
-        assert shell.install_music_lyric() is controller      # 幂等
-        assert facade._music_lyric is controller
-    finally:
-        shell.shutdown_music_lyric()
         shell._delete_runtime_marker()
 
 
@@ -913,19 +791,5 @@ def test_look_screen_throttles_and_syncs_reply(tmp_path, monkeypatch):
         # 冷却期：不重复起线程
         shell.look_at_screen()
         assert len(started) == 1
-    finally:
-        shell._delete_runtime_marker()
-
-
-def test_music_lyric_host_degrades_without_config(tmp_path):
-    """歌词宿主默认不装（配置关）→ 不起轮询线程；开启后可幂等装上。"""
-    shell, _instance, config = _make_overlay(tmp_path)
-    try:
-        shell.sync_music_lyric()
-        assert shell._music_lyric is None
-        config.set("music_lyric_enabled", True)
-        shell.sync_music_lyric()
-        assert shell._music_lyric is not None
-        shell.shutdown_music_lyric()
     finally:
         shell._delete_runtime_marker()

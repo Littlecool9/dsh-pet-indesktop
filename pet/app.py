@@ -397,38 +397,6 @@ def _read_spawn_offset_env() -> int:
         return 0
 
 
-# 播放器路径预热的错峰延迟：排在动画预热之后，避开多开启动期的 IO 洪峰。
-_MUSIC_PLAYER_WARM_DELAY_MS = 2500
-
-
-def _warm_music_player_paths() -> None:
-    """后台线程暖音乐播放器路径缓存（幂等，可重复调用）。
-
-    右键菜单「打开某播放器给主人放歌」的 builder 在 GUI 线程只读缓存（冷缓存
-    时乐观启用）：真正的目录浅扫在这里的 daemon 线程里做，否则冷缓存下首次开
-    菜单要在 MainThread 上扫 6s+。
-
-    **启动只预热下面这两键**（``netease`` / ``qqmusic``）：注册表后补的酷狗、
-    汽水不在启动预热点里，它们的缓存由首次构建音乐子菜单时的幂等预热（或设置页
-    「自动检测」）补齐——菜单条目不因此置灰（冷缓存一样乐观启用），只是那一次
-    扫描发生在打开菜单之后。四条串行浅扫在本机要二十多秒，压在启动路径上会拖慢
-    首屏。这条口径由 ``tests/test_music_player_cache.py`` 的
-    ``test_ui_ready_prewarm_schedules_music_player_cache_warm`` 钉住。
-    """
-    from . import music_players
-
-    for player_key in ("netease", "qqmusic"):
-        music_players.warm_cache_async(player_key)
-
-
-def _schedule_music_player_warm() -> None:
-    """UI 就绪后统一预热点的一环：延迟几秒再后台暖播放器路径缓存。
-
-    用单次 QTimer 错峰，**不阻塞任何线程**（这里只是登记一个延迟任务）。
-    """
-    QTimer.singleShot(_MUSIC_PLAYER_WARM_DELAY_MS, _warm_music_player_paths)
-
-
 class PetInstance:
     """每窗容器 —— config/lib/win/聊天窗/设置窗/气泡与全部窗口级操作。
 
@@ -499,8 +467,6 @@ class PetInstance:
         lib.schedule_low_priority_warm()
         # 首跑帧序列自动供给（B 档）：延迟 5s 后台低优转热集，静默 no-op 兜底
         getattr(lib, 'maybe_provision_frameseq', lambda: None)()
-        # 同批低优先级预热：播放器路径缓存（右键菜单只读缓存，冷缓存时后台先扫）。
-        _schedule_music_player_warm()
         logging.info('素材加载完成：%s %d 段动画', character_id, len(lib.names()))
         return lib
 

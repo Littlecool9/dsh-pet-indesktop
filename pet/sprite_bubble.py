@@ -204,8 +204,7 @@ class SpriteBubbleFollower:
         return self.show(text, duration_ms, subtitle=subtitle)
 
     def show(self, text: str, duration_ms: int = 3200, *, subtitle: str = "",
-             sticky: bool = False, buttons: list | None = None,
-             title_first: bool = False, width_locked: bool = False) -> bool:
+             sticky: bool = False, buttons: list | None = None) -> bool:
         """按 ``PetWindow.show_bubble`` 的形参面呈现一句气泡。
 
         ``sticky`` / ``buttons`` 原样透传给 ``PetSpeechBubble.show_text``——
@@ -221,8 +220,6 @@ class SpriteBubbleFollower:
                 subtitle=str(subtitle or ""),
                 sticky=bool(sticky),
                 buttons=list(buttons) if buttons else None,
-                title_first=bool(title_first),
-                width_locked=bool(width_locked),
                 pet_scale=getattr(self._sprite, "scale", None))
             return True
         except Exception:

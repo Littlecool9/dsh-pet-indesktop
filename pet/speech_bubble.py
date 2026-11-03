@@ -50,7 +50,6 @@ from .speech_bubble_text import (
     BUBBLE_TEXT_SCALE_MAX,
     BUBBLE_TEXT_SCALE_MIN,
     BUBBLE_TEXT_SLACK,
-    BUBBLE_TITLE_FONT_PX,
     PAGE_DWELL_MAX_MS,
     PAGE_DWELL_MIN_MS,
     PAGE_FADE_IN_MS,
@@ -109,11 +108,6 @@ __all__ = [
     "truncate_bubble_text",
     "PetSpeechBubble",
 ]
-
-# 标题优先气泡（歌词）在"同一次显示"期间把宽度锁在整栏宽。
-# 原因：气泡定位是按当前尺寸居中算的，歌词每句长短不同 → 宽度变 →
-# 左边跟着跳（实测 200px 与 264px 相差 32px）。锁宽后位置不再抖。
-TITLE_FIRST_COLUMN = BUBBLE_TEXT_COLUMN
 
 # 交互按钮行里除 ``(label, callback)`` 按钮外的结构化行标记：
 # - (SECTION_HEADER_LABEL, text) —— 分支/小节标题（独占一行、加粗）
@@ -433,18 +427,6 @@ class PetSpeechBubble(QFrame):
         # 多行模式：保留调用方写好的换行（如"标题一行 + 内容一行"）。
         # 由 show_text 的 subtitle 是否有内容推导，避免为它增加公开参数。
         self._multi_line = False
-        # 标题优先模式：标题放在最上方且与正文同字号（歌词气泡用）。
-        self._title_first = False
-        # 本次显示是否已经锁过宽度（同一首歌的后续刷新沿用同一宽度）。
-        self._width_locked = False
-        # 锁宽时真正沿用的列宽：在「同首歌第一句」（未锁宽的 title_first
-        # 显示）时记下，后续锁宽句复用。不逐句重算——否则每换一句歌词
-        # 气泡宽度就变一次，视觉上一直在跳。
-        self._locked_column: int | None = None
-        # 与锁宽配套的锁高（行数）：换句时歌词 1 行/2 行反复横跳会让气泡
-        # 顶边一跳一跳（底边锚着鱼头顶，高度一变顶边就动）。行数只单向
-        # 往大涨，涨过一次就稳在那，整首歌不再随句子长短上下伸缩。
-        self._locked_lines: int | None = None
         self._source_pixmap = QPixmap()
         self._pet_scale: float | None = None
         self._image_scale: float = 1.0
@@ -508,7 +490,7 @@ class PetSpeechBubble(QFrame):
         self._subtitle_label.setStyleSheet(
             "QLabel#pet-speech-subtitle { background: transparent; border: none; padding: 0; "
             f"color: {self._preset['foreground']}; "
-            f"font-size: {scale_bubble_font_px(BUBBLE_TITLE_FONT_PX if self._title_first else BUBBLE_SUBTITLE_FONT_PX, self._text_scale)}px; }}"
+            f"font-size: {scale_bubble_font_px(BUBBLE_SUBTITLE_FONT_PX, self._text_scale)}px; }}"
         )
         self._subtitle_label.setMaximumWidth(self._subtitle_width_floor())
         self._page_indicator.setStyleSheet(
@@ -700,8 +682,8 @@ class PetSpeechBubble(QFrame):
         self._subtitle_label.setContentsMargins(left, 0, right, 0)
         self._sync_subtitle_max_width(label_width)
         self._subtitle_label.ensurePolished()
-        # 标题态（歌词歌名）会关掉 wordWrap，此时 heightForWidth 返回 -1，
-        # 退回 sizeHint：不能让「-1」把副标题的预留高度算成 0。
+        # heightForWidth 在 wordWrap 关闭时返回 -1，退回 sizeHint：不能让
+        # 「-1」把副标题的预留高度算成 0。
         sub_height = self._subtitle_label.heightForWidth(max(1, label_width))
         if sub_height < 0:
             sub_height = self._subtitle_label.sizeHint().height()
@@ -871,12 +853,8 @@ class PetSpeechBubble(QFrame):
         subtitle: str = "",
         sticky: bool = False,
         buttons: list[tuple[str, object]] | None = None,
-        title_first: bool = False,
-        width_locked: bool = False,
     ) -> None:
         """显示文本气泡。
-        ``title_first`` 会把 ``subtitle`` 放到正文上方并使用正文字号——
-        用于"歌名 + 歌词"这类以标题为主的场景；默认仍是副标题样式。
 
         ``sticky=True`` 时不启动自动隐藏定时器，气泡一直停留直到上层调用
         :meth:`dismiss`（用于「审批一直挂着直到审批结束」这类需要主动关闭的气泡）。
@@ -901,8 +879,6 @@ class PetSpeechBubble(QFrame):
         # 带 subtitle 的气泡是"标题 + 内容"结构，正文里可能自带换行，
         # 必须保留（否则标题与首行会被折行拼接）。
         self._multi_line = bool(str(subtitle or "").strip())
-        self._title_first = bool(title_first)
-        self._width_locked = bool(width_locked) and self._title_first
         self._source_pixmap = QPixmap()
         self._pet_scale = pet_scale
         self._reset_paging()
@@ -910,34 +886,8 @@ class PetSpeechBubble(QFrame):
         if subtitle:
             self._subtitle_label.setText(subtitle)
             self._subtitle_label.show()
-            if self._title_first:
-                # 标题态：标题在上、字号 11px（比歌词略小，但仍是一行主角）。
-                # 两者都按「气泡文字大小」系数缩放（度量从 label.font() 读回，
-                # 与绘制同源，放大后不会切字）。
-                self.label.setStyleSheet(
-                    "QLabel#pet-speech-label { background: transparent; border: none; "
-                    f"padding: 0; color: {self._preset['foreground']}; "
-                    f"font-size: {scale_bubble_font_px(BUBBLE_BODY_FONT_PX, self._text_scale)}px; }}"
-                )
-                self._subtitle_label.setStyleSheet(
-                    "QLabel#pet-speech-subtitle { background: transparent; border: none; "
-                    f"padding: 0; color: {self._preset['foreground']}; "
-                    f"font-size: {scale_bubble_font_px(BUBBLE_TITLE_FONT_PX, self._text_scale)}px; }}"
-                )
-                # 短标题不换行：气泡宽度会被歌词带窄，若标题跟着折行就会断成
-                # 两行、很难看。先按实际字体量宽度——放得下就关掉换行（宁可让
-                # 气泡为标题让出宽度），真的超长才允许折行。
-                self._subtitle_label.ensurePolished()
-                title_metrics = QFontMetrics(self._subtitle_label.font())
-                width = title_metrics.horizontalAdvance(subtitle)
-                # 留出左右内边距（13px×2，随文字系数缩放）的余量再判断。
-                fit_width = bubble_column_for_text(subtitle, self._text_scale) - 26
-                self._subtitle_label.setWordWrap(width > fit_width)
-                self._layout.removeWidget(self._subtitle_label)
-                self._layout.insertWidget(0, self._subtitle_label)
-            else:
-                self._layout.removeWidget(self._subtitle_label)
-                self._layout.addWidget(self._subtitle_label)
+            self._layout.removeWidget(self._subtitle_label)
+            self._layout.addWidget(self._subtitle_label)
         else:
             self._subtitle_label.setText("")
             self._subtitle_label.hide()
@@ -968,7 +918,6 @@ class PetSpeechBubble(QFrame):
                              preserve_paging: bool = False) -> int:
         """Lay out existing text without replacing buttons or its dismissal timer."""
         text = self._raw_text
-        subtitle = self._subtitle_label.text().strip()
         pet_scale = self._pet_scale
         interactive = self._interactive_active
         self.label.ensurePolished()
@@ -989,20 +938,6 @@ class PetSpeechBubble(QFrame):
                 if interactive or sticky
                 else self._column_for_text(text, anchor_rect)
             )
-            if self._title_first:
-                if not self._width_locked or self._locked_column is None:
-                    # 未锁宽帧定列宽并记下，后续锁宽句复用——同首歌气泡宽度
-                    # 恒定，不逐句改宽。产品链路里这一帧通常是「取词中」的
-                    # 纯标题帧（歌词还没回来），所以实测列宽多为标题宽度；
-                    # 标题/正文取较长者只是兜底——首帧恰好已带歌词行时才用到。
-                    basis = text if len(text) >= len(subtitle) else subtitle
-                    self._locked_column = max(
-                        self._column_for_text(basis, anchor_rect),
-                        int(round(TITLE_FIRST_COLUMN * self._text_scale)),
-                    )
-                    # 重锁宽（新歌）时锁高一起作废，从新首句重新累计。
-                    self._locked_lines = None
-                column = self._locked_column
             # 长文本分页：每页不超过 bubble_max_lines 行，自动翻页直到全文展示完，
             # 底部显示圆点页码（● ○ ○）。每页停留按该页字数自适应，
             # 末页多压一拍回首页停顿，总时长相应扩展。
@@ -1036,28 +971,9 @@ class PetSpeechBubble(QFrame):
             self.label.setText(display_text)
             # 固定尺寸按真正会绘制的行计算（所有页里最长的一行 + 行数最多的一页），
             # 翻页后 wordWrap=False 也不会裁字；详见 bubble_label_size 的说明。
-            if self._title_first:
-                # 歌词气泡：列宽取第一句定下的值（上面 _locked_column 逻辑），
-                # 从标题出场到整首歌结束宽度恒定，不随句子长短伸缩。
-                # 高度同理锁行数：底边锚在鱼头顶，行数一变顶边就跳——所以
-                # 行数只单向往大涨（_locked_lines），涨到本首歌最胖的一句后
-                # 彻底稳定；短句不再把气泡顶边拉回来。
-                line_count = max(
-                    (len(page.split("\n")) for page in pages), default=1
-                )
-                if self._locked_lines is None or line_count > self._locked_lines:
-                    self._locked_lines = line_count
-                self.label.setFixedSize(
-                    bubble_label_size(
-                        metrics, pages, column, text_slack,
-                        min_width=int(round(TITLE_FIRST_COLUMN * self._text_scale)),
-                        min_height=self._locked_lines * metrics.lineSpacing() + 2,
-                    )
-                )
-            else:
-                self.label.setFixedSize(
-                    bubble_label_size(metrics, pages, column, text_slack)
-                )
+            self.label.setFixedSize(
+                bubble_label_size(metrics, pages, column, text_slack)
+            )
         # 副标题宽度上限对齐刚定下的气泡内宽（issue #216）：不这样做时 Qt 的
         # 定高口径（未夹取的宽）与布局/绘制口径（按上限夹取）会分叉，副标题多出
         # 一行、末行被自己的 label 裁掉。呼吸泡路径已在 _configure_breath_content
@@ -1423,7 +1339,7 @@ class PetSpeechBubble(QFrame):
     def _move_smooth(self, pos: QPoint) -> None:
         """移动到目标点：已显示时走 260ms 缓动滑动，未显示时直接落位。
 
-        歌词气泡每秒重放 / 锚点微修过去是瞬移，视觉上"一帧一帧跳"。
+        离散的锚点微修过去是瞬移，视觉上"一帧一帧跳"。
         改为滑动后：换句的细微修正变成缓慢的漂移（实测 120ms 偏快，
         260ms 才有"被轻轻推动"的慵懒感）。仅用于离散修正；连续跟随
         （拖动/游走）由 _place(animate=False) 直移，不经过这里。

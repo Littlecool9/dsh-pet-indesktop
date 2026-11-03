@@ -171,7 +171,6 @@ from .persona_template import (
 )
 from . import settings_default_marks
 from . import settings_interaction
-from . import settings_music
 from . import settings_network
 from . import settings_page_guide
 from . import settings_hotkeys
@@ -350,8 +349,6 @@ class ModernSettingsDialog(QDialog):
         root.addLayout(body, 1)
 
         self._build_pet_controls()
-        # 「音乐播放器路径」控件同样在本模块构建（行数预算原因），见 settings_music。
-        settings_music.create_music_player_controls(self)
         # 「随桌宠启动 dsh 服务」开关（origin/main #80 合入带回）：构建留在
         # 对话框本体（upstream 代码所在宿主），供下方 launch_rows 引用。
         self.harness_autostart_check = ToggleSwitch(self)
@@ -657,17 +654,6 @@ class ModernSettingsDialog(QDialog):
                     SettingRow("no_move", "不移动", "暂停桌宠在桌面上的自动移动。", self.no_move_check),
                     # 鼠标穿透行归「互动 · 输入」（settings_interaction 构建）。
                 ],
-                behavior_content,
-            )
-        )
-        behavior_layout.addWidget(
-            SettingsSection(
-                "音乐关联",
-                [
-                    SettingRow("music_sing", "音乐自动唱歌", "检测到后台播放音乐时，自动播放唱歌动画。", self.music_sing_check),
-                    SettingRow("music_lyric", "显示歌词", "在气泡里显示当前播放歌曲的歌词。仅 Windows 可用；需要播放器支持系统媒体控制（酷狗音乐需在其 设置 → 常规设置 → 播放 里开启「支持系统播放控件」）。歌词识别不依赖「音乐关联」里的路径——那里只影响右键「打开播放器」菜单。网易云音乐不上报播放进度，歌词按开始时间估算——快进或从中途开始播放后，用右键菜单「音乐 → 歌词对齐」校正。", self.music_lyric_check),
-                    SettingRow("music_lyric_lead", "歌词提前量", "歌词相对音频的时间偏移。正值让歌词抢先显示，负值让它延后；唱得比音乐早一点通常更自然。", self.music_lyric_lead_spin),
-                ] + settings_music.browser_media_rows(self) + settings_music.foobar_lyrics_rows(self),
                 behavior_content,
             )
         )
@@ -1739,23 +1725,17 @@ class ModernSettingsDialog(QDialog):
             "collision_impulse_cap",
             "collision_sound_volume",
         )
-        # 音乐关联的故障恢复参数（标题格式 + 播放器路径）另立高级组：组名直说用途。
-        # 组序裁定：高频组按使用频率递减（标签 1 内音乐关联第 2），高级组垫底其标签页。
-        music_advanced = (
-            claim("foobar_title_format") + settings_music.build_music_player_rows(self))
-        # 「桌宠」域（2026-10-08 第二刀）：域内是两个**互斥任务**——「它长什么样 /
-        # 唱不唱歌」与「它怎么动 / 怎么撞」，页内切成两个标签，首屏只管一个任务。
+        # 「桌宠」域（2026-10-08 第二刀）：域内是两个**互斥任务**——「它长什么样」
+        # 与「它怎么动 / 怎么撞」，页内切成两个标签，首屏只管一个任务。
         # 侧栏 10 域是外部契约（深链/搜索跳域语义不变）；搜索命中另一标签的行时由
         # _search_settings 的 activate_for_descendant 自动切标签。
         pet = SettingsTabContainer(self)
         pet.addTab(
-            "display_music",
-            "显示与音乐",
+            "display",
+            "显示",
             page_content(
                 [
                     ("显示", claim("scale", "bubble_text_scale", "pet_opacity")),
-                    ("音乐关联", claim("music_sing", "music_lyric", "music_lyric_lead", "music_browser_media", "foobar_lyrics")),
-                    (settings_music.advanced_group_title(self), music_advanced, True),
                 ]
             ),
         )
@@ -2224,16 +2204,8 @@ class ModernSettingsDialog(QDialog):
         self.config.set("self_talk_speak_enabled", self.click_self_talk_speak_check.isChecked())
         self.config.set("self_talk_voice_precache_enabled",
                         self.self_talk_voice_precache_check.isChecked())
-        self.config.set("music_sing_enabled", self.music_sing_check.isChecked())
-        if getattr(self, "music_lyric_check", None) is not None:
-            self.config.set("music_lyric_enabled", self.music_lyric_check.isChecked())
         if getattr(self, "agent_cost_check", None) is not None:
             self.config.set("agent_cost_enabled", self.agent_cost_check.isChecked())
-        if getattr(self, "music_lyric_lead_spin", None) is not None:
-            self.config.set(
-                "music_lyric_lead_seconds", float(self.music_lyric_lead_spin.value())
-            )
-        settings_music.save_source_settings(self)
         self.config.set("golden_spin_on_click", self.golden_spin_click_check.isChecked())
         self.config.set("golden_spin_direct", self.golden_spin_direct_check.isChecked())
         self.config.set("edge_probe_enabled", self.edge_probe_check.isChecked())
@@ -2336,7 +2308,6 @@ class ModernSettingsDialog(QDialog):
         if self.ai_page is not None:
             self.ai_page.save()
         settings_network.save_network_settings(self)
-        settings_music.save_music_player_settings(self)
         settings_quiet.save_quiet_settings(self)
         settings_focus.save_focus_settings(self)
         settings_hotkeys.save_hotkey_settings(self)

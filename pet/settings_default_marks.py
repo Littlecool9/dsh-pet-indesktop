@@ -4,7 +4,7 @@
 **为什么单独一个模块**：``modern_settings_dialog.py`` 的行数预算（``tests/
 test_architecture.py``）没有余量，而本功能的主体是一张「设置行 → Config 键路径」
 映射表加一组控件值适配器，与框体结构无关——按本仓库既有口径（settings_network /
-settings_quiet / settings_music / settings_reset_defaults
+settings_quiet / settings_reset_defaults
 都是同一个原因拆出来的）落在这里，对话框只留三行接线。
 
 口径（主代理裁决 + ``docs/SETTINGS-CHANGE-GATES.md``）：
@@ -100,10 +100,6 @@ _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
     # 桌宠
     "edge_probe": "edge_probe_enabled",
     "collision_sound_volume": ("collision_sound_volume", 100),
-    "music_sing": "music_sing_enabled",
-    "music_lyric": "music_lyric_enabled",
-    "music_browser_media": "music_browser_media_enabled",
-    "foobar_lyrics": "foobar_lyrics_enabled",
     # 常规
     "autostart": "autostart_wanted",
     "stream_capture": "stream_capture_mode",

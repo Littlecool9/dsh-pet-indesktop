@@ -305,7 +305,7 @@ def test_pet_window_bubble_anchor_prefers_stable_collision_bounds():
     """气泡锚点优先用碰撞稳定边界：同一段动画内恒定，不随单帧轮廓晃动。
 
     回归：气泡锚点曾取当前帧 alpha 轮廓（_mask_bounds），待机动画每帧
-    包围盒小幅晃动 → 歌词气泡每秒重放就跟着每秒跳一次（实机探针实测
+    包围盒小幅晃动 → 气泡每秒重放就跟着每秒跳一次（实机探针实测
     鱼静止时气泡每秒 ±10px 抖动、偶发 40px 候选位跳变）。
     """
     from PySide6.QtCore import QPoint, QRect, QSize

@@ -93,13 +93,10 @@ CLICK / TURN 是同源的**第四、五个例外**（共用 `_tail_done`）：�
 facing 翻转随之推迟到真正收口那一刻——旧架构这两条链本来就在真末帧收口
 （window.py:2652-2667 点击段、`_on_anim_ended` 的 turns 分支）。
 
-三处「画面归它、位置不归它」的接线也在本模块：① 唱歌续播（`_continue_sing`）
-——唱歌素材播完且壳报「音乐仍在放」时原地续播，绝不走 gap/掷骰链（旧机
-`_on_anim_ended` 的第一条分支）；判据来自可选的 `sing_continue_provider`
-（默认 None = 现状，音乐态归壳）；② 起飞预热（`_warm_landing_idles`）——进入
+两处「画面归它、位置不归它」的接线也在本模块：① 起飞预热（`_warm_landing_idles`）——进入
 THROWN 时后台预热全部 idle 首帧并打飞行期 `_ffr_landing_pinned`，落地/飞行被
 拖拽打断时按清单精确摘除（旧机 `_warm_landing_idles` / `_unpin_landing_idles`），
-同一飞行窗口内重复进入只提交一次（`warm_landing_submitted`）；③ 飞行边沿
+同一飞行窗口内重复进入只提交一次（`warm_landing_submitted`）；② 飞行边沿
 （`_sync_flight_edge`）——istate 进出 THROWN 的那一 tick 各回调一次可选的
 `on_flight_changed(sprite, flying)`（默认 None = 现状），消费方据此在飞行期
 禁气泡：行为层只报边沿，气泡语义归壳（`overlay_shell._bubble_blocked`）。
@@ -182,18 +179,6 @@ _IDLE_TAIL_GRACE_S = 0.5
 #: 这么久，绝不把决策链挂在等帧上。
 #: CLICK/TURN（`_tail_done`）同用 IDLE 这一档：它们同样是有限一次性素材、
 #: 圈末同样只差 2-4 帧，没有按缺口放大的理由。
-
-
-def _sing_anim_name() -> str:
-    """唱歌动画名（与旧架构同源常量，杜绝第二套字符串）。
-
-    惰性 import：``overlay_shell._sing_anim`` / ``window_alerts.check_music_sing``
-    都是 ``from .window import SING_ANIM`` 这一既定依赖面（本模块不 import
-    window，只在 ``sing_continue_provider`` 真被接线时才付一次模块查找——未开
-    音乐唱歌的进程不多付 ``pet.window`` 的导入）。
-    """
-    from .window import SING_ANIM
-    return SING_ANIM
 
 
 class _SpriteState:
@@ -320,12 +305,6 @@ class BehaviorController:
         self._predict_lead_s = 0.35
         # 预测预热总开关（config predict_prewarm_lead_ms>0 映射；测试可关）
         self.predict_enabled = True
-        # 唱歌续播判据（window.py:2595-2601 语义）：callable → bool，None = 未接线
-        # （默认即现状——唱歌 clip 播完照旧走掷骰链）。音乐态归壳（``_music_sing_active``
-        # 由 window_alerts 轮询维护），行为层不查音频，只问这一面。
-        # 壳侧接法（一行）：``self.behavior.sing_continue_provider = lambda:
-        # self._music_sing_active``
-        self.sing_continue_provider = None
         # 飞行边沿回调（B1，可选）：``callable(sprite, flying) -> None``，只在
         # istate 进出 ``INTERACTION_THROWN`` 的那一 tick 各调一次（首次接管、
         # 空中被抓住、落地、飞行中被移除都算边沿）。行为层只报边沿，气泡语义
@@ -513,8 +492,7 @@ class BehaviorController:
     def anim_of(self, sprite) -> str | None:
         """当前绑定的 clip 名（None = 尚未接管/未起播）。
 
-        只读访问器：调用方需要知道"这次点中了哪条 click 动画"（音乐唱歌判定、
-        点击反馈路由），而 ``on_sprite_clicked`` 的返回值是「是否消费点击」契约，
+        只读访问器：调用方需要知道"这次点中了哪条 click 动画"（点击反馈路由），而 ``on_sprite_clicked`` 的返回值是「是否消费点击」契约，
         不能挪用；故单开这一面，不改变点击语义。
         """
         st = self._states.get(sprite)
@@ -760,11 +738,8 @@ class BehaviorController:
             if st.elapsed >= st.duration:
                 # 到点 ≠ 末帧已上屏（F8）：先过末帧收口闸门再切下一个动画
                 if self._acts_tail_done(sprite, st, dt):
-                    # 唱歌素材刚播完且音乐仍在放 → 原地续播，绝不走 gap/掷骰
-                    # （旧机 `_on_anim_ended` 的第一条分支，window.py:2595-2601）
-                    if not self._continue_sing(sprite, st):
-                        if not self._start_animation_gap(sprite, st):
-                            self._roll_next(sprite, st)
+                    if not self._start_animation_gap(sprite, st):
+                        self._roll_next(sprite, st)
             else:
                 self._maybe_predict(sprite, st)
         elif st.state == STATE_CLICK:
@@ -1219,33 +1194,6 @@ class BehaviorController:
             return bool(allowed())
         except Exception:
             return True
-
-    # ---------------------------------------------------------------- 唱歌续播（N1）
-    def _continue_sing(self, sprite, st: _SpriteState) -> bool:
-        """唱歌素材播完且音乐仍在放 → 原地续播（window.py:2595-2601 语义）。
-
-        旧机 ``_on_anim_ended`` 的第一条分支：``name == SING_ANIM and
-        _music_sing_enabled and _music_sing_active`` → ``_switch(SING_ANIM)``，
-        绝不走掷骰链（"唱一句 → 切随机动作 → 再唱"就是把唱歌循环打碎了）。
-
-        音乐态归壳（``_music_sing_active`` 由 ``window_alerts`` 轮询维护），
-        行为层不查音频 COM，只问注入的 ``sing_continue_provider``（默认 None =
-        现状：照旧走 gap/掷骰链）。判据抛异常时按「不续播」处理——续唱是附加
-        能力，绝不反过来打断动画链。
-
-        返回 True = 已续播，调用方绝不再走 gap/掷骰。
-        """
-        provider = self.sing_continue_provider
-        if provider is None:
-            return False
-        try:
-            if st.anim != _sing_anim_name() or not provider():
-                return False
-        except Exception:
-            return False
-        self._enter_acts(sprite, st, self._categories(sprite.library),
-                         forced_name=st.anim)
-        return True
 
     # ---------------------------------------------------------------- 预测式预热
     def _make_predictor(self, sprite) -> PredictivePrewarm:

@@ -12,7 +12,7 @@
   预测只存动画名，不预提交移动计划/位置/朝向；gap 由窗口层 ``_animation_gap_active`` 守卫。
 - 预测记录单槽 ``{name, context_anim, gen}``。消费规则只有一条：context_anim
   与当前动画一致且代次未变（gap 期间另要求 gap 仍激活），不符即弃、现场掷骰
-  —— 退化为现状行为。点击/拖拽/联动/唱歌打断全部经「换掉 self.anim」自然
+  —— 退化为现状行为。点击/拖拽/联动打断全部经「换掉 self.anim」自然
   作废，不在各交互入口手动清状态。
 - 预热深度 = Phase 1 only：只调 MovieLibrary.warm_predicted（复用交互让路/
   隐藏暂停/幂等三重闸门），webm_clip.py 零改动；不预起 reader（Phase 2 挂起）。

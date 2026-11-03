@@ -3,9 +3,8 @@
 
 背景（2026-09-17 实机）：Windows 的系统代理（IE/WinINET 设置，`ProxyEnable=1`,
 `ProxyServer=127.0.0.1:33210`）被加速器/VPN 打开后如果那个进程没在跑，
-`urllib.request.urlopen` 仍会照着它走 ⇒ 所有请求 `ConnectionRefused`。歌词取词因此
-全军覆没（气泡只剩歌名，用户报"歌词显示一半就剩歌名"）；余额查询、识屏、AI 对话、
-更新检查同样会废掉。
+`urllib.request.urlopen` 仍会照着它走 ⇒ 所有请求 `ConnectionRefused`；余额查询、
+识屏、AI 对话、更新检查都会废掉。
 
 用法：把 `urllib.request.urlopen(req, timeout=…)` 换成
 `http_util.urlopen(req, timeout=…)` —— 先按系统代理试一次（尊重用户的加速器/VPN），
