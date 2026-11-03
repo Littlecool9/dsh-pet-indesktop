@@ -146,8 +146,9 @@ with the DSH port probe folded into the same thread), started by
 （`docs/PR-REPORT-*`）不再要求**，历史报告只作参考。测试门保留，但要快：
 
 - 任务内：ruff（`ruff check pet/ tests/`）+ 与改动相关的测试文件。
-- 阶段边界 / 合并进集成分支前：全量 pytest（并行，`-n auto`），失败的用例
-  再单进程复跑一次，区分真失败与并行时序抖动。
+- 阶段边界 / 合并进集成分支前：全量 pytest（并行，`-n 6`；本机 16GB 内存，
+  `-n 12` 时测试进程合计约 8GB、把系统挤到只剩 0.7GB 空闲，别用 `-n auto`），
+  失败的用例再单进程复跑一次，区分真失败与并行时序抖动。
 - 删除功能时，同时删掉只测试该功能的测试文件；不要为了让测试通过而
   保留死代码。
 - 写时序测试：涉及真实线程 / Qt 事件循环时一律事件同步（Event/Condition）
