@@ -105,22 +105,6 @@ def test_island_name_follows_the_slot_role(shell_with_slot_role):
     assert shell.island._character_name() == "third-role"
 
 
-def test_tray_character_check_follows_the_slot_role(shell_with_slot_role, monkeypatch):
-    """托盘「切换角色」勾选态标当前身份；素材只有随包一只时可注入第二只 id。"""
-    shell = shell_with_slot_role
-    monkeypatch.setattr(
-        catalog, "list_available_characters", lambda: ["shenshen", "other"])
-
-    tray = shell._build_tray(_TrayWin())
-    menu = tray.contextMenu()
-    assert menu is not None
-    char_menu = next(action.menu() for action in menu.actions()
-                     if action.text() == "切换角色" and action.menu() is not None)
-    checked = [action.text() for action in char_menu.actions() if action.isChecked()]
-
-    assert checked == ["other"]
-
-
 def test_proactive_pet_name_follows_the_slot_role(shell_with_slot_role):
     """主动识屏注入模型的宠物名同样是当前身份（共享 watcher 的 cfg 是全局面）。"""
     shell = shell_with_slot_role

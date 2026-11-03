@@ -336,9 +336,6 @@ def test_sub_pet_page_keeps_autostart_editable_with_its_scope_stated(tmp_path, m
     明确说明影响所有桌宠"——所以这里改的是判据与文案，不是把能力交出去。判据见
     `pet/settings_pet_controls.py`（tooltip / 行 hint）与
     `docs/SETTINGS-CHANGE-GATES.md` 的 2026-10-10 记录。
-
-    子宠页仍有一类真正置灰的行（直播捕获兼容——重启级拓扑输入、保存写 slot 文件而拓扑
-    判定只读主配置），它的契约在 `tests/test_stream_capture_copy.py` 里单独钉。
     """
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     cfg = Config(base=tmp_path, instance_id="slot-1")

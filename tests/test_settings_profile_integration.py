@@ -30,7 +30,6 @@ from pathlib import Path
 import pytest
 
 from pet import config_write_lock as cwl
-from pet import overlay_settings_command as cmd_mod
 from pet import pet_profiles
 from pet import settings_slot_config
 from pet.config import Config
@@ -60,8 +59,6 @@ if mode == "hold":
             time.sleep(0.01)
         print("RELEASING", flush=True)
 elif mode == "routed":
-    os.environ["PET_RENDER_TOPOLOGY"] = "overlay"
-    os.environ.pop("DSH_PET_PARENT_TOPOLOGY", None)
     os.environ.pop("DSH_PET_INSTANCE", None)
     from pet.config import Config
     from pet import settings_slot_config as ssc
@@ -164,17 +161,6 @@ def _spawn(mode: str, **env) -> _Child:
 
 def _child_reports(children) -> str:
     return "子进程 stderr: " + " | ".join(child.stderr[-400:] for child in children)
-
-
-@pytest.fixture(autouse=True)
-def _overlay_topology_env(monkeypatch):
-    """本文件测的是 overlay 拓扑下的 slot 身份路由（判定与磁盘/父进程陈述无关）。"""
-    monkeypatch.delenv(cmd_mod.ENV_TOPOLOGY, raising=False)
-    monkeypatch.delenv(cmd_mod.ENV_PARENT_TOPOLOGY, raising=False)
-    monkeypatch.delenv("DSH_PET_INSTANCE", raising=False)
-    cmd_mod.reset_topology_snapshot()
-    yield
-    cmd_mod.reset_topology_snapshot()
 
 
 def _main_config(tmp_path, **values) -> Config:
@@ -575,7 +561,7 @@ def test_routed_key_set_matches_the_profile_key_set():
 def test_geometry_write_does_not_freeze_the_slot_snapshot(tmp_path):
     """#304：运行期视图**自己**写下的几何，``reload()`` 之后不许被旧快照冻住。
 
-    现场：``@app.py _apply_legacy_profile`` 每次档案变动都会 ``reload()``。待写草稿
+    现场：档案变动会经 ``reload()`` 合并。待写草稿
     （这里是 ``window.change_scale`` 造出的 ``user_customized``）按「表单显示口径」让
     ``_invalidate_slot_snapshot`` 故意保留快照，而 ``save_geometry`` 是**直写档案**的
     旁路，写完不清草稿也不作废快照——于是 reload 也解不开那份旧快照，``get('scale')``

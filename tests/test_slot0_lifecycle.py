@@ -111,33 +111,6 @@ def test_spawn_failure_leaves_no_partial_sprite(tmp_path, monkeypatch):
     assert shell._spawned == []
 
 
-def test_capture_empty_zero_restores_only_zero(tmp_path, monkeypatch):
-    from pet.app import AppShell
-    from pet.config import Config
-    from tests.test_single_process_spawn import _FakeWindow
-    from pet import overlay_settings_command
-
-    cfg = Config(base=tmp_path, instance_id='')
-    profiles.write_profile_settings(cfg.dir, 0, {'character': 'shenshen', 'rx': 0.3})
-    profiles.save_active_set(cfg.dir, [1, 128])
-    monkeypatch.setenv('PET_RENDER_TOPOLOGY', 'legacy')
-    overlay_settings_command.reset_topology_snapshot()
-    shell = AppShell(app, cfg, enable_chat=False)
-    made = []
-    def create(character):
-        made.append(character)
-        shell.instance.win = _FakeWindow()
-        shell.instance.win.show_bubble = lambda *args, **kwargs: None
-    monkeypatch.setattr(shell, '_create_ui_with_character_fallback', create)
-    monkeypatch.setattr(shell, '_refresh_tray_menu', lambda: None)
-    assert shell.instance.win is None
-    shell.spawn_pet()
-    assert len(made) == 1
-    assert profiles.load_active_set(cfg.dir).slots == (1, 128, 0)
-    shell.spawn_pet()
-    assert len(made) == 1
-
-
 def test_slot_focus_does_not_activate_inactive_profile(tmp_path):
     shell, _ = _make_persistent_shell(tmp_path)
     shell.spawn_pet()
@@ -255,77 +228,6 @@ def test_no_tray_recovery_button_is_visible_and_restores(tmp_path, monkeypatch):
     assert shell._active_slots() == [0]
     shell._recovery_window.close()
 
-
-def test_legacy_profile_reset_keeps_body_anchor_and_reloads_role(tmp_path, monkeypatch):
-    from pet.app import AppShell
-    from pet.config import Config
-    from pet.window import PetWindow
-    from pet import window_placement
-    from tests.test_window_pause import FakeLibrary
-    monkeypatch.setenv('PET_RENDER_TOPOLOGY', 'legacy')
-    cfg = Config(base=tmp_path, instance_id='')
-    profiles.write_profile_settings(cfg.dir, 0, {'character': 'nova', 'scale': 0.5})
-    shell = AppShell(app, cfg, enable_chat=False)
-    win = PetWindow(FakeLibrary(), shell.instance.config)
-    win._profile_character = 'nova'
-    win.move(250, 200)
-    shell.instance.win = win
-    center = window_placement.virtual_pos(win) + win._stable_body_local_rect().center()
-    assert profiles.reset_slot_profile(cfg.dir, 0).ok
-    made = []
-    monkeypatch.setattr(shell.instance, '_create_library', lambda role: made.append(role) or FakeLibrary())
-    def build(role, lib=None):
-        new = PetWindow(lib, shell.instance.config)
-        shell.instance.win = new
-        return new
-    monkeypatch.setattr(shell.instance, '_build_window', build)
-    assert shell._apply_legacy_profile(0)
-    new = shell.instance.win
-    assert made == ['shenshen']
-    assert window_placement.virtual_pos(new) + new._stable_body_local_rect().center() == center
-    assert new._profile_generation == profiles.slot_generation(cfg.dir, 0)
-    new.close()
-
-
-def test_legacy_window_scale_survives_the_reload_its_own_save_triggers(tmp_path, monkeypatch):
-    """#304：直播捕获兼容（legacy 单窗）下右键改大小，不许被自存触发的那次 reload 回滚。
-
-    真实链路：``change_scale`` 改 ``self.scale``（用户看到的"闪一下"）→ 置
-    ``user_customized`` → ``_save_position`` 直写档案 → QFileSystemWatcher 回调
-    ``_apply_legacy_profile(0)`` → ``config.reload()`` → ``refresh_pet_settings``
-    再读 ``scale``。旧实现里那条草稿把档案快照冻住，reload 读回**改之前**的尺寸，
-    于是窗口弹回去、盘上也被写回旧值。这里按这条链逐段真跑（不 mock 配置层）。
-    """
-    from pet.app import AppShell
-    from pet.config import Config
-    from pet.window import PetWindow
-    from tests.test_window_pause import FakeLibrary
-    monkeypatch.setenv('PET_RENDER_TOPOLOGY', 'legacy')
-    cfg = Config(base=tmp_path, instance_id='')
-    profiles.write_profile_settings(cfg.dir, 0, {'character': 'nova', 'scale': 0.5})
-    shell = AppShell(app, cfg, enable_chat=False)
-    win = PetWindow(FakeLibrary(), shell.instance.config)
-    # 与 _build_window 同一接缝：几何自存要带代次 token 才落盘
-    win.set_profile_identity('nova', shell.instance.config.profile_generation())
-    win.move(250, 200)
-    shell.instance.win = win
-    try:
-        win.change_scale(0.85)
-        assert win.scale == pytest.approx(0.85), '前提：窗口当场接受了新尺寸'
-
-        assert shell._apply_legacy_profile(0)
-
-        assert shell.instance.win.scale == pytest.approx(0.85), (
-            '自存触发的那次 reload 不许把尺寸弹回改之前的值')
-        raw = json.loads(profiles.slot_profile_path(cfg.dir, 0).read_text(encoding='utf-8'))
-        assert raw['scale'] == pytest.approx(0.85), '盘上必须停在用户选的尺寸'
-        assert raw['user_customized'] is True, (
-            '右键改大小 = 用户在这只鱼自己的界面里主动设置过，旗标必须当场落盘')
-    finally:
-        win.close()
-
-
-# ---------------------------------------------------------------- ops D1/D2（2026-10-10 终审）
 
 def test_migration_statuses_separate_slot_only_from_global(tmp_path):
     """ops D2：迁移失败按**结果类型**处置——单槽损坏可降级，其它一律不许吞。
@@ -452,11 +354,8 @@ def test_overlay_diagnosis_points_at_in_place_restore(tmp_path, monkeypatch):
     必须重启（实测发现，见 .scratch/product-close-approved-gui-20261011/REPORT.md
     §4.4）。这条把 overlay 的口径钉住。
     """
-    from pet import overlay_settings_command
     from pet.app import AppShell
 
-    monkeypatch.setenv('PET_RENDER_TOPOLOGY', 'overlay')
-    overlay_settings_command.reset_topology_snapshot()
     cfg, broken = _corrupt_slot0_app(tmp_path)
     shell = AppShell(app, cfg, enable_chat=False)
     try:
@@ -467,30 +366,6 @@ def test_overlay_diagnosis_points_at_in_place_restore(tmp_path, monkeypatch):
             'overlay 免重启即可原地恢复，不许只写"重启"：%s' % diagnosis)
     finally:
         shell._shared.stop_all()
-        overlay_settings_command.reset_topology_snapshot()
-
-
-def test_legacy_diagnosis_keeps_the_restart_path(tmp_path, monkeypatch):
-    """legacy（捕获模式/显式 legacy）：本进程内不再重读该档案 → 口径仍是重启。
-
-    与上一条成对：两个拓扑的恢复方式确实不同，谁都不许被"顺手统一"成另一种。
-    """
-    from pet import overlay_settings_command
-    from pet.app import AppShell
-
-    monkeypatch.setenv('PET_RENDER_TOPOLOGY', 'legacy')
-    overlay_settings_command.reset_topology_snapshot()
-    cfg, broken = _corrupt_slot0_app(tmp_path)
-    shell = AppShell(app, cfg, enable_chat=False)
-    try:
-        diagnosis = shell.slot0_profile_diagnosis()
-        assert str(broken) in diagnosis
-        assert '重启即可恢复' in diagnosis, diagnosis
-        assert '生成 / 恢复 slot0' not in diagnosis, (
-            'legacy 侧点"恢复"仍会被拒（档案不可用），不许指错路：%s' % diagnosis)
-    finally:
-        shell._shared.stop_all()
-        overlay_settings_command.reset_topology_snapshot()
 
 
 def test_explicit_spawn_over_a_corrupt_active_set_backs_up_and_writes(tmp_path):
@@ -632,53 +507,4 @@ def test_spawn_failure_reaches_the_recovery_window_when_no_pet_is_visible(tmp_pa
             window.close()
         shell.stop()
 
-
-def test_capture_restore_refuses_a_corrupt_slot0_instead_of_faking_defaults(tmp_path, monkeypatch):
-    """legacy（捕获模式）下的"恢复 slot0"：拒写 + 明确告知，不许拿默认视图充数。
-
-    实测（``.scratch/product-final-fix-wiring2-20261010/probe_d2_chain.py`` 修复前）：
-    旧链 ``begin_slot_generation`` → ``config.reload()`` → 用**默认角色**建窗 → 把 0
-    写回活跃集合；而档案层所有写都是 ``refused-corrupt``（坏文件确实没被覆盖）。用户
-    得到一只看着正常、设置永远存不进去的宠，全程零提示——比明说"这份档案坏了"更糟。
-    两个拓扑对同一次事故必须同源处置：overlay 侧本来就会失败（上面两条用例），
-    legacy 侧这里改成**同样失败 + 说清路径**，坏文件仍然一个字节不动。
-    """
-    from pet import overlay_settings_command
-    from pet.app import AppShell
-    from pet.config import Config
-
-    cfg = Config(base=tmp_path, instance_id='')
-    directory = cfg.dir
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / 'config.json').write_text(json.dumps({"version": 4}), encoding='utf8')
-    profiles.save_active_set(directory, [0])
-    broken = profiles.slot_profile_path(directory, 0)
-    broken.write_bytes(b'{broken')
-    before = broken.read_bytes()
-
-    monkeypatch.setenv('PET_RENDER_TOPOLOGY', 'legacy')
-    overlay_settings_command.reset_topology_snapshot()
-    shell = AppShell(app, cfg, enable_chat=False)
-    made: list = []
-    toasts: list = []
-    monkeypatch.setattr(shell, '_create_ui_with_character_fallback',
-                        lambda character: made.append(character))
-    monkeypatch.setattr(shell, '_refresh_tray_menu', lambda: None)
-    monkeypatch.setattr(shell, 'system_notify',
-                        lambda title, message, **kw: toasts.append((title, message)))
-    try:
-        shell.spawn_pet()
-
-        assert made == [], '坏档案期间不许拿默认值建一只"看着正常"的宠'
-        assert 0 not in shell._active_pet_slots, '拒写就不许把 0 记回活跃集合'
-        assert toasts, '必须有可见告知（气泡不可用时走右下角通知）'
-        assert str(broken) in toasts[0][1], '告知必须点名坏档案路径'
-        assert shell.slot0_profile_diagnosis() in toasts[0][1], '并说明处置'
-    finally:
-        shell._shared.stop_all()
-        overlay_settings_command.reset_topology_snapshot()
-
-    assert broken.read_bytes() == before, '坏档案一个字节都不许动'
-    assert profiles.load_active_set(directory).slots == (0,), (
-        '被拒的动作不许改写活跃集合')
 

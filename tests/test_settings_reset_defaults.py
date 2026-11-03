@@ -494,29 +494,6 @@ def test_slot_page_reset_button_tooltip_matches_scope(qapp, tmp_path: Path):
         qapp.processEvents()
 
 
-def test_legacy_slot_process_keeps_full_scope_copy(qapp, tmp_path: Path, monkeypatch):
-    """legacy 拓扑下的 ``--slot N`` 进程：实例名同样是 slot-N，但重置动的是**整份**配置。
-
-    ``route_settings_config`` 在那个拓扑下原样返回配置（不分流），所以文案必须仍按
-    "全部设置"说——按实例名判作用域会把子宠页文案挂到这个进程上，恰好重演 R08。
-    """
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
-    cfg = Config(base=tmp_path / "appdata", instance_id="slot-1")
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        assert cfg.instance_id == "slot-1", "前提：实例名看起来就是子宠身份"
-        assert settings_reset_defaults.reset_scope_is_slot(dialog) is True
-        box, _confirm = settings_reset_defaults.build_reset_confirm_box(dialog)
-        try:
-            assert box.text() == settings_reset_defaults.RESET_SLOT_HEADLINE
-            assert settings_reset_defaults.RESET_SLOT_BODY in box.informativeText()
-        finally:
-            box.deleteLater()
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()
-
-
 def test_reset_button_is_reachable_and_unclipped_at_minimum_window_size(qapp, tmp_path: Path):
     """最小窗口尺寸（720×500）下按钮可见、文案不裁切（SETTINGS-CHANGE-GATES §3）。"""
     cfg = Config(tmp_path / "appdata")
@@ -762,8 +739,6 @@ def test_slot_scope_reset_writes_profile_reset_not_a_reposition_command(
     from pet import pet_profiles, settings_slot_config
 
     monkeypatch.setattr(settings_reset_defaults, "confirm_reset", lambda _parent, _scope=None: True)
-    monkeypatch.setenv(cmd_mod.ENV_TOPOLOGY, "overlay")
-    cmd_mod.reset_topology_snapshot()
     base = tmp_path / "appdata"
     main = Config(base=base)
     assert main.save() is True
@@ -787,29 +762,6 @@ def test_slot_scope_reset_writes_profile_reset_not_a_reposition_command(
     profile = pet_profiles.read_slot_profile(cfg.dir, 2)
     assert (profile.data["rx"], profile.data["ry"]) == (0.3, 0.35), "位置必须保留"
     assert profile.data["screen_name"] == "primary"
-
-
-def test_profile_reset_command_does_not_reposition_on_the_current_consumer(tmp_path: Path):
-    """过渡期安全：当前消费端**不识别** ``profile_reset`` → 安全地什么都不做。
-
-    这一批不改 ``overlay_shell`` / ``AppShell`` 的指令消费（下一批一起改），而新指令的
-    语义（偏好/尺寸/角色同步、保位置）必须等到消费端就位才生效。在它被识别之前，行为
-    必须是"消费掉、不动作"，**绝不能**被当成旧的 reset 指令去做重定位。
-    """
-    cfg = _dirty_config(tmp_path / "appdata")
-    instance = _stub_instance(
-        cfg, _StubScreen("primary", QRect(0, 0, 1920, 1040)), (400, 400))
-    shell = _stub_shell(instance)
-    calls: list = []
-    shell.apply_settings_reset = lambda instance=None: calls.append(instance)
-    before = (instance.win.x(), instance.win.y())
-    assert cmd_mod.write_command(cfg.dir, cmd_mod.CMD_PROFILE_RESET, target=2) is True
-
-    shell._consume_settings_command()
-
-    assert calls == [], "过渡期不得把新指令当成重置对齐执行"
-    assert (instance.win.x(), instance.win.y()) == before, "桌宠位置不许被动过"
-    assert not cmd_mod.command_path(cfg.dir).exists(), "消费即删（不留给下一轮重放）"
 
 
 def test_apply_settings_reset_repositions_window_without_position_memory(tmp_path: Path):
@@ -853,23 +805,6 @@ def test_exit_position_save_after_reset_keeps_default_placement(tmp_path: Path):
     assert "rx" not in json.loads(reloaded.path.read_text(encoding="utf8"))
     assert pet_profiles.read_slot_profile(cfg.dir, 0).value("rx") is None
     assert (instance.win.x(), instance.win.y()) == (int(0.42 * 1920) - 110, int(0.42 * 1040) - 130)
-
-
-def test_settings_reset_command_is_consumed_and_aligns_legacy_window(
-        tmp_path: Path, monkeypatch):
-    """D12 指令 → AppShell 消费 → 只对齐指令点名的那一只。"""
-    cfg = _dirty_config(tmp_path / "appdata")
-    main = _stub_instance(cfg, _StubScreen("primary", QRect(0, 0, 1920, 1040)), (100, 100))
-    aligned: list = []
-
-    shell = _stub_shell(main)
-    shell.apply_settings_reset = lambda instance=None: aligned.append(instance)
-    assert cmd_mod.write_command(cfg.dir, cmd_mod.CMD_APPLY_SETTINGS_RESET) is True
-
-    shell._consume_settings_command()
-
-    assert aligned == [main]
-    assert not cmd_mod.command_path(cfg.dir).exists(), "消费即删"
 
 
 def test_reset_syncs_system_autostart_login_item(tmp_path: Path, monkeypatch):
@@ -976,35 +911,6 @@ def test_settings_reset_command_aligns_overlay_sprite(tmp_path: Path):
 # 的目录事件处理顺序是「先消费指令（立刻对齐并落盘）、后按 300ms 去抖排 reload」。
 # 于是对齐那一刻运行期那份 Config 还停在重置前的旧值，而它的落盘是**整表**写——
 # 刚落盘的默认值被整表覆盖回旧值，重置被静默抵消。
-
-def test_reset_command_keeps_defaults_on_disk_while_runtime_config_is_stale(tmp_path: Path):
-    """legacy：指令消费 → 真实 go_default_corner + 真实写盘，磁盘必须仍是默认值。"""
-    base = tmp_path / "appdata"
-    runtime = _dirty_config(base)
-    runtime.data.update({"no_move": True, "stream_capture_mode": True})
-    assert runtime.save() is True, "前置条件：运行期旧值必须落盘"
-
-    settings = Config(base=base)                    # 设置进程：同一目录、独立实例
-    assert settings.reset_to_defaults() is True
-    assert cmd_mod.write_command(
-        settings.dir, cmd_mod.CMD_APPLY_SETTINGS_RESET) is True
-
-    instance = _stub_instance(
-        runtime, _StubScreen("primary", QRect(0, 0, 1920, 1040)), (400, 400))
-    shell = _stub_shell(instance)
-
-    shell._consume_settings_command()               # ← 指令先到（reload 还没跑）
-    window_placement.save_position(instance.win)    # ← 退出收口：真实整表写盘
-
-    on_disk = Config(base=base)
-    assert on_disk.get("pet_opacity") == 100, "重置后的默认值被运行期旧值整表覆盖回去"
-    assert on_disk.get("no_move") is False
-    assert on_disk.get("stream_capture_mode") is False
-    assert on_disk.get("self_talk_enabled") is False
-    assert on_disk.get("mouse_through") is False
-    assert "rx" not in json.loads(on_disk.path.read_text(encoding="utf8"))
-    assert (instance.win.x(), instance.win.y()) == (400, 400)
-
 
 def test_overlay_reset_command_reloads_runtime_config_before_alignment(tmp_path: Path):
     """overlay 同一条指令：对齐前同样把运行期配置拉齐（否则退出写盘覆盖回旧值）。"""

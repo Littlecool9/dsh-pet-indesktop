@@ -253,15 +253,10 @@ def test_gate_path_blocked_fails_open(tmp_path):
 
 
 # ---------------------------------------------------------------- 拓扑作用域
-def test_gate_is_topology_independent(tmp_path, monkeypatch):
-    """T4 Phase A：门不再按拓扑分流——两个拓扑都抢同一把锁。
-
-    overlay 双开会各自恢复 sprite 互踩；捕获模式的 legacy 单窗也是完整实例
-    （建窗/存位置/落盘配置），双开与「重启时多只桌宠收拢为主宠物」直接冲突。
-    """
+def test_gate_is_single_instance(tmp_path, monkeypatch):
+    """桌宠进程单实例门：同目录第二次启动一律被拒。"""
     for index, value in enumerate(("legacy", "", "overlay", " OVERLAY ")):
         case_dir = tmp_path / f"case-{index}"
-        monkeypatch.setenv("PET_RENDER_TOPOLOGY", value)
         gate = gate_mod.acquire_overlay_instance_gate(case_dir)
         assert gate is not None, value
         assert (gate.acquired, gate.held) == (True, True), value
@@ -271,21 +266,8 @@ def test_gate_is_topology_independent(tmp_path, monkeypatch):
         gate.release()
 
 
-def test_legacy_topology_also_holds_the_gate(tmp_path, monkeypatch):
-    """legacy 拓扑（含捕获模式重启后的形态）：照样占住进程门，双击不起第二实例。"""
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
-    first = gate_mod.acquire_overlay_instance_gate(tmp_path)
-    assert first.acquired is True and first.held is True
-    assert first.path.exists() is True
-
-    second = gate_mod.acquire_overlay_instance_gate(tmp_path)
-    assert second.acquired is False
-    first.release()
-
-
-def test_overlay_topology_creates_gate_and_refuses_second(tmp_path, monkeypatch):
-    """overlay 拓扑：入口建门；同拓扑第二实例被拒。"""
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
+def test_gate_creates_and_refuses_second(tmp_path, monkeypatch):
+    """入口建门；同目录第二实例被拒。"""
     first = gate_mod.acquire_overlay_instance_gate(tmp_path)
     assert first is not None
     assert (first.acquired, first.held) == (True, True)
@@ -298,11 +280,10 @@ def test_overlay_topology_creates_gate_and_refuses_second(tmp_path, monkeypatch)
 
 
 # ---------------------------------------------------------------- app 启动链接线
-def test_main_refuses_second_overlay_instance_before_slot(tmp_path, monkeypatch, caplog):
-    """overlay 双开：拒绝先于 slot 竞争（不建 slots/、不落种 slot 配置）+ 留痕。"""
+def test_main_refuses_second_instance_before_slot(tmp_path, monkeypatch, caplog):
+    """双开：拒绝先于 slot 竞争（不建 slots/、不落种 slot 配置）+ 留痕。"""
     from pet import app as app_mod
 
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
     monkeypatch.setattr(app_mod, "_default_base", lambda: tmp_path)
     monkeypatch.setattr(app_mod, "QApplication", _FakeQApplication)
 
@@ -323,18 +304,16 @@ def test_main_refuses_second_overlay_instance_before_slot(tmp_path, monkeypatch,
     assert "refused" in (config_dir / gate_mod.TRACE_NAME).read_text(encoding="utf-8")
 
 
-def test_main_legacy_topology_also_takes_gate_and_does_not_take_slot_lock(
+def test_main_takes_gate_and_does_not_take_slot_lock(
         tmp_path, monkeypatch):
-    """legacy 拓扑同样抢门（T4 Phase A），且 main() 不再抢 slot 文件锁（T5）。
+    """main() 抢进程门且不再抢 slot 文件锁。
 
-    捕获模式重启后就是 legacy 单窗形态：门必须照样占住（否则双击会起第二个完整
-    实例），启动链其余部分逐行不变。`--slot N` 兼容解析保留：合法值只用于选
-    config-slot-N.json 身份，不再有任何跨进程竞争副作用（不建 slots/、不落种）。
+    `--slot N` 兼容解析保留：合法值只用于选 config-slot-N.json 身份，不再有任何
+    跨进程竞争副作用（不建 slots/、不落种）。
     """
     from pet import app as app_mod
     from pet.config import Config as RealConfig
 
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
     monkeypatch.delenv("DSH_PET_INSTANCE", raising=False)
     monkeypatch.setattr(app_mod, "_default_base", lambda: tmp_path)
     monkeypatch.setattr(app_mod, "QApplication", _FakeQApplication)
@@ -370,40 +349,11 @@ def test_main_legacy_topology_also_takes_gate_and_does_not_take_slot_lock(
     assert not (config_dir / gate_mod.LOCK_NAME).exists()
 
 
-def test_main_legacy_topology_refuses_second_instance(tmp_path, monkeypatch, caplog):
-    """捕获模式形态（legacy 单窗）下双击起第二个完整实例：拒绝且零副作用。"""
-    from pet import app as app_mod
-
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
-    monkeypatch.setattr(app_mod, "_default_base", lambda: tmp_path)
-    monkeypatch.setattr(app_mod, "QApplication", _FakeQApplication)
-
-    config_dir = tmp_path / APP_DIR_NAME
-    holder = gate_mod.OverlayInstanceGate(config_dir)
-    assert holder.acquire() is True
-
-    class _ForbiddenShell:
-        def __init__(self, *_args, **_kwargs):
-            raise AssertionError("已有实例在运行：不得建到 AppShell 这一层")
-
-    monkeypatch.setattr(app_mod, "AppShell", _ForbiddenShell)
-    try:
-        with caplog.at_level(logging.WARNING):
-            code = app_mod.main(["dsh-pet"])
-    finally:
-        holder.release()
-
-    assert code == gate_mod.DUPLICATE_EXIT_CODE == 0
-    assert any("已有实例在运行" in record.getMessage() for record in caplog.records)
-    assert not list(config_dir.glob("config-slot-*.json"))
-
-
 def test_main_releases_gate_when_startup_fails(tmp_path, monkeypatch):
     """正常退出链：main 的 finally 释放门（启动失败与事件循环结束共用此出口）。"""
     from pet import app as app_mod
     from pet.config import Config as RealConfig
 
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
     monkeypatch.setattr(app_mod, "_default_base", lambda: tmp_path)
     monkeypatch.setattr(app_mod, "QApplication", _FakeQApplication)
     # 隔离真实用户配置目录与日志（Config/_setup_logging 不走 _default_base）
@@ -459,14 +409,13 @@ def _child_base(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_real_second_process_refused_on_overlay_topology(tmp_path):
+def test_real_second_process_refused(tmp_path):
     """真 Qt + 真进程：第二实例跑 `python -m pet` 被门拒绝并静默退出。"""
     config_dir = _child_base(tmp_path) / APP_DIR_NAME
     holder = gate_mod.OverlayInstanceGate(config_dir)
     assert holder.acquire() is True
 
     env = os.environ.copy()
-    env["PET_RENDER_TOPOLOGY"] = "overlay"
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["APPDATA"] = str(tmp_path)
     try:

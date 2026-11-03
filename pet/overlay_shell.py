@@ -27,12 +27,9 @@
 - 会话结束（Windows 关机/注销）：复用 session_watcher 的闸门与信号链，
   收口本路径 MovieLibrary 的全部 clip（issue #111 等价链，D10 落点）。
 
-T5 切换策略：PET_RENDER_TOPOLOGY=overlay 环境变量是开发期一次性分流 flag，
-读取收口在本模块 is_overlay_topology()；T4 Phase A 起判定再叠加主配置的
-``stream_capture_mode``（勾选「直播捕获兼容」= 重启级切到 legacy 单窗，OBS 才
-枚举得到窗口；见 ``overlay_settings_command``）。
+渲染拓扑唯一：本模块的合成窗就是产品的唯一渲染面（legacy 单窗路径已删除）。
 4.1a 明确不做：多 sprite（4.2）、位置持久化（4.2a，本刀恒走默认右下角）、
-岛/气泡/聊天/菜单全量 parity（4.1b/4.1c）、捕获模式切换（T4 后续）。
+岛/气泡/聊天/菜单全量 parity（4.1b/4.1c）。
 
 4.2b（本刀后段）：多 sprite 生命周期按 D5/D6 落地——spawn 分配 slot 身份并写
 活跃宠清单（``overlay-active-pets.json``，运行时状态文件）；退出即出清单
@@ -128,9 +125,6 @@ from .sprite_behavior import (
 from .sprite_bubble import SpriteBubbleFollower, sprite_anchor_rect_global
 from .sprite_sound import SpriteSoundPlayer
 from .tick_driver import TickDriver
-
-ENV_TOPOLOGY = overlay_settings_command.ENV_TOPOLOGY
-TOPOLOGY_OVERLAY = overlay_settings_command.TOPOLOGY_OVERLAY
 
 # 联动动作链里「一次性动作正在播」（window.py _is_one_shot_playing 的 sprite 等价物）：
 # 动作池 / 点击回应 / 移动三类都不可被打断，联动请求排进待播槽。
@@ -645,18 +639,6 @@ class _SpriteSelfTalkHost:
         return self._show_self_talk_text(value)
 
 
-def is_overlay_topology() -> bool:
-    """唯一拓扑判定入口（输入：显式 PET_RENDER_TOPOLOGY env + 主配置捕获开关）。
-
-    实现在零 Qt 的 ``overlay_settings_command``：设置进程（``--settings``，
-    ``pet/__main__.py`` 明确禁止导入 pet.app/overlay_shell）也要按拓扑决定
-    D12 指令通道走不走，故拓扑读取的实现必须落在两侧都能 import 的模块；
-    本函数保留为对外唯一入口名（app.py 照旧转发）。T4 起判定还读主配置的
-    ``stream_capture_mode``（勾选 = 重启级切到 legacy 单窗），细节见该模块。
-    """
-    return overlay_settings_command.is_overlay_topology()
-
-
 class _SettingsIdentityConfig:
     """身份载体的 config 面（``open_settings_process`` 只读 ``instance_id``）。"""
 
@@ -1018,7 +1000,7 @@ class OverlayShell(QObject):
         self._screen_list = self._seed_screens(self._initial_screen)
         # 允许桌宠跨屏（主配置全局键、**重启级**）：进程内快照一次，运行期不重读
         # ——设置页改的是磁盘，勾一下就让正在跑的进程多出/收掉一块活动区不是这个
-        # 开关的语义（与 stream_capture_mode 同口径）。关闭时：窗仍铺满整个虚拟
+        # 开关的语义。关闭时：窗仍铺满整个虚拟
         # 桌面，但活动区只剩启动时选定的那块屏（见 ``_activity_rects`` /
         # ``_restore_screen`` / ``move_sprite_to_screen``）。
         self._cross_screen_allowed = bool(self._config.get("allow_cross_screen", False))

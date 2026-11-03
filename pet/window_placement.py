@@ -54,7 +54,7 @@ def stable_body_local_rect(host) -> QRect:
     s = host.scale
     return QRect(
         int(round(x1 * s)),
-        getattr(host, "_capture_headroom", 0) + int(round(catalog.PAD * s)) + int(round(y1 * s)),
+        int(round(catalog.PAD * s)) + int(round(y1 * s)),
         max(1, int(round((x2 - x1) * s))),
         max(1, int(round((y2 - y1) * s))),
     )
@@ -535,7 +535,7 @@ def save_position(host) -> None:
         vp_fn = getattr(host, '_virtual_pos', None)
         vp = vp_fn() if callable(vp_fn) else None
         cx = (vp.x() if vp is not None else host.x()) + host._w / 2
-        cy = (vp.y() if vp is not None else host.y()) + (host._h + getattr(host, "_capture_headroom", 0)) / 2
+        cy = (vp.y() if vp is not None else host.y()) + host._h / 2
         geometry.update(rx=(cx - avail.left()) / avail.width(),
                         ry=(cy - avail.top()) / avail.height(), screen_name=scr.name())
     writer = getattr(host.cfg, 'save_geometry', None)

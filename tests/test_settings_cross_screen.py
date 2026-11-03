@@ -10,8 +10,7 @@
    （文案只有一份来源，见 ``settings_pet_controls.GLOBAL_SCOPE_ROWS``）；
 4. 重启级：勾选只改磁盘，运行中的壳不重读（进程快照，见
    ``tests/test_overlay_cross_screen_switch.py``）；
-5. 非 overlay 拓扑（legacy 单窗）下如实置灰 + 说明，不留"改了没反应"的活开关；
-6. 默认值标记：它登记在 ``settings_default_marks`` 的映射表里（出厂默认 False）。
+5. 默认值标记：它登记在 ``settings_default_marks`` 的映射表里（出厂默认 False）。
 """
 from __future__ import annotations
 
@@ -35,9 +34,8 @@ ROW_KEY = "cross_screen"
 CONFIG_KEY = "allow_cross_screen"
 
 
-def _dialog(tmp_path, monkeypatch, *, overlay=True):
+def _dialog(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(pet_controls, "_is_overlay_topology", lambda: overlay)
     return settings_mod.ModernSettingsDialog(Config(base=tmp_path), include_ai=True)
 
 
@@ -81,19 +79,6 @@ def test_row_declares_the_global_scope_note(tmp_path, monkeypatch):
         assert (ROW_KEY, GLOBAL_SCOPE_NOTE) in pet_controls.GLOBAL_SCOPE_ROWS
         # 可访问说明挂在控件上，且是"说明 + 标注"全文（拆位置不等于访问性丢掉）
         assert GLOBAL_SCOPE_NOTE in row.control.accessibleDescription()
-    finally:
-        dialog.close()
-
-
-def test_row_is_greyed_out_in_the_legacy_topology(tmp_path, monkeypatch):
-    """非 overlay 拓扑：legacy 单窗自己就能跨显示器，本开关没有第二个读点。"""
-    dialog = _dialog(tmp_path, monkeypatch, overlay=False)
-    try:
-        row = _row(dialog)
-        assert row.control.isEnabled() is False
-        assert row.control.toolTip() == "仅单合成窗（overlay）拓扑生效"
-        # 置灰不等于隐藏：行与说明照旧在（用户看得到"为什么用不了"）
-        assert row.hint_label.isVisible() or row.hint_label.text()
     finally:
         dialog.close()
 

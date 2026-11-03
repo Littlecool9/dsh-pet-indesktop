@@ -276,7 +276,7 @@ def reload_runtime_config(*configs) -> bool:
     ``save_position``）。而设置进程是"先写默认值、再写对齐指令"两步目录事件，主
     进程的事件处理顺序是「先消费指令（立刻对齐并落盘）、后按 300ms 去抖排 reload」
     ——对齐那一刻运行期那份 Config 还停在重置前的旧值，一次整表落盘就把刚落盘的
-    默认值全部覆盖回去（``no_move`` / ``pet_opacity`` / ``stream_capture_mode`` …），
+    默认值全部覆盖回去（``no_move`` / ``pet_opacity`` …），
     重置被静默抵消。
 
     ``reload()`` 本身是既有的"外部变更合并"口（键清单见 ``Config.reload``），与

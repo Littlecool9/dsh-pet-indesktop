@@ -378,62 +378,6 @@ def test_pet_opacity_applied_and_synced(app, tmp_path):
     app.processEvents()
 
 
-def test_tray_menu_syncs_mouse_through_from_config(tmp_path):
-    from PySide6.QtGui import QPixmap
-    from PySide6.QtWidgets import QApplication, QWidget
-
-    from pet.app import AppShell
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    config = Config(tmp_path)
-    config.set("mouse_through", False)
-
-    class Win:
-        def __init__(self, config):
-            self.config = config
-            self.corner_calls = 0
-
-        def icon_pixmap(self, _size=None):
-            return QPixmap(2, 2)
-
-        def set_mouse_through(self, on):
-            self.config.set("mouse_through", bool(on))
-            self.config.save()
-
-        def go_default_corner(self):
-            self.corner_calls += 1
-
-        def _speech_bubble(self):  # pragma: no cover - 占位
-            raise NotImplementedError
-
-    win = Win(config)
-    win._speech_bubble = QWidget()
-    manager = AppShell(app, config, enable_chat=True)
-    tray = manager._build_tray(win)
-    menu = tray.contextMenu()
-    action = next(a for a in menu.actions() if a.text() == "鼠标穿透")
-    assert action.isChecked() is False
-    # 设置对话框里改了鼠标穿透 → config 变化 → 托盘菜单弹出前同步勾选态
-    #（同步只改看相：副作用挂 triggered，程序化 setChecked 不再误触发它）
-    config.set("mouse_through", True)
-    menu.aboutToShow.emit()
-    assert action.isChecked() is True
-    assert config.get("mouse_through") is True, "弹出前同步不得反过来写配置"
-    # 反向：托盘里点掉 → config 落盘。托盘条目是「菜单关闭后派发」
-    #（原生菜单跟踪会话里改窗面/冒泡会被系统抑制），故点击后要轮询等它执行。
-    action.trigger()
-    assert action.isChecked() is False, "勾选态即时翻转"
-    assert _wait_for_dispatch(lambda: config.get("mouse_through") is False), \
-        "菜单关闭后必须把鼠标穿透落盘"
-    # “回到右下角”应路由到该窗的 go_default_corner（同样菜单关闭后派发）
-    home = next(a for a in menu.actions() if a.text() == "回到右下角")
-    home.trigger()
-    assert _wait_for_dispatch(lambda: win.corner_calls == 1), \
-        "菜单关闭后必须路由到该窗的 go_default_corner"
-    tray.hide()
-    app.processEvents()
-
 def test_drag_does_not_play_click_sound_but_click_does(app, tmp_path, monkeypatch):
     from pathlib import Path
     win = _make_win(app, tmp_path)

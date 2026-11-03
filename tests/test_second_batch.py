@@ -128,65 +128,37 @@ def test_quick_chat_closes_when_the_window_loses_focus(tmp_path: Path, monkeypat
     app.processEvents()
 
 
-def test_quick_chat_waits_for_popup_menu_to_close(tmp_path: Path, monkeypatch):
-    """菜单收尾的失活事件不能把刚打开的快速对话立即关掉。"""
-    import time
-
-    import pet.app as app_mod
-    from pet.app import PetInstance
-
-    app = QApplication.instance() or QApplication([])
-    state = {"popup": True}
-
-    class FakeQApp:
-        @staticmethod
-        def activePopupWidget():
-            return object() if state["popup"] else None
-
-    monkeypatch.setattr(app_mod, "QApplication", FakeQApp)
-    owner = PetInstance.__new__(PetInstance)
-    owner.config = _config(tmp_path)
-    owner.enable_chat = True
-    owner.win = object()
-    owner.quick_chat = None
-    owner._pending_dialog_opens = set()
-
-    owner.open_quick_chat()
-    app.processEvents()
-    assert owner.quick_chat is None, "菜单仍活动时不应创建或显示快速对话"
-
-    state["popup"] = False
-    deadline = time.time() + 1
-    while owner.quick_chat is None and time.time() < deadline:
-        app.processEvents()
-        time.sleep(0.01)
-
-    assert owner.quick_chat is not None
-    assert owner.quick_chat.isVisible(), "菜单关闭后快速对话应自动显示"
-    owner.quick_chat.close()
-    app.processEvents()
-
-
 def test_quick_chat_open_is_deferred_to_next_event_turn(tmp_path: Path):
-    """Cocoa 原生菜单不可被 activePopupWidget 发现，打开动作仍须异步派发。"""
+    """快速对话不得在菜单动作回调内同步打开：PetInstance 把它排到下一轮事件循环交给 overlay 壳。"""
     from pet.app import PetInstance
 
     app = QApplication.instance() or QApplication([])
+    calls = []
+
+    class FakeOverlay:
+        def open_quick_chat(self):
+            calls.append("open")
+            return True
+
+    class FakeShell:
+        _overlay_shell = FakeOverlay()
+        enable_chat = True
+
+        def _aggregate_pet_visible(self):
+            return True
+
+        def _island_chat_available(self):
+            return False
+
     owner = PetInstance.__new__(PetInstance)
     owner.config = _config(tmp_path)
-    owner.enable_chat = True
-    owner.win = object()
-    owner.quick_chat = None
-    owner._pending_dialog_opens = set()
+    owner.shell = FakeShell()
 
     owner.open_quick_chat()
-    assert owner.quick_chat is None, "快速对话不得在原生菜单动作回调内同步创建"
+    assert calls == [], "快速对话不得在菜单动作回调内同步打开"
 
     app.processEvents()
-    assert owner.quick_chat is not None
-    assert owner.quick_chat.isVisible()
-    owner.quick_chat.close()
-    app.processEvents()
+    assert calls == ["open"]
 
 
 def test_quick_chat_survives_initial_cocoa_activation_handoff(tmp_path: Path):

@@ -1286,60 +1286,6 @@ def _exit_host(tmp_path, app, monkeypatch, *, keep_editing: bool):
     return shell, inst, dialog, calls, seen
 
 
-def test_refusing_the_settings_close_cancels_the_pet_exit_untouched(tmp_path, app, monkeypatch):
-    """用户在设置页里选「继续编辑」→ 整次「退出这只」取消，一个资源都不动。
-
-    修复前：闸门在 ``_close_instance_subwindows`` 里（``dialog.close()`` 完全不看返回值），
-    发现"关不掉"时位置已存、预热已停、Agent 已关、会话 worker 已关，父窗随即销毁——
-    草稿窗成孤儿跟着消失（ops P3-c）。
-    """
-    shell, inst, dialog, calls, seen = _exit_host(
-        tmp_path, app, monkeypatch, keep_editing=True)
-    try:
-        shell._on_window_exit_requested(inst)
-
-        assert seen, "闸门必须真的把失败框弹出来（不能悄悄放行）"
-        assert seen[-1]["failure"].kind == settings_slot_config.SAVE_FAILURE_STALE
-        assert calls == [], "用户选了继续编辑 → 存位置/停预热/关服务/关窗/丢引用一律不许发生"
-        assert inst.modern_settings_dialog is dialog and dialog.isVisible(), "草稿窗必须完好"
-        assert inst in shell._instances, "instance 不许被摘掉"
-        assert inst.win is not None, "父窗引用不许被清"
-        assert pet_profiles.read_slot_profile(_config_dir(tmp_path), SLOT).value("scale") == pytest.approx(0.8)
-    finally:
-        _drop(dialog)
-
-
-def test_discarding_the_settings_close_lets_the_pet_exit(tmp_path, app, monkeypatch):
-    """用户在设置页里选「放弃未保存的改动并关闭」→ 收口照常走完（宠物真的退出、资源释放）。
-
-    "继续动作"的另一半：接受放弃之后这次关闭请求必须**照常生效**，不能因为加了闸门就变成
-    谁也关不掉；关完引用断开，下一次打开设置能新建一张表单（进程内形态的"锁重新可开"，
-    独立设置进程那份 settings.lock 由第 7 节的真 QLockFile 用例守着）。
-    """
-    shell, inst, dialog, calls, seen = _exit_host(
-        tmp_path, app, monkeypatch, keep_editing=False)
-    try:
-        shell._on_window_exit_requested(inst)
-
-        assert seen[-1]["failure"].kind == settings_slot_config.SAVE_FAILURE_STALE
-        assert "save_position" in calls and "win_close" in calls, "接受放弃之后收口照常"
-        assert "broker_shutdown" in calls and "refresh_tray" in calls
-        assert "close_session_writer" in calls or "heavy_teardown" in calls
-        assert inst not in shell._instances, "instance 必须被摘掉"
-        assert inst.modern_settings_dialog is None, "引用必须断开"
-        assert pet_profiles.read_slot_profile(_config_dir(tmp_path), SLOT).value("scale") == pytest.approx(0.8), (
-            "用户放弃的草稿不许落盘")
-    finally:
-        _drop(dialog)
-
-    # 设置页重新可开：运行期那份视图还在，新开一张表单拿到各自独立的草稿/基线
-    reopened = _shared_dialog(inst.config)
-    try:
-        assert float(reopened.scale_combo.currentData()) == pytest.approx(0.8)
-    finally:
-        _drop(reopened)
-
-
 def test_app_quit_waits_for_the_settings_window(tmp_path, app, monkeypatch):
     """托盘/恢复窗的「退出应用」同样先过设置页闸门：继续编辑 → 取消退出；放弃 → 照常退出。"""
     shell, inst, dialog, calls, seen = _exit_host(
@@ -1358,29 +1304,6 @@ def test_app_quit_waits_for_the_settings_window(tmp_path, app, monkeypatch):
         assert calls2 == ["quit"], "接受放弃之后退出应用照常"
     finally:
         _drop(dialog2)
-
-
-def test_clear_spawned_pets_cancels_before_touching_any_pet(tmp_path, app, monkeypatch):
-    """一键清除（链式退出多只）同样**整批前置**过闸门：任一被拒 → 一只都不退、链不启动。
-
-    中途才发现的话，前面的宠已经退出去了，"整个关闭请求取消"就名不副实——所以闸门在
-    ``clear_spawned_pets`` 起点，不在链的每一节里。
-    """
-    shell, inst, dialog, calls, seen = _exit_host(
-        tmp_path, app, monkeypatch, keep_editing=True)
-    try:
-        shell._clear_spawned_pending = False
-        shell.clear_spawned_pets()
-        app.processEvents()
-
-        assert calls == [], "被拒时链不许启动：一个资源都不动"
-        assert dialog.isVisible() and inst.modern_settings_dialog is dialog
-        assert inst in shell._instances
-        assert shell._clear_spawned_pending is False, (
-            '取消时不许留下「进行中」标记，否则下一次点击被静默忽略')
-        assert pet_profiles.read_slot_profile(_config_dir(tmp_path), SLOT).value("scale") == pytest.approx(0.8)
-    finally:
-        _drop(dialog)
 
 
 def test_session_end_paths_keep_the_no_dialog_semantics():

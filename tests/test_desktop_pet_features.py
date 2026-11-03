@@ -630,23 +630,6 @@ def test_icon_composition_ignores_low_alpha_noise_and_fills_canvas():
     assert max(bbox[2] - bbox[0], bbox[3] - bbox[1]) >= 248
 
 
-def test_pet_app_assigns_distinct_offsets_to_spawned_pets(tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QApplication
-
-    import pet.app as app_mod
-    from pet.app import AppShell
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    offsets = []
-    monkeypatch.setattr(AppShell, "spawn_in_process_window",
-                        lambda self, index=1: offsets.append(index))
-    owner = AppShell(app, Config(tmp_path))
-    owner.spawn_pet()
-    owner.spawn_pet()
-    assert offsets == [1, 2]
-
-
 def test_modern_pet_context_menu_has_spawn_action_with_avatar_icon(monkeypatch):
     from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
@@ -1201,7 +1184,6 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
     assert page_index(dialog.findChild(settings_mod.SettingRow, "settingRow_api_url")) == 5
     if settings_mod.sys.platform != "win32":
         assert dialog.auto_hide_fullscreen_check is None
-        assert dialog.stream_capture_check is None
     assert "台词风格" not in [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
     expression_row = dialog.findChild(settings_mod.SettingRow, "settingRow_dialogue_mode")
     assert expression_row is not None
@@ -1669,64 +1651,6 @@ def test_modern_settings_search_locates_rows_and_return_does_not_close(tmp_path,
     assert dialog.result() == 0
     dialog.close()
     app.processEvents()
-
-
-def test_wired_petwindow_offers_settings_entry(tmp_path):
-    """正式装配：真实 PetWindow + 真实 ``_wire_window`` 的「桌宠设置」入口可触发。
-
-    真实装配：真实 ``PetWindow``（素材库用既有测试替身）+ **真实**
-    ``pet.app.PetInstance._wire_window``（宿主只补该方法读到的面）；建菜单后触发
-    设置项，断言落到 ``_wire_window`` 注入的那条现代设置回调。
-    """
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    import pet.app as app_mod
-    from pet.context_menu import populate_context_menu
-    from pet.config import Config
-
-    import tests.test_context_menu_lifecycle as lc
-
-    class _Shell:  # AppShell 经 self.shell 路由的进程级方法（本用例不触发）
-        def __getattr__(self, name):
-            return lambda *args, **kwargs: None
-
-    class _Host:  # _wire_window 的最小宿主：只补它读到的属性
-        enable_chat = True
-
-        def __init__(self, config):
-            self.config = config
-            self.shell = _Shell()
-            self.opened: list[str] = []
-
-        def _slot_wrap(self, fn):
-            return fn
-
-        def open_modern_settings(self):
-            self.opened.append("modern")
-
-        def __getattr__(self, name):
-            return lambda *args, **kwargs: None
-
-    app = QApplication.instance() or QApplication([])
-    config = Config(base=tmp_path)
-    config.save()
-    win = lc.PetWindow(lc.FakeLibrary(), config)
-    host = _Host(config)
-    app_mod.PetInstance._wire_window(host, win)
-    try:
-        menu = QMenu()
-        populate_context_menu(menu, win)
-        entries = [a for a in menu.actions() if a.text() == "桌宠设置"]
-        assert len(entries) == 1, (
-            f"「桌宠设置」入口应恰有一条，实际 {len(entries)} 条")
-        assert entries[0].isEnabled()
-        entries[0].trigger()
-        assert host.opened == ["modern"], "设置入口未落到窗口的现代设置回调"
-        menu.close()
-        app.processEvents()
-    finally:
-        win.close()
-        app.processEvents()
 
 
 def test_runtime_pet_icon_crops_transparent_canvas_before_scaling():
@@ -2211,61 +2135,6 @@ def test_window_opening_menu_action_uses_native_close_path():
     assert action.property("closeOnTrigger") is True
     menu.close()
     app.processEvents()
-
-
-def test_pet_app_binds_about_to_quit_once_to_current_window(tmp_path, monkeypatch):
-    """aboutToQuit 只绑定一次，且触发时保存「当前」有效窗口位置（非已销毁的旧窗口）。"""
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")  # PetWindow 路径测试
-    from PySide6.QtWidgets import QApplication
-
-    import pet.app as app_mod
-    from pet.app import AppShell
-    from pet.config import Config
-
-    QApplication.instance() or QApplication([])
-
-    class FakeApp:
-        def __init__(self):
-            self.connections = []
-
-        @property
-        def aboutToQuit(self):
-            # 模拟信号对象：self.app.aboutToQuit.connect(slot) 追加到 connections
-            return self
-
-        def connect(self, slot):
-            self.connections.append(slot)
-
-    class FakeWin:
-        def __init__(self):
-            self.saved = 0
-
-        def save_position(self):
-            self.saved += 1
-
-    monkeypatch.setattr(app_mod.QTimer, "singleShot", lambda *a, **k: None)
-    owner = AppShell(FakeApp(), Config(tmp_path))
-    owner.instance._create_ui = lambda cid: None
-    owner.instance._apply_spawn_offset = lambda: None
-    owner._apply_balance_timer = lambda: None
-
-    old = FakeWin()
-    owner.instance.win = old
-    owner.start()
-    owner.start()  # 重复 start 不得叠加 connect
-    # 本用例的被测对象是 AppShell 的**自有**接线：只统计它自己的槽——start()
-    # 还会让会话结束探测器（issue #111）接一条 aboutToQuit 兜底，那是另一个
-    # 组件的一次性接线（由 pet/session_watcher 自测覆盖），不参与本计数。
-    shell_connections = [c for c in owner.app.connections
-                         if c == owner._on_about_to_quit]
-    assert len(shell_connections) == 1, "AppShell 重复 start 不得叠加 aboutToQuit 接线"
-
-    current = FakeWin()
-    owner.instance.win = current
-    owner._on_about_to_quit()  # 触发 aboutToQuit（直接调用同样的槽）
-    assert current.saved == 1
-    assert old.saved == 0  # 旧窗口不再被保存
-
 
 
 def test_dsh_converged_state_wiring_drives_thinking(tmp_path, monkeypatch):

@@ -596,22 +596,6 @@ def test_service_once_archive_persists(tmp_path):
 
 # ------------------------------------------------------------ PetApp 接线
 
-def test_petapp_creates_service_and_wires_callback(tmp_path):
-    from pet.app import AppShell
-
-    qapp = _qapp()
-    shell = AppShell(qapp, Config(tmp_path))
-    assert shell.todo_service is not None
-
-    class _Win:
-        pass
-
-    win = _Win()
-    shell.instance._wire_window(win)
-    # 回调经 _slot_wrap 包了一层（日志槽位），断言已接线且可调用即可
-    assert callable(win.on_open_todo_panel)
-
-
 def test_petapp_settings_finish_applies_todo_prefs(tmp_path, monkeypatch):
     import pet.app as app_mod
     from pet.app import AppShell, PetInstance
