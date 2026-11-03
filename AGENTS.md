@@ -1,5 +1,10 @@
 # Engineering guide
 
+> **重构进行中（2026-11-03 起，分支 `refactor/modular`）**：本仓库是个人硬分叉，只支持 Windows，
+> 正在删除大量功能并改造成模块化结构，同时在 `surfcore/` 下合入了 SurfCore（Node DSH 插件 + QQ 桥接）。
+> 需求、决策和阶段计划以 `.scratch/modularization/spec.md` 为准；下面的「Project shape」
+> 仍在描述旧结构（多开、legacy 拓扑、跨平台），会在阶段 4 重写，与 spec 冲突时以 spec 为准。
+
 ## Project shape
 
 This is a PySide6 desktop-pet application. `python -m pet` enters through
@@ -135,41 +140,18 @@ with the DSH port probe folded into the same thread), started by
 - Keep QLocal test server names short. POSIX converts names to Unix socket paths,
   whose limit includes the system temporary-directory prefix.
 
-## Delivery evidence discipline (2026-09-22 起，硬要求)
+## Verification gates (2026-11-03 起，硬分叉后的口径)
 
-每个 PR 必须交付**三份证据**，缺一即视为未完成，审查时按缺陷提出
-（模板：`docs/PR-REPORT-TEMPLATE.md`；细则：`docs/DEV-HANDOVER.md` §8.2/§8.3）：
+本仓库已是个人硬分叉，不再向上游提 PR：**逐 PR 的三证据报告
+（`docs/PR-REPORT-*`）不再要求**，历史报告只作参考。测试门保留，但要快：
 
-1. **修改文件说明**：逐文件写「改了什么 + 为什么」，含增删行数（`git diff
-   --numstat`）与新增/删除文件。只写「修了 bug」不算说明。
-2. **性能分析**：受影响路径的**实测**数字（命令 + 环境 + 样本量），并逐条回答
-   稳态开销、新增路径成本与触发频率、有无新的系统调用/网络/磁盘/线程、内存有无
-   增长。**形容词不算分析**——用「可忽略 / 更快 / 优化了」代替数字视为没写。
-3. **实机运行记录或报告**：在本机真实环境（不是 CI、不是 mock）跑过什么的记录：
-   命令、真实输出、以及用户可见行为的确认。无法自动验证的能力，必须给出
-   「为什么不能自动」的排查证据（探针结果），不许用沉默代替结论。
-
-落地形式：报告写入 `docs/PR-REPORT-<主题>-<YYYY-MM-DD>.md`，在 `docs/INDEX.md`
-的「PR 报告存档」登记（新文档入场规则），PR 描述放摘要 + 链接。
-`tests/test_pr_report_discipline.py` 对本日期之后的报告强制校验四个必备章节与索引
-登记；历史报告豁免。**豁免**：纯文档/文案/依赖版本号这类不改变运行行为的改动，
-可只保留第 1 条，但必须在 PR 描述里写明豁免理由。
-
-## CI cost discipline (learned 2026-09-06, PR76 CI loop)
-
-CI 反复红的代价极高（每轮 5-10 分钟 + 诊断烧调用额度）。硬性规矩：
-
-- **推送前必过三道本地门**：ruff、全量 pytest、受影响时序测试族的高负载
-  复跑（本地 CPU 打满跑 3 遍）。缝合/脚本化改动后必须重跑 ruff——
-  重复定义/残留 import 这类一眼问题不许交给 CI 去发现。
-- **写时序测试 = CI 优先纪律**：新测试涉及真实线程/Qt 事件循环时，一律
-  事件同步（Event/Condition）+ 宽预算（CI 慢 runner 是本地数倍慢），
-  禁止固定 sleep 猜测时序、禁止赌目录枚举顺序、禁止用 monotonic 绝对值
-  做回拨算术（CI runner 是新开机的，uptime 可能只有几百秒）。
-- **CI 红先读日志再动手**：连续两轮修同一族测试不绿，停止重试，把族
-  隔离出主套件（对齐 webm 生命周期族先例），别在 PR 门禁里赌时序。
-- 诊断类排查能本地复现就不派付费子代理；派子代理必须给齐已知排除项，
-  避免重复劳动烧额度。
+- 任务内：ruff（`ruff check pet/ tests/`）+ 与改动相关的测试文件。
+- 阶段边界 / 合并进集成分支前：全量 pytest（并行，`-n auto`），失败的用例
+  再单进程复跑一次，区分真失败与并行时序抖动。
+- 删除功能时，同时删掉只测试该功能的测试文件；不要为了让测试通过而
+  保留死代码。
+- 写时序测试：涉及真实线程 / Qt 事件循环时一律事件同步（Event/Condition）
+  + 宽预算，禁止固定 sleep 猜时序、禁止赌目录枚举顺序。
 
 Run focused tests before `python -m pytest -q`. Set
 `QT_QPA_PLATFORM=offscreen` in headless environments. A restricted macOS
