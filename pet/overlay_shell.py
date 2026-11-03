@@ -109,7 +109,7 @@ from .config import (
     DEFAULT_SELF_TALK_MAX_INTERVAL,
     DEFAULT_SELF_TALK_MIN_INTERVAL,
 )
-from .fun_image_popup import oijingjing_image_path, resolve_fun_asset
+from .asset_paths import default_self_talk_image_dir, resolve_asset_path
 from .overlay_peripherals import FullscreenCursorWatcher
 from .overlay_window import OverlayWindow
 from .pet_sprite import INTERACTION_DRAG, INTERACTION_THROWN, PetSprite
@@ -187,7 +187,7 @@ def _resolve_self_talk_image_dir(raw: str) -> str:
     candidate = Path(raw).expanduser()
     if candidate.is_absolute() and not candidate.is_dir():
         return ""
-    return str(resolve_fun_asset(raw, oijingjing_image_path().parent))
+    return str(resolve_asset_path(raw, default_self_talk_image_dir()))
 
 
 def _import_quick_chat():
@@ -487,12 +487,11 @@ class _SpritePetHost:
 
 
 class _SpriteServicePresenter(_SpritePetHost):
-    """手动服务结果（余额 / 天气）的**代次呈现器**（2026-10-10 终审 A10）。
+    """手动余额查询结果的**代次呈现器**（2026-10-10 终审 A10）。
 
-    菜单旁路此前把整个壳交给 ``AppShell.show_balance`` / ``AppShell.show_weather``，
-    落点由壳的 ``alert_target_sprite()``（= 最小可见槽）在结果到达时**动态决定**：
-    右击子肥鱼查天气，气泡冒在主肥鱼头上；请求在飞时把发起的那一只关掉，结果还会
-    落到别宠身上。点击路径（``_on_sprite_click`` → ``_sprite_host(target)``）早就按
+    菜单旁路此前把整个壳交给 ``AppShell.show_balance``，落点由壳的
+    ``alert_target_sprite()``（= 最小可见槽）在结果到达时**动态决定**：右击子肥鱼
+    查余额，气泡冒在主肥鱼头上；请求在飞时把发起的那一只关掉，结果还会落到别宠身上。点击路径（``_on_sprite_click`` → ``_sprite_host(target)``）早就按
     发起 sprite 收口了，同一个意图在菜单旁路没有收口。
 
     与 ``_SpritePetHost`` 的两处差别（其余宿主面逐字沿用）：
@@ -2433,7 +2432,6 @@ class OverlayShell(QObject):
         # 表达风格 picker：window_alerts.expression_style_text 惰性建，先占位
         self._expression_picker = None
         self.click_show_balance = bool(config.get("click_show_balance", False))
-        self.click_show_self_talk = bool(config.get("click_show_self_talk", False))
         # 配图缓存按**签名**重建（清单 mtime/size + 目标显示尺寸），后台解码预热
         # ——GUI 只在出泡时取缓存（同步读图是 100-256ms 慢帧源，py-spy 实测）。
         # 签名没变就什么都不做：绝大多数 refresh 改的是气泡风格/间隔这类与配图
@@ -2528,8 +2526,8 @@ class OverlayShell(QObject):
 
         host 形消费者（``MusicLyricController`` / ``window_alerts`` 的各种分支）
         直接读 ``win.cfg``。旧架构一窗一宠，``win.cfg`` 天然就是那只宠的视图；本壳
-        是单例，直接回主配置会让每宠键（``self_talk_texts`` / ``click_show_self_talk``
-        / ``self_talk_speak_enabled`` / ``character`` …）一律读成主配置里的缺省值
+        是单例，直接回主配置会让每宠键（``self_talk_texts`` /
+        ``self_talk_speak_enabled`` / ``character`` …）一律读成主配置里的缺省值
         ——设置页写进 slot 档案、运行期却看不到。实机表现：开着「点击台词朗读」，
         点击出气泡但**不朗读、也没有任何日志**（v4.3.3 用户实测 #307）。
         """
@@ -3209,44 +3207,14 @@ class OverlayShell(QObject):
         _start_self_talk_loader()
         _SELF_TALK_LOAD_Q.put((cache, pending, edge, gen, self._self_talk_gen_now))
 
-    def _show_click_self_talk(self, click_name: str = "", sprite=None) -> bool:
-        """点击自言自语（``window_alerts.show_click_self_talk`` host 形转发）。
-
-        可安全转发：该实现只调用 ``host._show_self_talk_text`` /
-        ``host._show_random_self_talk``（本类覆写的 sprite 版 / 子宠宿主版）与
-        ``host.on_self_talk_speak``（朗读通道），自己不做 window 私面 import。
-
-        ``sprite`` = 被点的那一只（B7b）：子宠走它自己的宿主（自己那份台词池/
-        间隔/气泡），主宠仍走壳。
-        """
-        if sprite is None or sprite is getattr(self, "sprite", None):
-            return bool(window_alerts.show_click_self_talk(self, click_name))
-        host = self._self_talk_hosts.get(sprite)
-        if host is None:
-            return False
-        return bool(window_alerts.show_click_self_talk(host, click_name))
-
     def _on_sprite_click(self, sprite, click_name: str) -> None:
         """单击 sprite 后的点击分支（``window.py:3370-3377`` 的 sprite 等价物）。
 
         由 ``ShellOverlayWindow.mouseReleaseEvent`` 注入调用（``click_name`` =
         本次点击实际绑定的动画名，取不到为 ""）。旧架构一窗一宠：点击音效、余额
-        气泡、点击台词全部落在**被点的那一只**身上（B7b：逐 sprite 取源/落点）。
-        余额优先于自言自语，二者都不开就只发声；自言自语显示成功后按
-        ``after_display`` 重排**它的**周期定时器（避免与刚弹出的点击气泡叠一起）。
+        气泡全部落在**被点的那一只**身上（B7b：逐 sprite 取源/落点）。
         """
         target = self.sprite if sprite is None else sprite
-        # 每日一签：当天还没看签时冒一行「今日的签还没看」（服务内部保证一天只提示
-        # 一次、开关关掉就不提示）。挂在这里而不是 click_feedback：后者不带 sprite
-        # 身份、对无 sprite 的调用按契约静音（见下），而且**本方法是壳自己的方法**，
-        # 首次构建与屏迁移两处接线都指向它，不会像 overlay 上的属性那样重挂漏掉。
-        hint = getattr(getattr(self._instance, "shell", None),
-                       "divination_hint_on_interaction", None)
-        if callable(hint):
-            try:
-                hint()
-            except Exception:
-                logging.exception("抽签每日提示失败")
         # 点击音效：overlay 的 click_feedback 通道不带 sprite 身份（播放器对
         # "无 sprite"的调用已按契约静音，见 SpriteSoundPlayer.on_click），真正的
         # 播放落在这一句——门/音量/音源都取被点的那一只自己的配置。通道被置 None
@@ -3262,9 +3230,6 @@ class OverlayShell(QObject):
             if callable(handler):
                 # 余额气泡锚在**被点那一只**的宿主上（主宠 = 壳本身，行为不变）
                 handler(self._sprite_host(target))
-        elif bool(cfg.get("click_show_self_talk", False)):
-            if self._show_click_self_talk(click_name, target):
-                self._schedule_self_talk_for(target, after_display=True)
 
     # ---- 音乐自动唱歌（M5f：window_alerts host 形函数复用 + 定时器 + 热改）----
     def _init_music_sing(self) -> None:

@@ -229,7 +229,7 @@ WINDOW_PY_LINE_BUDGET = 4671
 # 2026-10-08 回调到 2423（#208+#209+#172 叠加后，#228 歌词批次把「浏览器媒体
 # 会话参与歌词」的 4 行写回搬进 settings_music.save_source_settings 换成 1 行、
 # 并入 foobar2000 歌词两行——净 −3）：免打扰 4 行 / 天气 2 行 / 网络信息 5 行，
-# 实现分别在 pet/settings_quiet.py / settings_weather.py / settings_network.py /
+# 实现分别在 pet/settings_quiet.py / settings_network.py /
 # settings_music.py。实测 2423；按文件约定只随实测校准（拆分仍是待办）。
 # 2026-10-08 再调到 2426（#172 对齐：菜单入口改运行时置灰——CONTEXT.md 的
 # Runtime Disabled）：编排器状态列随开关显示「已停用」——`_sync_menu_action_states`
@@ -286,7 +286,7 @@ WINDOW_PY_LINE_BUDGET = 4671
 # 反而把"哪一档跟哪个开关"这条唯一契约切散），故按文件约定校准到实测值。
 # 2026-10-18 上调到 2563（互动域新增「快捷键」页内标签，本文件净 +2：一行 import
 # + 保存路径一行 `save_hotkey_settings`）。行的装配在 settings_hotkeys（新模块），
-# 本文件只留接线——这是既定口径（settings_quiet/weather/divination 同形）。
+# 本文件只留接线——这是既定口径（settings_quiet/settings_network 同形）。
 # 2026-10-18 上调到 2580（Ctrl+F 聚焦搜索框 + 搜索索引纳入「更新」页作者行，本文件
 # 净 +17：两条 import、`_focus_search_box` 槽与其接线、索引来源多一类候选）。
 # 2026-10-19 上调到 2594（搜索框 ↑/↓ 逐条翻命中，本文件净 +14：`_search_settings`
@@ -304,9 +304,6 @@ def _read(name: str) -> str:
 
 
 def test_pure_logic_modules_do_not_import_qt():
-    # 节日提醒的纯逻辑/纯数据模块同样必须零 Qt（2026-09-16 加入，随功能一起
-    # 把"纯逻辑层零 Qt"从约定升级为机器化守卫；festival_service/festival_settings
-    # 不在本列——前者属服务层、后者属 UI 层，本就不受此约束）。
     # 2026-09-23 加入 overlay_settings_command：D12 指令通道的写/读/消费与拓扑门
     # 必须零 Qt——独立设置进程（pet/__main__.py --settings）禁止导入 pet.app/
     # overlay_shell，env 读取的唯一实现只能落在两侧都能 import 的轻模块里。
@@ -315,13 +312,7 @@ def test_pure_logic_modules_do_not_import_qt():
     # network_info.py 是弹窗的数据层（属地解析/连通性/文案），同样零 Qt。
     for name in (
         "collision.py", "physics.py",
-        "festival_calendar.py", "festival_data.py", "festival.py",
-        "festival_quotes_cn.py", "festival_quotes_west.py",
-        "festival_quotes_west_movie.py", "festival_quotes_west_game.py",
-        "festival_quotes_west_song.py", "overlay_settings_command.py",
-        # 「回收内存」(#210)：过滤真值表与 ctypes 薄封装必须零 Qt——后台线程里
-        # 跑的就是这一层，单测也在无 Qt 的替身上验（ctypes 全 mock）。
-        "memory_trim.py",
+        "overlay_settings_command.py",
         "net_monitor.py", "network_info.py",
         # 2026-10-07 加入 music_title：标题清洗/解析是取词链路的前处理，规则要能
         # 脱离 Qt 单独跑真值表（误伤防护的用例都是纯字符串）。

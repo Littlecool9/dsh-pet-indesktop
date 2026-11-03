@@ -2,8 +2,6 @@
   "schema_version": 1,
   "layout_id": "modern-default-v1",
   "nodes": [
-    {"type": "action", "id": "ojingjing", "visible": true, "section": "profile"},
-    {"type": "separator", "id": "default.separator-profile", "visible": true},
     {"type": "action", "id": "chat", "visible": true, "section": "interaction"},
     {"type": "action", "id": "look_screen", "visible": true, "section": "interaction"},
     {"type": "action", "id": "screen_capture", "visible": true, "section": "interaction"},
@@ -56,11 +54,7 @@
       "children": [
         {"type": "action", "id": "balance", "visible": true},
         {"type": "action", "id": "harness", "visible": true},
-        {"type": "action", "id": "deepseek_web", "visible": true},
-        {"type": "action", "id": "check_update", "visible": true},
-        {"type": "action", "id": "network_info", "visible": true},
-        {"type": "action", "id": "github_project", "visible": true},
-        {"type": "action", "id": "quark_download", "visible": true}
+        {"type": "action", "id": "network_info", "visible": true}
       ]
     },
     {"type": "action", "id": "agent_link", "visible": true, "section": "tools"},
@@ -68,13 +62,8 @@
     {"type": "action", "id": "todo_panel", "visible": true, "section": "tools"},
     {"type": "action", "id": "focus_mode", "visible": true, "section": "tools"},
     {"type": "action", "id": "quiet_mode", "visible": true, "section": "tools"},
-    {"type": "action", "id": "memory_trim", "visible": true, "section": "tools"},
-    {"type": "action", "id": "weather", "visible": true, "section": "tools"},
-    {"type": "action", "id": "weather_cities", "visible": true, "section": "tools"},
     {"type": "action", "id": "voice_chime_now", "visible": false, "section": "tools"},
     {"type": "action", "id": "voice_chime_toggle", "visible": false, "section": "tools"},
-    {"type": "action", "id": "festival_now", "visible": false, "section": "tools"},
-    {"type": "action", "id": "festival_toggle", "visible": false, "section": "tools"}, {"type": "action", "id": "divination_draw", "visible": true, "section": "tools"},
     {"type": "separator", "id": "default.separator-tools", "visible": true},
     {"type": "action", "id": "modern_settings", "visible": true, "section": "system"},
     {"type": "action", "id": "quit", "visible": true, "section": "system"}

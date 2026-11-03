@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """A3 回归：布尔开关菜单项「标签翻转 + 回调」模板的行为契约。
 
-`_flag_toggle_spec` 把语音报时开关与节日提醒开关的同构实现收成一处
+`_flag_toggle_spec` 把语音报时开关的实现收成一处
 （`pet/context_menus/registry.py`）。本用例钉住提炼后的对外行为：
 
 1. 配置开 → 显示「关闭 X」（点了就关）；配置关 → 显示「启用 X」；
@@ -34,20 +34,14 @@ class _Pet:
         if with_cfg:
             self.cfg = _Cfg(values or {})
         self.voice_calls = 0
-        self.festival_calls = 0
 
     def on_toggle_voice_chime(self):
         self.voice_calls += 1
-
-    def on_toggle_festival(self):
-        self.festival_calls += 1
 
 
 @pytest.mark.parametrize("action_id,key,caller,on_label,off_label", [
     ("voice_chime_toggle", "voice_chime_enabled", "voice_calls",
      "关闭语音报时", "启用语音报时"),
-    ("festival_toggle", "festival_reminder_enabled", "festival_calls",
-     "关闭节日提醒", "启用节日提醒"),
 ])
 def test_flag_toggle_spec_flips_label_and_click_calls_back(
         app, action_id, key, caller, on_label, off_label):
@@ -86,10 +80,9 @@ def test_flag_toggle_spec_tolerates_missing_config(app):
     app.processEvents()
 
 
-def test_two_toggles_share_one_factory():
-    """两个开关必须由同一工厂产出（防回潮：各自再抄一份同构实现）。"""
-    for builder in (registry_mod._build_voice_chime_toggle,
-                    registry_mod._build_festival_toggle):
-        assert builder.__qualname__.startswith("_flag_toggle_spec.<locals>"), (
-            f"{builder.__qualname__} 必须来自 _flag_toggle_spec 工厂"
-        )
+def test_toggle_uses_the_shared_factory():
+    """开关必须由共享工厂产出（防回潮：再抄一份同构实现）。"""
+    builder = registry_mod._build_voice_chime_toggle
+    assert builder.__qualname__.startswith("_flag_toggle_spec.<locals>"), (
+        f"{builder.__qualname__} 必须来自 _flag_toggle_spec 工厂"
+    )

@@ -14,11 +14,10 @@
 3. ``hide`` 只隐藏被点的那只（主宠 = 宿主窗，维持整窗隐藏语义）；
 4. ``look_at_screen(sprite=...)`` 记住发起者；
 5. ``DeepSeek 余额`` 的父窗传**发起的那一只**的代次呈现器（手动结果归发起者），
-   ``检查更新`` 的父窗传壳（进程级服务），``check_update`` 不得因 AttributeError
-   永久自锁 ``_update_checking``。
+
 
 装配：真 ``OverlayShell`` + 真 ``PetSprite`` + 真 ``Config``；子宠走真
-``shell.spawn_pet()``；余额/更新复用 ``pet.app`` 的真实展示实现（只桩网络边界）。
+``shell.spawn_pet()``；余额复用 ``pet.app`` 的真实展示实现（只桩网络边界）。
 纪律：offscreen；同步直调 + 事件同步轮询（不赌固定 sleep）。
 """
 from __future__ import annotations
@@ -34,7 +33,6 @@ import pet.app as app_mod
 import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
 import tests.test_sprite_menu_parity as parity
-from pet.app import AppShell
 from pet.config import Config
 from pet.overlay_shell import OverlayShell
 from pet.pet_sprite import PetSprite
@@ -45,19 +43,10 @@ app = QApplication.instance() or QApplication([])
 
 # ---------------------------------------------------------------- 装配
 class _MiniAppShell:
-    """最小真实 AppShell 面：余额/更新复用 ``pet.app`` 的真实实现。
-
-    ``check_update`` 直接绑 ``AppShell.check_update``（网络边界
-    ``updater.latest_release`` 由用例 monkeypatch），故 ``_update_checking`` 的
-    先置位后复位语义、``target.show_bubble`` 的调用对象都与产品逐点一致；
-    ``show_balance`` 调真实 ``_show_balance_payload``（网络/缓存路径与本缺口无关）。
-    """
-
-    check_update = AppShell.check_update
+    """最小真实 AppShell 面：余额复用 ``pet.app`` 的真实展示实现。"""
 
     def __init__(self, instance=None) -> None:
         self.instance = instance
-        self._update_checking = False
 
     def show_balance(self, parent=None) -> None:
         app_mod._show_balance_payload(
@@ -378,28 +367,22 @@ def test_look_screen_remembers_clicked_sprite(tmp_path, monkeypatch):
         shell._delete_runtime_marker()
 
 
-# ---------------------------------------------------------------- A 余额/更新
-def test_balance_targets_the_initiating_pet_and_update_still_uses_the_shell(
+# ---------------------------------------------------------------- A 余额
+def test_balance_targets_the_initiating_pet(
         tmp_path, monkeypatch):
-    """余额落**发起的那一只**（真 ``overlay.show()`` + 子宠定位），更新仍落壳。
+    """余额落**发起的那一只**（真 ``overlay.show()`` + 子宠定位）。
 
     A10/F04 契约（2026-10-10 终审）：手动服务结果归**发起 sprite**——右击子肥鱼查余额，
     气泡必须冒在子肥鱼头上；子宠没有联动动作链，余额档位动画**不许**改播到主肥鱼身上。
     旧用例钉的"余额也必须落壳"是错的合同：其理由（"OverlayWindow 没有 show_bubble"）
     早在 A10 就让位给代次呈现器了。
 
-    「检查更新」那一半是壳级服务（``AppShell.check_update``），落点与自锁语义**逐字不动**：
-    必须跑过 ``_update_checking = True`` 那一行、异常后复位、并能再次检查。
     """
     mini = _MiniAppShell()
 
-    def _release():
-        raise RuntimeError("offline")
-
-    monkeypatch.setattr(app_mod.updater, "latest_release", _release)
     shell, instance, _config = _make_shell(tmp_path, app_shell=mini)
     mini.instance = instance
-    # 壳级气泡面（更新路径的落点）+ 主宠联动动画入口：两者都只该被"命中壳"的结果用到。
+    # 壳级气泡面 + 主宠联动动画入口：两者都不该被子宠发起的余额使用。
     bubbles: list = []
     monkeypatch.setattr(
         shell, "show_bubble",
@@ -426,17 +409,6 @@ def test_balance_targets_the_initiating_pet_and_update_still_uses_the_shell(
         assert link_anims == [], \
             "子宠没有联动动画链：余额档位动画不许改播到主肥鱼（不播好过错播）"
 
-        update = _require(menu, "检查更新")
-        update.trigger()                 # 旧实现：AttributeError + _update_checking 永锁
-        assert "正在检查更新…" in bubbles, "check_update 必须跑过置位那一行"
-        assert _wait_until(lambda: mini._update_checking is False), \
-            "_update_checking 未复位 = 本次会话永久不再检查更新"
-        assert any("检查更新失败" in text for text in bubbles)
-        # 复位后可再次检查（自锁解除的直接证据）
-        bubbles.clear()
-        _require(menu, "检查更新").trigger()
-        assert "正在检查更新…" in bubbles
-        assert _wait_until(lambda: mini._update_checking is False)
     finally:
         shell.clear_spawned_pets()
         shell._delete_runtime_marker()

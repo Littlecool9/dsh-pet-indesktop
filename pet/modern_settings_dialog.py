@@ -75,7 +75,6 @@ from . import harness_launcher as harness_mod
 from .click_sound import warm_click_sound_effects
 from .config import (
     DEFAULT_CONTEXT_MENU_APPEARANCE,
-    DEFAULT_MENU_EASTER_EGG,
     DEFAULT_QUICK_LAUNCH_APPS,
     DEFAULT_SELF_TALK_BUBBLE_STYLE,
     DEFAULT_SELF_TALK_DURATION_SECONDS,
@@ -91,7 +90,6 @@ from .context_menus.icons import (
 )
 from .context_menus.quick_launch import fitted_application_icon
 from .context_menus.registry import CUSTOM_ICON_CHOICES, MENU_ACTIONS
-from .fun_image_popup import oijingjing_image_path, resolve_fun_asset, store_fun_asset
 from .menu_layout import (
     load_default_menu_layout,
     materialize_implicit_separators,
@@ -102,7 +100,6 @@ from . import settings_close_flow
 from .application_icon import load_application_icon
 from .settings_slot_config import route_settings_config
 from .speech_bubble import BUBBLE_STYLE_PRESETS
-from .update_settings import UpdatePage
 
 
 def _chat_feature_available() -> bool:
@@ -178,9 +175,7 @@ from . import settings_interaction
 from . import settings_music
 from . import settings_network
 from . import settings_page_guide
-from . import settings_divination
 from . import settings_hotkeys
-from . import settings_weather
 from . import settings_pet_controls
 from . import settings_quiet
 from . import settings_focus
@@ -899,19 +894,6 @@ class ModernSettingsDialog(QDialog):
                 appearance_content,
             )
         )
-        appearance_layout.addWidget(
-            SettingsSection(
-                "彩蛋入口",
-                [
-                    SettingRow("egg_enabled", "显示彩蛋", "控制新版菜单首行彩蛋入口是否显示。", self.egg_enabled_check),
-                    SettingRow("egg_title", "入口标题", "显示在圆形头像右侧的文字。", self.egg_title_edit),
-                    SettingRow("egg_hint", "右侧提示", "显示在鼠标指针图标后的短提示。", self.egg_hint_edit),
-                    SettingRow("egg_avatar", "头像图片", "使用绝对路径；支持常见图片格式。", self.egg_avatar_picker),
-                    SettingRow("egg_image_dir", "弹窗图片目录", "使用绝对路径；每次点击会随机选择一张图片。", self.egg_image_dir_picker),
-                ],
-                appearance_content,
-            )
-        )
         appearance_layout.addStretch(1)
         self._add_page("外观", "appearance", self._page_shell("外观", appearance_content))
 
@@ -928,8 +910,6 @@ class ModernSettingsDialog(QDialog):
         menu_enabled_actions = set(menu_available_actions)
         if not self.config.get("quick_launch_apps", DEFAULT_QUICK_LAUNCH_APPS):
             menu_enabled_actions.discard("quick_launch")
-        if not self.config.get("menu_easter_egg", DEFAULT_MENU_EASTER_EGG).get("enabled", True):
-            menu_enabled_actions.discard("ojingjing")
         self.menu_layout_editor = MenuLayoutEditor(
             self.config.get("context_menu_layout"),
             menu_content,
@@ -988,27 +968,14 @@ class ModernSettingsDialog(QDialog):
         self.voice_chime_page = VoiceChimeSettingsPage(self.config, self)
         self.voice_chime_page.preview_requested.connect(self._on_voice_chime_preview)
 
-        # 节日提醒设置页（行在 _rebuild_domain_navigation 中拾入「语音」总域）
-        from .festival_settings import FestivalSettingsPage
-
-        self.festival_page = FestivalSettingsPage(self.config, self)
-
-        # 更新页是命令/状态面板，不写入 Config；它与常规域同级，便于从菜单
-        # 和设置窗口进入同一套检查、下载、校验、安装流程。
-        self.update_page = UpdatePage(
-            self.config, include_chat=self.include_ai, parent=self
-        )
         self._rebuild_domain_navigation()
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
         if self.initial_page:
             self.select_page(self.initial_page)
-        # 索引口径：标准设置行 + 「更新」页的作者账号行（后者不是 SettingRow，
-        # 但暴露同名的 label/hint_label，故同一套匹配函数就能覆盖；侧栏命令类
-        # 控件仍不进索引——那是 docs/SETTINGS-CHANGE-GATES.md 里的既有决定）。
-        from .settings_about import AuthorRow
-
-        self._search_rows = self.findChildren(SettingRow) + self.findChildren(AuthorRow)
+        # 索引口径：标准设置行。侧栏命令类控件不进索引——那是
+        # docs/SETTINGS-CHANGE-GATES.md 里的既有决定。
+        self._search_rows = self.findChildren(SettingRow)
         self._search_matches: list[SettingRow] = []
         self._search_index = -1
         self.search_edit.textChanged.connect(self._search_settings)
@@ -1024,8 +991,6 @@ class ModernSettingsDialog(QDialog):
         self.island_icon_check.toggled.connect(self._update_island_icon_controls)
         self.island_info_check.toggled.connect(self._update_island_info_controls)
         self.island_info_mode_select.currentIndexChanged.connect(self._update_island_custom_text)
-        self.egg_enabled_check.toggled.connect(self._update_egg_controls)
-        self.egg_enabled_check.toggled.connect(self._sync_menu_action_states)
         self.network_info_menu_check.toggled.connect(self._sync_menu_action_states)
         self.quick_launch_editor.changed.connect(self._sync_menu_action_states)
         self.collision_enabled_check.toggled.connect(self._update_collision_controls)
@@ -1035,12 +1000,9 @@ class ModernSettingsDialog(QDialog):
             self.pro_idle_check.toggled.connect(self._update_proactive_idle_controls)
         self.spawn_inherit_size_check.toggled.connect(self._update_spawn_size_controls)
         self.golden_spin_click_check.toggled.connect(self._update_golden_spin_controls)
-        self.click_self_talk_check.toggled.connect(self._update_click_self_talk_controls)
         self._update_self_talk_controls(self.self_talk_check.isChecked())
-        self._update_click_self_talk_controls(self.click_self_talk_check.isChecked())
         self._update_translucency_controls(self.menu_translucent_check.isChecked())
         self._update_island_controls(self.island_enabled_check.isChecked())
-        self._update_egg_controls(self.egg_enabled_check.isChecked())
         self._sync_menu_action_states()
         self._update_collision_controls(self.collision_enabled_check.isChecked())
         if hasattr(self, "pro_enabled_check"):
@@ -1072,8 +1034,6 @@ class ModernSettingsDialog(QDialog):
         enabled = set(self.menu_available_actions)
         if not self.quick_launch_editor.apps():
             enabled.discard("quick_launch")
-        if not self.egg_enabled_check.isChecked():
-            enabled.discard("ojingjing")
         if not self.network_info_menu_check.isChecked():
             enabled.discard("network_info")
         self.menu_layout_editor.set_enabled_actions(enabled)
@@ -1336,55 +1296,22 @@ class ModernSettingsDialog(QDialog):
     def _update_self_talk_controls(self, enabled: bool) -> None:
         """周期气泡（``self_talk``）的细项显隐。
 
-        点击侧（``click_self_talk*`` / ``click_talk_bindings``）**不在这里**：它们是
-        独立开关的后续项，见 :meth:`_update_click_self_talk_controls`。绑在一起会让
-        「只想点击听声」的用户在设置页里连开关都看不到。
-
-        节奏项（最短/最长间隔、配图大小）只属于周期链路，仍只跟本开关；内容项
-        （显示时间/候选内容/图片目录/配图概率）两条链路**共读同一份配置**——点击
-        自言自语落地的 ``window_alerts.show_click_self_talk`` 读的正是这批键——所以
-        它们跟 :meth:`_update_self_talk_content_controls` 走「任一开启」。
-        """
-        self._set_setting_rows_visible(
-            ("self_talk_min", "self_talk_max", "self_talk_image_scale"),
-            enabled,
-            dependency="self_talk",
-        )
-        self._update_self_talk_content_controls(enabled)
-
-    def _update_self_talk_content_controls(self, self_talk_enabled: bool) -> None:
-        """内容项显隐：周期气泡与点击自言自语**任一**开启就显示。
-
-        这些键是两条链路共用的内容源（候选文本 / 图片目录 / 配图概率 / 显示时长）。
-        旧模型把显隐整组挂在周期开关上，只开点击的用户必须先打开一个他不用的周期
-        功能才能编辑候选文本——消费侧早已解耦（``show_click_self_talk`` 不看
-        ``self_talk_enabled``），显隐跟着解耦。
+        节奏项（最短/最长间隔、配图大小）与内容项（显示时间/候选内容/图片目录/
+        配图概率）都属于周期气泡本身，统一只跟本开关。
         """
         self._set_setting_rows_visible(
             (
+                "self_talk_min",
+                "self_talk_max",
+                "self_talk_image_scale",
                 "self_talk_duration",
                 "self_talk_texts",
                 "self_talk_images",
                 "self_talk_image_chance",
             ),
-            self_talk_enabled or self.click_self_talk_check.isChecked(),
-            dependency="self_talk_content",
+            enabled,
+            dependency="self_talk",
         )
-
-    def _update_click_self_talk_controls(self, enabled: bool) -> None:
-        """点击自言自语（``click_self_talk``）的后续项显隐。
-
-        预缓存也跟这里：只有点击链路才会把台词**读出来**（周期气泡只显示不朗读），
-        所以点击开关关着时预缓存没有意义。内容项与周期气泡共用，见
-        :meth:`_update_self_talk_content_controls`（任一开启即显示）。
-        """
-        keys = (
-            "click_self_talk_speak",
-            "click_self_talk_precache",
-            "click_talk_bindings",
-        )
-        self._set_setting_rows_visible(keys, enabled, dependency="click_self_talk")
-        self._update_self_talk_content_controls(self.self_talk_check.isChecked())
 
     def _update_island_controls(self, enabled: bool) -> None:
         settings_pet_controls._update_island_controls(self, enabled)
@@ -1397,13 +1324,6 @@ class ModernSettingsDialog(QDialog):
 
     def _update_island_custom_text(self, _index: int | None = None) -> None:
         settings_pet_controls._update_island_custom_text(self, _index)
-
-    def _update_egg_controls(self, enabled: bool) -> None:
-        self._set_setting_rows_visible(
-            ("egg_title", "egg_hint", "egg_avatar", "egg_image_dir"),
-            enabled,
-            dependency="egg_enabled",
-        )
 
     def _update_collision_controls(self, enabled: bool) -> None:
         self._set_setting_rows_visible(
@@ -1498,16 +1418,6 @@ class ModernSettingsDialog(QDialog):
         if self.menu_font_select.findData(current_font) < 0:
             self.menu_font_select.addItem(current_font, current_font)
         self.menu_font_select.setCurrentData(current_font)
-
-    def _open_click_talk_bindings(self) -> None:
-        from .click_talk_dialog import ClickTalkBindingsDialog
-
-        click_names = None
-        parent = self.parent()
-        if parent is not None and hasattr(parent, "clicks") and parent.clicks:
-            click_names = list(parent.clicks)
-        dialog = ClickTalkBindingsDialog(self.config, click_names=click_names, parent=self)
-        dialog.exec()
 
     def _preview_click_sound(self) -> None:
         """试听当前选择的点击音效配置（不保存配置）。"""
@@ -1882,8 +1792,6 @@ class ModernSettingsDialog(QDialog):
         # 行数预算原因），页内用任务标签分成「点击与音效 / 自言自语」两个同级任务；
         # 行不进 all_rows 快照，因此不需要 claim，也不会掉进「待分类（开发期）」。
         interaction = settings_interaction.build_interaction_domain(self)
-        # 点击音效 4 行与 click_self_talk / click_balance / click_talk_bindings
-        # 同享 click_ 前缀，按 2026-09-17 定稿口径整组留在 interaction 域。
         menu = SettingsTabContainer(self)
         menu.addTab(
             "layout",
@@ -1921,7 +1829,6 @@ class ModernSettingsDialog(QDialog):
                         ),
                         True,
                     ),
-                    ("彩蛋入口", claim_prefix("egg_")),
                 ]
             ),
         )
@@ -2016,12 +1923,6 @@ class ModernSettingsDialog(QDialog):
         ]
         voice_chime_rows = list(self.voice_chime_page.findChildren(SettingRow))
         claimed.update(voice_chime_rows)
-        # 节日提醒的行**也要在这里登记**：本页的行从构造起就挂在自己的持有容器里
-        # （无父的 SettingRow 一旦 setVisible 就是个顶层窗口，用户会看到无标题小窗闪
-        # ——上游 #261 修的就是这个），因此 findChildren 现在取得到它们。不登记就会
-        # 掉进「待分类（开发期）」——它们稍后由 build_domain_page 现造卡片收进「语音」域。
-        festival_rows = list(self.festival_page.findChildren(SettingRow))
-        claimed.update(festival_rows)
         dialogue_rows = claim_prefix("dialogue_")
         # 「自定义台词」＝一个可折叠框（默认折叠）：逐事件文案行全部收进去，
         # 不用自定义台词的用户不该翻过整页文案框；搜索命中时会自动展开
@@ -2071,27 +1972,19 @@ class ModernSettingsDialog(QDialog):
             ]
         )
 
-        # 「语音」总域（2026-09-17 定稿口径）：只收鱼开口说话（TTS）类设置——
-        # 语音报时整组 + 节日提醒整组（原「自动化与联动」域，带 speak/TTS 播报
-        # 能力）。音效类回各自功能分组：点击音效 4 行回「互动 · 点击反馈」、
-        # 碰撞音效 2 行回「桌宠」碰撞组；Agent 提示音效（agent_sound_*）留在
-        # Agent 联动折叠框内不动。节日提醒整组（分组标题 + 折叠编排）由
-        # festival_settings 自己建卡交给本域：本域不能按「一组行」收它——页面容器
-        # 会散架、四段分组标题会跟着丢（见 docs/SETTINGS-CHANGE-GATES.md 节日提醒
-        # 准入记录）。故这里不用 page_content，自己起一层容器。
+        # 「语音」总域（2026-09-17 定稿口径）：只收鱼开口说话（TTS）类设置。
+        # 音效类回各自功能分组：点击音效 4 行回「互动 · 点击反馈」、碰撞音效 2 行
+        # 回「桌宠」碰撞组；Agent 提示音效（agent_sound_*）留在 Agent 联动折叠框内。
         voice = QWidget(self)
         voice_layout = QVBoxLayout(voice)
         voice_layout.setContentsMargins(0, 0, 0, 0)
         voice_layout.setSpacing(18)
         if voice_chime_rows:
             voice_layout.addWidget(SettingsSection("语音报时", voice_chime_rows, voice))
-        voice_layout.addWidget(self.festival_page.build_domain_page(voice))
         voice_layout.addStretch(1)
         # 语音报时的行刚被搬进这张平卡（容器散架、行序即创建序）：让设置页按当前
         # 后端重新排一遍——当前后端平铺在最上面，其余后端各占一行折叠头。
         self.voice_chime_page.refresh_backend_rows()
-        # 节日提醒的行同样被搬进这张平卡：摆正「常用项在前 + 少用项折叠」的行序。
-        self.festival_page.refresh_backend_rows()
 
         # 「文件识别」域（2026-09-19 新增）：拖文件解读的设置集中在此独立页。
         # 行在本模块构建（settings_file_interpret，行数预算原因），不走 claim。
@@ -2116,7 +2009,6 @@ class ModernSettingsDialog(QDialog):
             "自动化与联动": automation,
             "语音": voice,
             "文件识别": file_interpret,
-            "更新": self.update_page,
         }
         for label, icon in SETTINGS_DOMAIN_NAV:
             content = domain_content.get(label)
@@ -2355,7 +2247,6 @@ class ModernSettingsDialog(QDialog):
         )
         if self.click_balance_check is not None:
             self.config.set("click_show_balance", self.click_balance_check.isChecked())
-        self.config.set("click_show_self_talk", self.click_self_talk_check.isChecked())
         self.config.set("self_talk_speak_enabled", self.click_self_talk_speak_check.isChecked())
         self.config.set("self_talk_voice_precache_enabled",
                         self.self_talk_voice_precache_check.isChecked())
@@ -2445,9 +2336,6 @@ class ModernSettingsDialog(QDialog):
         # 语音报时设置页写回（voice_chime_* 平铺键 + 各后端字段键）
         if self.voice_chime_page is not None:
             self.voice_chime_page.apply_to_config()
-        # 节日提醒设置页写回（仅写 festival_reminder_* / festival_custom_* 10 键）
-        if self.festival_page is not None:
-            self.festival_page.apply_to_config()
         self.config.set(
             "context_menu_appearance",
             {
@@ -2471,17 +2359,6 @@ class ModernSettingsDialog(QDialog):
             "context_menu_layout",
             None if menu_layout_value.get("nodes") == default_menu_nodes else menu_layout_value,
         )
-        self.config.set(
-            "menu_easter_egg",
-            {
-                "enabled": self.egg_enabled_check.isChecked(),
-                "title": self.egg_title_edit.text(),
-                "hint": self.egg_hint_edit.text(),
-                # 内置 assets 内的路径归一化回相对值，保持 portable（目录移动/自更新后仍可用）
-                "avatar": store_fun_asset(self.egg_avatar_picker.text(), oijingjing_image_path()),
-                "image_dir": store_fun_asset(self.egg_image_dir_picker.text(), oijingjing_image_path().parent),
-            },
-        )
         self.config.set("quick_launch_apps", self.quick_launch_editor.apps())
         if self.ai_page is not None:
             self.ai_page.save()
@@ -2490,8 +2367,6 @@ class ModernSettingsDialog(QDialog):
         settings_music.save_music_player_settings(self)
         settings_quiet.save_quiet_settings(self)
         settings_focus.save_focus_settings(self)
-        settings_weather.save_weather_settings(self)
-        settings_divination.save_divination_settings(self)
         settings_hotkeys.save_hotkey_settings(self)
         if sys.platform == "win32" and self.include_ai and hasattr(self, "pro_enabled_check"):
             from .proactive import PRESET_DEFAULTS

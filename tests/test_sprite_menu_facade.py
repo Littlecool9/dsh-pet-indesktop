@@ -897,12 +897,12 @@ def test_main_save_false_rolls_back_config_and_runtime(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- A10 服务结果落点
 # 菜单旁路（右击 → 查看天气 / DeepSeek 余额）此前把**整个壳**交给 AppShell 的
-# 手动服务方法，落点由壳在结果到达时按"最小可见槽"动态决定：右击子肥鱼查天气，
+# 手动余额结果落点由壳在结果到达时按"最小可见槽"动态决定：右击子肥鱼查余额，
 # 气泡冒在主肥鱼头上；请求在飞时把发起的那一只关掉，结果还会落到别宠身上。
 # 点击余额路径早就用 ``_sprite_host(target)`` 收口了，菜单这条路漏了。
 
 def test_service_callbacks_hand_the_initiating_sprite_presenter(tmp_path):
-    """两个手动服务回调都要带**发起 sprite** 的代次呈现器，而不是整个壳。"""
+    """手动余额回调要带**发起 sprite** 的代次呈现器，而不是整个壳。"""
     from tests import test_overlay_collision_toggle as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
@@ -911,22 +911,20 @@ def test_service_callbacks_hand_the_initiating_sprite_presenter(tmp_path):
         shell.spawn_pet()
         child = shell._spawned[0]
         seen: list = []
-        shell.show_weather = lambda host=None, **kw: seen.append(host)
         shell.show_balance = lambda host=None, **kw: seen.append(host)
 
-        SpriteMenuFacade(shell, child).on_show_weather()
         SpriteMenuFacade(shell, child).on_show_balance()
-        assert len(seen) == 2
+        assert len(seen) == 1
         for host in seen:
             assert host is not shell, "手动结果落点必须带发起宠身份，不能是壳本身"
             assert host.presentation_available() is True
-            assert host.show_bubble("天气：晴", 3000) is False or True  # 仅探活，不判文案
+            assert host.show_bubble("余额 12.34", 3000) is False or True  # 仅探活，不判文案
 
         # 主宠那一侧同样带身份（而不是"壳 = 动态最小可见槽"）
         seen.clear()
-        SpriteMenuFacade(shell).on_show_weather()
+        SpriteMenuFacade(shell).on_show_balance()
         assert seen[0] is not shell
-        assert seen[0].show_bubble("天气：晴", 3000) is True
+        assert seen[0].show_bubble("余额 12.34", 3000) is True
     finally:
         toggle._teardown(shell)
 

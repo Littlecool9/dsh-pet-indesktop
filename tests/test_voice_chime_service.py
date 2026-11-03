@@ -513,17 +513,17 @@ def test_fullscreen_quiet_switched_off_by_config_plays(tmp_path, monkeypatch):
     assert len(_WorkerSpy.instances) == 1
 
 
-def test_festival_speech_is_silenced_under_quiet_mode(tmp_path, monkeypatch):
-    """节日语音（外部播报）同样过这道闸：speak() 默认尊重免打扰。"""
+def test_external_speech_is_silenced_under_quiet_mode(tmp_path, monkeypatch):
+    """外部播报同样过这道闸：speak() 默认尊重免打扰。"""
     service, app, _cfg = _service(tmp_path, monkeypatch)
     service.apply_config()
     _quiet().start(15)
 
-    assert service.speak("今天是中秋节。", log_tag="节日提醒") is True
+    assert service.speak("现在是傍晚六点。", log_tag="外部播报") is True
 
     assert _WorkerSpy.instances == []
     assert service._player.plays == 0
-    assert app.win.bubbles == [], "节日气泡由调用方自己管，通道不该插一条"
+    assert app.win.bubbles == [], "气泡由调用方自己管，通道不该插一条"
 
 
 def test_click_self_talk_speech_is_exempt_from_quiet_mode(tmp_path, monkeypatch):
@@ -683,30 +683,6 @@ def test_toggle_voice_chime_flips_config_and_syncs(tmp_path):
     assert shell.voice_chime_service is None
 
 
-def test_audio_channel_survives_on_festival_speak_alone(tmp_path):
-    """报时关闭但节日语音开启时，音频通道必须仍然存在。
-
-    节日语音复用报时服务作为进程内唯一音频通道；若通道随报时开关一起被释放，
-    节日播报就会静默失效（有气泡没声音）——这是本功能最隐蔽的接线坑。
-    """
-    from pet.app import AppShell
-
-    _qapp()
-    cfg = Config(base=tmp_path)
-    cfg.set("voice_chime_enabled", False)
-    cfg.set("festival_reminder_enabled", True)
-    cfg.set("festival_reminder_speak", True)
-    shell = AppShell(_qapp(), cfg, enable_chat=False)
-
-    shell._sync_chime_service()
-    assert shell.voice_chime_service is not None, "节日语音需要通道，不能因报时关闭而释放"
-
-    # 关掉节日语音后，两个开关都关 → 通道应释放
-    cfg.set("festival_reminder_speak", False)
-    shell._sync_festival_service()
-    assert shell.voice_chime_service is None
-
-
 def test_audio_channel_is_not_created_when_nobody_needs_it(tmp_path):
     """两个开关都关时不该白建通道（保持既有懒创建语义）。"""
     from pet.app import AppShell
@@ -720,23 +696,6 @@ def test_audio_channel_is_not_created_when_nobody_needs_it(tmp_path):
 
     shell._sync_chime_service()
     assert shell.voice_chime_service is None
-
-
-def test_appshell_injects_yield_hook_into_chime_service(tmp_path):
-    """让位钩子必须在创建通道时注入——没注入就等于节日与报时会各说各的。"""
-    from pet.app import AppShell
-
-    _qapp()
-    cfg = Config(base=tmp_path)
-    cfg.set("voice_chime_enabled", True)  # 默认关闭（2026-09-19 起），测通道创建须显式开启
-    shell = AppShell(_qapp(), cfg, enable_chat=False)
-
-    service = shell.voice_chime_service
-    assert service is not None
-    assert service.yield_slot is not None
-    # 没有节日服务时应判定为"不让位"，报时照常
-    assert shell._chime_should_yield("2026-02-17T09:00#hourly") is False
-    shell.voice_chime_service.stop()
 
 
 def test_window_callbacks_for_voice_chime_are_wired(tmp_path):
@@ -972,7 +931,7 @@ def test_quiet_mode_drops_queued_speech_instead_of_replaying_later(tmp_path, mon
     _quiet().start(15)
 
     with caplog.at_level("DEBUG"):
-        assert service.speak("今天是中秋节。", log_tag="节日提醒") is True
+        assert service.speak("现在是傍晚六点。", log_tag="外部播报") is True
 
     assert service._pending_speech is None, "入队即闸：队列里不得留下这条节日语音"
     assert _WorkerSpy.instances == [], "丢弃发生在合成之前（连缓存都不查）"
@@ -1476,7 +1435,7 @@ def test_queued_fire_left_queued_is_played_at_end_of_media(tmp_path, monkeypatch
     service.apply_config()
     engaged = _self_starting_engagement(service, monkeypatch)
 
-    assert service.speak("今天是中秋节。", log_tag="节日提醒") is True   # 合成在飞
+    assert service.speak("现在是傍晚六点。", log_tag="外部播报") is True   # 合成在飞
     assert len(_WorkerSpy.instances) == 1
     service._on_tick(datetime(2026, 9, 15, 10, 0, 0))                  # 到点报时被拦下
     assert service._queued_fire is not None
@@ -1545,8 +1504,8 @@ def test_just_started_playback_keeps_new_speech_out_of_the_channel(tmp_path, mon
     service.apply_config()
     monkeypatch.setattr(service, "_player_engaged", lambda: True)   # 刚起播
 
-    assert service.speak("今天是中秋节。", log_tag="节日提醒") is True
-    assert service._pending_speech == "今天是中秋节。", "通道被占 → 必须入队"
+    assert service.speak("现在是傍晚六点。", log_tag="外部播报") is True
+    assert service._pending_speech == "现在是傍晚六点。", "通道被占 → 必须入队"
     assert _WorkerSpy.instances == [], "不得直发合成（那会起第二路音频）"
 
     wav = tmp_path / "line.wav"
@@ -1895,82 +1854,6 @@ def test_service_without_hook_behaves_exactly_as_before(tmp_path, monkeypatch):
 #   2) 该结论**与两个 QTimer 的触发先后无关**（报时先 tick 也要让位）。
 
 
-def _duet_shell(tmp_path):
-    """建一个"报时每小时 + 节日 09:00 播报"的 AppShell，返回 (shell, chime, festival)。"""
-    from pet.app import AppShell
-
-    _qapp()
-    cfg = Config(base=tmp_path)
-    cfg.set("voice_chime_enabled", True)
-    cfg.set("voice_chime_schedule", "hourly")
-    cfg.set("festival_reminder_enabled", True)
-    cfg.set("festival_reminder_speak", True)
-    cfg.set("festival_reminder_mode", "custom")
-    cfg.set("festival_reminder_times", "09:00")
-    shell = AppShell(_qapp(), cfg, enable_chat=False)
-    # 镜像 AppShell.start() 的同步顺序（节日先于报时）——顺序本身也是被测契约：
-    # 报时 start() 会立刻 tick 一次，那一刻必须已经能问到"是否让位"。
-    shell._sync_festival_service()
-    shell._sync_chime_service()
-    return shell, shell.voice_chime_service, shell.festival_service
-
-
-def test_festival_and_chime_never_both_speak_in_the_same_minute(tmp_path, monkeypatch):
-    """节日先 tick：报时到点必须让位，本分钟只有节日出声。"""
-    shell, chime, festival = _duet_shell(tmp_path)
-    assert chime is not None and festival is not None
-
-    chime_said: list[str] = []
-    festival_said: list[str] = []
-    monkeypatch.setattr(chime, "_fire", lambda s, now, bubble=None, **k: chime_said.append(s))
-    monkeypatch.setattr(festival, "_speak", lambda text: festival_said.append(text))
-
-    when = datetime(2026, 2, 17, 9, 0, 5)  # 春节 + 整点 + 节日提醒点，三者重合
-    festival._on_tick(when)
-    chime._on_tick(when)
-
-    assert festival_said, "节日应当播报"
-    assert chime_said == [], "同一分钟报时不得再说话（会叠音或抢通道）"
-    shell._on_about_to_quit()
-
-
-def test_chime_yields_even_when_it_ticks_first(tmp_path, monkeypatch):
-    """报时先 tick 也必须让位——这是不能用"节日去抢通道"实现的原因。"""
-    shell, chime, festival = _duet_shell(tmp_path)
-
-    chime_said: list[str] = []
-    festival_said: list[str] = []
-    monkeypatch.setattr(chime, "_fire", lambda s, now, bubble=None, **k: chime_said.append(s))
-    monkeypatch.setattr(festival, "_speak", lambda text: festival_said.append(text))
-
-    when = datetime(2026, 2, 17, 9, 0, 5)
-    chime._on_tick(when)      # 报时先到
-    festival._on_tick(when)   # 节日后到
-
-    assert chime_said == [], "报时先 tick 时同样要让位"
-    assert festival_said, "节日仍应播报"
-    shell._on_about_to_quit()
-
-
-def test_chime_speaks_normally_on_a_plain_day(tmp_path, monkeypatch):
-    """没有节日的整点，报时照常发声——让位不能变成常态静音。"""
-    shell, chime, festival = _duet_shell(tmp_path)
-
-    chime_said: list[str] = []
-    monkeypatch.setattr(chime, "_fire", lambda s, now, bubble=None, **k: chime_said.append(s))
-
-    chime._on_tick(datetime(2026, 1, 2, 9, 0, 5))  # 已核实：该日无任何节日/节气
-
-    assert len(chime_said) == 1
-    shell._on_about_to_quit()
-
-
-# ============================================================ edge-tts 懒加载
-# 现状（回归）：模块顶层 import edge_tts（实测 ~1.4s + 常驻内存），即使用户
-# voice_chime_enabled=False 也照付。改成：顶层只做 find_spec 惰性探测，真正的
-# import 推迟到 _TTSWorker 的合成线程；失败走既有 _notify_missing_tts 降级。
-
-
 def test_service_module_top_level_does_not_import_edge_tts():
     """首次 import 一份 voice_chime_service：不得把 edge_tts 本体拉进 sys.modules。
 
@@ -2190,91 +2073,6 @@ def test_audio_channel_not_created_for_self_talk_speak_alone(tmp_path):
     shell = AppShell(_qapp(), cfg, enable_chat=False)
     shell._sync_chime_service()
     assert shell.voice_chime_service is None
-
-
-def test_audio_channel_survives_on_divination_speak_alone(tmp_path):
-    """报时 / 节日语音 / 点击朗读全关、只剩「抽签时念出来」时，通道同样不能被释放。
-
-    与节日语音、点击朗读同族：通道随报时开关一起被释放，抽签语音就变成「有气泡没
-    声音」——这正是产品阻断①暴露的那条生命周期缺口。
-    """
-    from pet.app import AppShell
-
-    _qapp()
-    cfg = Config(base=tmp_path)
-    cfg.set("voice_chime_enabled", False)
-    cfg.set("festival_reminder_enabled", False)
-    cfg.set("self_talk_speak_enabled", False)
-    cfg.set("click_show_self_talk", False)
-    cfg.set("divination_enabled", True)
-    cfg.set("divination_speak", True)
-    shell = AppShell(_qapp(), cfg, enable_chat=False)
-
-    shell._sync_chime_service()
-    service = shell.voice_chime_service
-    assert service is not None, "抽签语音需要这条通道"
-    assert service.is_running() is True, "通道必须真的在跑（配置才会被读进来）"
-
-    cfg.set("divination_speak", False)
-    shell._sync_chime_service()          # 保存路径先同步通道生命周期（同自测）
-    shell._sync_divination_service()
-    assert shell.voice_chime_service is None, "四个消费者都关掉后通道应释放"
-
-
-def test_divination_speak_uses_the_user_backend_on_a_lazily_created_channel(tmp_path, monkeypatch):
-    """只开抽签语音：**懒创建**的通道也必须按用户配置合成（SAPI / 不回退 / 音量 0）。
-
-    产品阻断①：``AppShell._chime_wanted()`` 不含抽签 → 通道随时被释放；抽签取通道
-    那一刻新建的 ``VoiceChimeService`` 的 ``_cfg`` 还是模块默认（edge 后端 + 允许
-    回退 + 默认音量），于是"选了本机 SAPI、关掉回退、音量 0"的主人点抽签时照旧
-    **联网 edge 合成**、按默认音量出声——三个设置项一个都不生效。
-
-    只替两个边界：合成线程（网络 / COM）与播放器（音频设备）；服务本身是真的。
-    """
-    import datetime as _dt
-
-    import pet.voice_chime_service as svc_mod
-    from pet.app import AppShell
-
-    _qapp()
-    cfg = Config(base=tmp_path)
-    cfg.set("voice_chime_enabled", False)
-    cfg.set("festival_reminder_enabled", False)
-    cfg.set("self_talk_speak_enabled", False)
-    cfg.set("click_show_self_talk", False)
-    cfg.set("divination_enabled", True)
-    cfg.set("divination_speak", True)
-    cfg.set("voice_chime_tts_backend", "sapi")
-    cfg.set("voice_chime_tts_fallback", False)
-    cfg.set("voice_chime_volume", 0)
-    # 每个后端都自报"可用"：合成链路由配置决定，用例不去猜本机装没装 SAPI / edge
-    _WorkerSpy.instances = []
-    monkeypatch.setattr(svc_mod, "_TTSWorker", _WorkerSpy)
-    for provider in svc_mod.tts.providers():
-        monkeypatch.setattr(type(provider), "availability", lambda self, values: False)
-
-    shell = AppShell(_qapp(), cfg, enable_chat=False)
-    channel = shell.ensure_audio_channel()
-    assert isinstance(channel, VoiceChimeService), "必须是真服务，不是通道桩"
-    channel._player = _FakePlayer()
-    channel._audio_out = _FakeAudioOut()
-    channel._ensure_player = lambda: True
-
-    service = shell._ensure_divination_service()
-    monkeypatch.setattr(service, "_bubble", lambda text: None)   # 气泡不是本用例的被测面
-    service.draw_now(_dt.date(2026, 10, 16))
-
-    assert _WorkerSpy.instances, "抽签语音必须提交一次合成"
-    used = {a.provider for worker in _WorkerSpy.instances for a in worker.attempts}
-    assert used == {"sapi"}, f"合成链路只许出现用户选的后端，实际 {sorted(used)}"
-
-    # 预合成回来 → 排队的「抽签中...」进合成；再回来 → 交给播放器（音量必须真为 0）
-    _WorkerSpy.instances[-1].finish()
-    assert len(_WorkerSpy.instances) >= 2, "排队的「抽签中...」必须补上合成"
-    _WorkerSpy.instances[-1].finish()
-    assert channel._audio_out.volumes == [0.0], "音量 0 必须真的落到播放器上"
-
-    service.shutdown()   # 收口：投递出去的揭签闭包随停用作废，不赌用例结束时机
 
 
 def _precached_wav(cfg, text: str) -> Path:

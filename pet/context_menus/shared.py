@@ -10,20 +10,17 @@ import weakref
 
 import shiboken6
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QActionGroup, QDesktopServices, QIcon, QPixmap
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import QMenu
 
 from .. import autostart as autostart_mod
 from .. import catalog
 from ..harness_launcher import launch_harness_gui
-from ..updater import QUARK_PAN_URL as QUARK_PAN_URL, REPO_URL as REPO_URL
 from .icons import fitted_pet_pixmap_icon, pet_avatar_menu_icon, vector_menu_icon
 from .menu_styles.common import inherit_menu_style
 
 log = logging.getLogger(__name__)
-
-DEEPSEEK_WEB_URL = "https://chat.deepseek.com/"
 
 
 def animation_icon_cache_key(library, name: str) -> tuple[int, str]:
@@ -1449,109 +1446,6 @@ def add_agent_cost(menu: QMenu, pet, *, icons: bool = True):
 
     action.toggled.connect(_on_toggled)
     return action
-
-
-class _MemoryTrimBridge(QObject):
-    """「回收内存」worker → GUI 线程的气泡桥（保活口径同 ``_MusicLaunchBridge``）。
-
-    worker 只 emit；槽在 GUI 线程执行——跨线程直接碰 Qt 控件是未定义行为。
-    真实宿主（PetWindow 是 QObject）走 Qt 父子关系保活；非 QObject 宿主（测试
-    替身/最小外壳）没有 parent，由 :data:`_MEMORY_TRIM_BRIDGES` 留一份强引用，
-    等 queued 信号投递完成后在槽里自删，避免每次点击多留一份。
-    """
-
-    notice = Signal(str)
-    _worker_done = Signal()
-
-    def __init__(self, pet) -> None:
-        parent = pet if isinstance(pet, QObject) else None
-        super().__init__(parent)
-        self._pet = pet
-        self.notice.connect(self._show_notice)
-        self._worker_done.connect(self._release)
-
-    @Slot(str)
-    def _show_notice(self, text: str) -> None:
-        _MEMORY_TRIM_BRIDGES.discard(self)
-        show = getattr(self._pet, "show_bubble", None)
-        if callable(show):
-            try:
-                show(text, duration_ms=6000)
-            except Exception:
-                log.debug("回收内存气泡展示失败", exc_info=True)
-
-    @Slot()
-    def _release(self) -> None:
-        """worker 收工（成功/失败都发）：摘掉强引用并把对象交还 Qt。"""
-        _MEMORY_TRIM_BRIDGES.discard(self)
-        self.deleteLater()
-
-
-_MEMORY_TRIM_BRIDGES: set = set()
-
-
-def _memory_trim_bridge(pet) -> _MemoryTrimBridge:
-    bridge = _MemoryTrimBridge(pet)
-    if bridge.parent() is None:
-        _MEMORY_TRIM_BRIDGES.add(bridge)
-    return bridge
-
-
-def trigger_memory_trim(pet) -> None:
-    """「回收内存」动作：后台线程收拾其它进程工作集，完成后气泡汇报。
-
-    过滤与安全红线全在 ``pet/memory_trim.py``（纯逻辑，零 Qt）；这里只做三件事：
-    读配置、起 worker、把结果经队列信号送回 GUI 线程弹气泡。**菜单点击路径必须
-    立刻返回**——枚举几百个进程 + 逐个 OpenProcess 放在 GUI 线程跑就是卡菜单。
-    """
-    from .. import memory_trim
-
-    cfg = getattr(pet, "cfg", None)
-    min_size_mb = (
-        cfg.get("mem_min_size_mb", memory_trim.DEFAULT_MIN_SIZE_MB)
-        if cfg is not None else memory_trim.DEFAULT_MIN_SIZE_MB
-    )
-    skip_foreground = bool(cfg.get("mem_skip_foreground", True)) if cfg is not None else True
-    bridge = _memory_trim_bridge(pet)
-
-    def _report(report) -> None:
-        try:
-            bridge.notice.emit(report.text)
-        except RuntimeError:
-            pass  # 宿主窗口已销毁（切换形象/退出），桥随之一并没了
-        finally:
-            try:
-                bridge._worker_done.emit()
-            except RuntimeError:
-                pass
-
-    memory_trim.run_in_background(
-        _report, min_size_mb=min_size_mb, skip_foreground=skip_foreground,
-    )
-
-
-def add_memory_trim(menu: QMenu, pet, *, icons: bool = True):
-    """「回收内存」：回收**其它**进程的工作集（仅 Windows，非 Windows 整条不显示）。
-
-    自己 / 当前前台 / 自己的子进程 / 系统关键进程一律不碰（见
-    ``pet/memory_trim.py`` 的模块 docstring）；这里只负责菜单项与触发。
-    """
-    from .. import memory_trim
-
-    if not memory_trim.is_supported():
-        return None
-    return add_action(
-        menu, "回收内存", "clear" if icons else None,
-        lambda: trigger_memory_trim(pet), close_on_trigger=True,
-    )
-
-
-def open_deepseek_web() -> bool:
-    return bool(QDesktopServices.openUrl(QUrl(DEEPSEEK_WEB_URL)))
-
-
-def add_deepseek_web(menu: QMenu, *, icons: bool = True):
-    return add_action(menu, "打开网页版 DeepSeek", "web" if icons else None, open_deepseek_web, close_on_trigger=True)
 
 
 def add_quit(menu: QMenu, pet, *, icons: bool = True):

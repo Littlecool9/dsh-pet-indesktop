@@ -377,11 +377,13 @@ def test_sub_pet_page_keeps_autostart_editable_with_its_scope_stated(tmp_path, m
 
 def test_dependent_hidden_row_shows_no_mark(env):
     dialog, _cfg, _tmp = env
-    dependent = _row(dialog, "egg_title")
-    parent_toggle = _row(dialog, "egg_enabled")
+    dependent = _row(dialog, "self_talk_image_chance")
+    parent_toggle = _row(dialog, "self_talk")
+    parent_toggle.control.setChecked(True)  # 自言自语默认关：先打开前置开关，依赖行才可见
+    app.processEvents()
     _reveal(dialog, dependent)
 
-    dependent.control.setText("今天也很厉害")
+    dependent.control.setValue(dependent.control.value() + 10)
     app.processEvents()
     assert dependent.modified_mark.isVisible() is True
     assert dependent.default_reset_button.isVisible() is True

@@ -10,7 +10,7 @@
 批5.1（纯重构）把原 PetApp 按「进程级 / 每窗」拆成两块，行为逐位不变；
 批5.2 spike 扩成多窗集合（AppShell 持有 ``_instances`` 列表，``self.instance``
 指主窗 = 列表头，兼容既有调用面）：
-- ``AppShell``：进程级服务（托盘、灵动岛、更新、余额、系统通知、
+- ``AppShell``：进程级服务（托盘、灵动岛、余额、系统通知、
   broker、aboutToQuit 收口），持有 ``PetInstance`` 集合。
 - ``PetInstance``：每窗容器（config/lib/win/聊天窗/设置窗/气泡），持 backref
   到 ``AppShell``，窗口级操作都从这里路由，``self.win`` 主窗单窗假设据此收敛。
@@ -40,16 +40,14 @@ from . import click_sound
 from . import overlay_instance_gate as overlay_gate_mod
 from . import self_talk_voice
 from . import slot_manager as slot_manager_mod
-from . import updater
 from . import webm_clip as webm_clip_mod
 from .config import APP_DIR_NAME, Config, _default_base
 from .context_menus.icons import vector_menu_icon
-from .context_menus.shared import add_tray_action, open_deepseek_web
+from .context_menus.shared import add_tray_action
 from .desktop_notify import DesktopNotification, position_stack
 from .harness_launcher import launch_harness_gui
 from .library import MovieLibrary
 from .window import PetWindow
-from .fun_image_popup import restore_ojingjing_windows
 from .runtime_cleanup import cleanup_stale_runtime_dirs
 from .session_watcher import install_session_watcher
 from .decode_fanout import DecodeFanoutHub
@@ -308,39 +306,6 @@ class _EmptyPetHost:
         self._bubble_suppressed = bool(suppressed)
 
 
-class _UpdateBridge(_BackgroundResult):
-    def __init__(self, parent, owner=None):
-        super().__init__()
-        self.parent = parent
-        self.owner = owner
-        self.done.connect(self._show)
-
-    def _show(self, ok: bool, payload) -> None:
-        # 异步回调可能晚于窗口销毁，先探活再触碰 Qt 对象
-        alive = self.parent is not None and shiboken6.isValid(self.parent)
-        if not ok:
-            if alive:
-                self.parent.show_bubble(f"检查更新失败：{payload}", duration_ms=7000)
-            return
-        release = payload
-        tag = str(release.get("version", ""))
-        if not updater.is_newer(tag):
-            if alive:
-                self.parent.show_bubble(f"已经是最新版本（{updater.APP_VERSION}）啦")
-            return
-        if alive:
-            self.parent.show_bubble(
-                f"发现新版本 v{tag}（当前 {updater.APP_VERSION}）。"
-                "正在打开“更新”页，可直接下载并安装。",
-                duration_ms=9000,
-            )
-            owner = self.owner
-            instance = getattr(owner, "instance", None) if owner is not None else None
-            open_settings = getattr(instance, "open_modern_settings", None)
-            if callable(open_settings):
-                QTimer.singleShot(0, lambda: open_settings(initial_page="更新"))
-
-
 # 批5.2 §③.7：多窗日志用 [slot-N] 前缀区分。单进程多窗共享一份日志文件，
 # 故用线程本地记录「当前执行的窗」由日志 Filter 加前缀；flag 关（单进程单窗）
 # 时前缀为 None，日志格式与现状逐位一致。
@@ -573,7 +538,7 @@ class PetInstance:
 
         两段原始代码逐行一致（并集 = 该段本身，未发现任一方多设回调），
         后续新增回调只改这一处即可保证两个入口同步。
-        进程级操作（余额/更新/生小肥鱼/系统通知）经 ``self.shell`` 路由，
+        进程级操作（余额/生小肥鱼/系统通知）经 ``self.shell`` 路由，
         其余均为本窗操作。批5.2 用 ``_slot_wrap`` 给每窗回调加日志槽位。
         """
         win.on_switch_character = self._slot_wrap(self.switch_character)
@@ -581,9 +546,6 @@ class PetInstance:
         win.on_open_quick_chat = self._slot_wrap(self.open_quick_chat) if self.enable_chat else None
         win.on_open_chat_settings = self._slot_wrap(self.open_chat_settings) if self.enable_chat else None
         win.on_show_balance = self._slot_wrap(self.shell.show_balance) if self.enable_chat else None
-        # 天气：进程级服务（AppShell.show_weather），与聊天能力无关（独立外部数据源）
-        win.on_show_weather = self._slot_wrap(self.shell.show_weather)
-        win.on_check_update = self._slot_wrap(self.shell.check_update)
         win.on_look_synced = self._slot_wrap(self.sync_look_to_chat) if self.enable_chat else None
         win.on_look_screen = win.look_at_screen if self.enable_chat and hasattr(win, "look_at_screen") else None
         # 截图（快速识屏 P0）：状态与短结果上灵动岛——岛归 AppShell 所有，窗口侧
@@ -614,13 +576,6 @@ class PetInstance:
         win.on_toggle_voice_chime = self._slot_wrap(self.shell.toggle_voice_chime)
         # 点击自言自语的朗读走同一条音频通道（AppShell 持有，进程内唯一）。
         win.on_self_talk_speak = self._slot_wrap(self.shell.speak_self_talk)
-        win.on_festival_now = self._slot_wrap(self.shell.trigger_festival_now)
-        win.on_toggle_festival = self._slot_wrap(self.shell.toggle_festival_reminder)
-        # 每日一签：菜单「抽支签」→ 出当天的签；on_user_interaction 供
-        # 窗口在"用户点了桌宠"时回调（当天没看才提示一行）。
-        win.on_divination_draw = self._slot_wrap(self.shell.trigger_divination_draw)
-        win.on_user_interaction = self._slot_wrap(self.shell.divination_hint_on_interaction)
-        win.on_restore_fun_windows = restore_ojingjing_windows
         win.on_hidden = self._slot_wrap(self._notify_pet_hidden)
         # 4.4b：窗级「退出这只」恒注入（多窗常开化；最后一窗退出即全进程退出，
         # 与旧 flag 关时的 app.quit 分支语义等价）。
@@ -1089,8 +1044,6 @@ class PetInstance:
             # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
             shell._sync_todo_service()
             shell._sync_chime_service()
-            shell._sync_festival_service()
-            shell._sync_divination_service()
             self._sync_animation_prewarm()
             self._refresh_chat_windows()
         # 台词可能刚被改动：把还没有本地音频的句子交给后台补齐（开关默认关闭，
@@ -1215,7 +1168,7 @@ class PetInstance:
 
 
 class AppShell:
-    """进程级外壳 —— 托盘、灵动岛、更新、余额、系统通知、碰撞会话、broker。
+    """进程级外壳 —— 托盘、灵动岛、余额、系统通知、碰撞会话、broker。
 
     批5.1（纯重构）拆自原 PetApp 的「进程级」半边，行为逐位不变；批5.2
     spike 扩成多窗集合（``self.instances``），``self.instance`` 仍是主窗
@@ -1257,8 +1210,6 @@ class AppShell:
         self._quiet_balance_last: float | None = None
         self._balance_cache = None
         self._balance_bridge = None
-        # 天气服务（「查看天气」）：懒创建，进程级单例（多窗共用一份忙门与客户端）
-        self._weather_service = None
         self._on_about_to_quit_connected = False
         # overlay 拓扑产品壳（4.1a）：仅 overlay 拓扑构造；捕获模式与显式
         # PET_RENDER_TOPOLOGY=legacy 都走 legacy 单窗，恒为 None
@@ -1289,11 +1240,6 @@ class AppShell:
         self.voice_chime_service = None
         if self._chime_wanted():
             self._ensure_chime_service()
-        # 节日提醒：进程级单例（多窗共用调度器）。**默认关闭** → 不创建服务；
-        # 由用户在设置里开启后 _sync_festival_service 才创建并跑 30s tick。
-        self.festival_service = None
-        if self._festival_wanted():
-            self._ensure_festival_service()
         # 4.4b：`experimental_single_process_spawn` 键删除——进程内多窗从
         # "实验开关"升格为**唯一**多宠形态（多进程多宠退役层已删除），
         # 原先依赖该 flag 快照的窗级逻辑（runtime 标记版本化、日志前缀、
@@ -1501,13 +1447,13 @@ class AppShell:
     def win(self):
         """主窗窗口；overlay 拓扑下退回 sprite 壳（PetWindow 形的呈现宿主）。
 
-        三个进程级提醒服务（TodoReminderService / VoiceChimeService /
-        FestivalReminderService）经 ``app.win`` 取气泡锚点，只读
+        两个进程级提醒服务（TodoReminderService / VoiceChimeService）经
+        ``app.win`` 取气泡锚点，只读
         ``show_bubble`` / ``isVisible`` / ``cfg`` / ``_speech_bubble`` /
         ``visible_content_rect`` / ``scale``——OverlayShell 逐条提供同契约
         （见 overlay_shell「PetWindow 形宿主面」段），故 overlay 拓扑
         （``instance.win`` 恒 None）下退回壳；不退回则三条提醒全部落到系统通知
-        （报时/节日还不过 system_notifications_enabled 门）。
+        （报时还不过 system_notifications_enabled 门）。
 
         legacy 拓扑 ``_overlay_shell`` 为 None → 恒返回 PetWindow，逐位不变。
         """
@@ -1587,43 +1533,21 @@ class AppShell:
                 self.todo_service = None
 
     # ------------------------------------------------------------ 功能门控（语音报时）
-    def _festival_speak_wanted(self) -> bool:
-        """节日语音是否开启——它复用报时服务的音频通道，因此会连带影响通道生命周期。"""
-        return bool(
-            self.config.get("festival_reminder_enabled", False)
-            and self.config.get("festival_reminder_speak", False)
-        )
-
     def _self_talk_speak_wanted(self) -> bool:
-        """点击自言自语朗读是否开启——它同样复用报时服务的音频通道。
+        """自言自语朗读是否开启——它同样复用报时服务的音频通道。
 
-        ``self_talk_speak_enabled`` 与 ``click_show_self_talk`` 都在
-        ``pet_profiles.PER_PET_KEYS`` 里（**每宠键**）：真值在各自的 slot 档案，
-        主配置那份只是 slot0 兜底。读主配置会让"设置页明明打开了、运行期看不到"
-        ——音频通道根本不建，点击静默无声、连一行日志都没有（v4.3.3 用户实测：
-        设置里勾着「点击台词朗读」，`config-slot-0.json` 也有值，就是不朗读）。
+        ``self_talk_speak_enabled`` 在 ``pet_profiles.PER_PET_KEYS`` 里（**每宠键**）：
+        真值在各自的 slot 档案，主配置那份只是 slot0 兜底。读主配置会让"设置页明明
+        打开了、运行期看不到"——音频通道根本不建，朗读静默无声。
         """
         for cfg in self._self_talk_voice_configs():
             try:
                 speaks = bool(cfg.get("self_talk_speak_enabled", False))
-                shows = bool(cfg.get("click_show_self_talk", False))
             except Exception:  # noqa: BLE001 - 单个视图读失败不该拖垮通道判据
                 continue
-            if speaks and shows:
+            if speaks:
                 return True
         return False
-
-    def _divination_speak_wanted(self) -> bool:
-        """抽签语音播报是否开启——它同样复用报时服务的音频通道。
-
-        与节日语音同族：通道随报时开关一起被释放时，抽签语音就变成"有气泡没声音"。
-        判定走抽签自己的配置清洗（`normalize_divination_config`，非法值回落默认），
-        与抽签服务读的同一处实现，不另立第二份真值。
-        """
-        from .divination import normalize_divination_config
-
-        cfg = normalize_divination_config(self.config)
-        return bool(cfg["enabled"] and cfg["speak"])
 
     def _todo_speak_wanted(self) -> bool:
         """待办语音播报是否开启——它同样复用报时服务的音频通道。
@@ -1637,33 +1561,19 @@ class AppShell:
         )
 
     def _chime_wanted(self) -> bool:
-        # 报时自身开启，或节日语音 / 点击自言自语朗读 / 抽签语音 / 待办语音播报需要
-        # 这条音频通道（五者共用一套合成与播放，因此"通道是否存在"取决于其中之一
-        # 是否需要）。
+        # 报时自身开启，或自言自语朗读 / 待办语音播报需要这条音频通道（共用一套
+        # 合成与播放，因此"通道是否存在"取决于其中之一是否需要）。
         return (
             bool(self.config.get("voice_chime_enabled", False))
-            or self._festival_speak_wanted()
             or self._self_talk_speak_wanted()
-            or self._divination_speak_wanted()
             or self._todo_speak_wanted()
         )
 
     def _ensure_chime_service(self):
-        """懒创建语音报时服务（报时 / 手动触发 / 节日语音播报共用）。"""
+        """懒创建语音报时服务（报时 / 手动触发 / 朗读共用）。"""
         if getattr(self, "voice_chime_service", None) is None:
-            service = VoiceChimeService(self)
-            # 让位钩子：报时每次到点前先问节日提醒这一分钟要不要说话。
-            # 用钩子而非让节日去"抢"通道，是为了与两个 QTimer 的触发先后解耦。
-            service.yield_slot = self._chime_should_yield
-            self.voice_chime_service = service
+            self.voice_chime_service = VoiceChimeService(self)
         return self.voice_chime_service
-
-    def _chime_should_yield(self, chime_slot: str) -> bool:
-        """报时让位判定（注入到 VoiceChimeService.yield_slot）。"""
-        service = getattr(self, "festival_service", None)
-        if service is None:
-            return False
-        return service.should_speak_at(chime_slot)
 
     def ensure_audio_channel(self):
         """对外暴露的音频通道（节日提醒语音 / 每日一签复用报时服务的合成与播放）。
@@ -1811,44 +1721,6 @@ class AppShell:
                 logging.exception("停止语音报时服务失败")
             self.voice_chime_service = None
 
-    # ------------------------------------------------------------ 功能门控（节日提醒）
-    def _festival_wanted(self) -> bool:
-        # 总开关默认关闭：主动打扰型功能，升级后不应突然冒出来。
-        return bool(self.config.get("festival_reminder_enabled", False))
-
-    def _ensure_festival_service(self):
-        """懒创建节日提醒服务（仅在开启提醒/手动触发时创建）。
-
-        pet.festival_service 连带 festival/festival_calendar/festival_data 与
-        五份节日文案表，实测 2.95MB Python 堆（tools/import_cost.py）。总开关
-        默认关闭（主动打扰型功能），关闭时整套文案表都不该常驻——import 收到
-        构造点，开启/试听时按需付一次。
-        """
-        if getattr(self, "festival_service", None) is None:
-            from .festival_service import FestivalReminderService
-
-            self.festival_service = FestivalReminderService(self)
-        return self.festival_service
-
-    def _sync_festival_service(self) -> None:
-        """按配置启停节日提醒服务；关闭时释放服务对象。"""
-        if self._festival_wanted():
-            service = self._ensure_festival_service()
-            if service.is_running():
-                # 已在运行：设置保存只刷新配置，不重置 tick。
-                service.apply_config()
-            else:
-                service.start()
-        elif getattr(self, "festival_service", None) is not None:
-            try:
-                self.festival_service.stop()
-            except Exception:
-                logging.exception("停止节日提醒服务失败")
-            self.festival_service = None
-        # 节日语音复用报时服务的音频通道：本开关变化会改变"通道是否需要存在"，
-        # 故必须连带同步通道生命周期（关掉节日语音后若报时也关，通道应释放）。
-        self._sync_chime_service()
-
     # ------------------------------------------------------------ DSH 联动门
     def _dsh_tracker_wanted(self) -> bool:
         """DSH 联动的功能门：``agent_link.dsh``（默认关）。
@@ -1894,9 +1766,6 @@ class AppShell:
         # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
         self._sync_todo_service()
         self._sync_chime_service()
-        self._sync_festival_service()
-        # 抽签的预合成也随配置收敛：音色/语速一变，缓存键就变了，必须重合。
-        self._sync_divination_service()
         # 台词语音预缓存同样在这里收敛：设置页默认跑在独立进程
         # （settings_process_isolation），进程内对话框那条保存链根本不会执行——
         # 少了这一行，用户打开开关并保存后本次运行一个文件都不生成（issue #305）。
@@ -2453,15 +2322,7 @@ class AppShell:
         self.instance._apply_spawn_offset()
         self._apply_balance_timer()
         self._sync_todo_service()
-        # 先同步节日服务：报时服务在 start() 里会立刻 tick 一次，那一刻就需要能问到
-        # "本分钟是否让位"。顺序反了会出现"报时先响、节日后响"从而两者都出声。
-        self._sync_festival_service()
         self._sync_chime_service()
-        # 每日一签：**启动就同步**，让「抽签中...」与今天那段签文在后台先合好。
-        # 挂在点击那一刻已经晚了一拍——实测她点下去之后 1.2 秒合成才完成，
-        # 那 1.2 秒就是她说的"合成还是太慢"。必须排在 _sync_chime_service 之后：
-        # 预合成要用报时服务那条音频通道。
-        self._sync_divination_service()
         # 设置页进程隔离：启动即装 config 目录 watcher，独立设置进程落盘后由它
         # 合并进运行期（开关关闭时不装，完全走旧路径）。
         self._install_config_watcher()
@@ -2968,9 +2829,6 @@ class AppShell:
         # 飞行中的合成线程会经信号桥回 GUI 线程回放、触碰正在析构的窗口。
         if self.voice_chime_service is not None:
             self.voice_chime_service.stop()
-        # 节日提醒同为进程级懒服务，退出必须一并停（理由同 voice_chime_service）。
-        if self.festival_service is not None:
-            self.festival_service.stop()
         # 退出收口：停掉本进程自拉起的 dsh web（父进程退出不带走 CREATE_NO_WINDOW
         # 的子进程，实机确认桌宠退出后 node 仍活着——只能由宿主自己收）。
         # 只杀自拉起登记表里且命令行复核通过的那个：用户手动起的实例不受影响。
@@ -3067,13 +2925,6 @@ class AppShell:
                     except Exception:
                         logging.debug("测试收口语音报时服务失败", exc_info=True)
                     shell.voice_chime_service = None
-                service = getattr(shell, "festival_service", None)
-                if service is not None:
-                    try:
-                        service.stop()
-                    except Exception:
-                        logging.debug("测试收口节日提醒服务失败", exc_info=True)
-                    shell.festival_service = None
                 if getattr(shell, "instance", None) is not None:
                     win = getattr(shell.instance, "win", None)
                     lib = getattr(win, "lib", None)
@@ -3818,18 +3669,6 @@ class AppShell:
             error_message = f'余额查询失败：{exc}'
             QTimer.singleShot(0, lambda message=error_message: bridge.done.emit(False, message))
 
-    def show_weather(self, parent=None) -> None:
-        """「查看天气」：后台取当前城市天气并在桌宠气泡报出。
-
-        与 ``show_balance`` 同口径：``parent`` 是气泡宿主（旧版拓扑是 PetWindow、
-        overlay 拓扑是壳）；服务懒创建、进程级单例（多窗共用）。
-        """
-        from .weather_service import WeatherService
-
-        if self._weather_service is None:
-            self._weather_service = WeatherService(self)
-        self._weather_service.show_weather(parent)
-
     def _balance_worker(self, bridge, base_url: str, api_key: str, verify_ssl: bool, provider_key: str = '', *, quiet: bool = False) -> None:
         from . import balance as balance_mod  # 按需导入（见 _show_balance_payload）
         try:
@@ -3892,33 +3731,6 @@ class AppShell:
             tmp.replace(self._balance_cache_path)
         except OSError:
             pass
-
-    # ------------------------------------------------------------ 更新
-    def check_update(self, parent=None) -> None:
-        # 重入防护（审查 GLM-L3）：连点不应起多个检查线程/叠气泡
-        if getattr(self, "_update_checking", False):
-            return
-        self._update_checking = True
-        target = parent or (self.instance.win if self.instance is not None else None)
-        if target is not None:
-            target.show_bubble("正在检查更新…", duration_ms=6000)
-        bridge = _UpdateBridge(target, owner=self)
-        self._update_bridge = bridge
-        # 完成后放行下一次检查（无论成败）
-        bridge.done.connect(lambda *_: setattr(self, "_update_checking", False))
-
-        def worker() -> None:
-            try:
-                release = updater.latest_release()
-            except Exception as exc:
-                # 后台线程异常必须收口回 GUI，否则更新提示永远停在
-                # 「正在检查更新」（审查 P1-01）
-                logging.debug("检查更新失败", exc_info=True)
-                bridge.done.emit(False, str(exc))  # 前缀由 _UpdateBridge._show 统一加
-                return
-            bridge.done.emit(bool(release), release or "无法连接更新服务，请稍后重试。")
-
-        threading.Thread(target=worker, daemon=True, name="pet-update-check").start()
 
     # ------------------------------------------------------------ 生小肥鱼 / 多窗
     def spawn_pet(self) -> None:
@@ -4494,67 +4306,6 @@ class AppShell:
         """「启用/关闭语音报时」开关（默认隐藏、菜单编辑器可加回）：翻转配置并同步服务启停。"""
         self._toggle_flag("voice_chime_enabled", self._sync_chime_service)
 
-    def trigger_festival_now(self) -> None:
-        """手动提醒「今日节日」：设置页「立即试听」与菜单编排加回的「今日节日」共用（该菜单项默认隐藏）。
-
-        与语音报时的手动触发同语义——**无视总开关**，服务懒创建；当天没有
-        节日/节气时给出明确文案，不做静默无反应。
-        """
-        service = self._ensure_festival_service()
-        service.remind_now()
-
-    def toggle_festival_reminder(self) -> None:
-        """「启用/关闭节日提醒」开关（默认隐藏、菜单编辑器可加回）：翻转配置并同步服务启停。"""
-        self._toggle_flag("festival_reminder_enabled", self._sync_festival_service)
-
-    # ------------------------------------------------------------ 每日一签（互动 · 趣味）
-    def _ensure_divination_service(self):
-        """懒创建抽签服务（纯逻辑 + 无定时器，创建很轻，但仍按开关懒建）。"""
-        if getattr(self, "divination_service", None) is None:
-            from .divination_service import DivinationService
-
-            self.divination_service = DivinationService(self)
-            # 建好就刷一次配置：`apply_config()` 会顺手把今天的语音预合成提交掉，
-            # 免得"服务建了但没人调 apply_config"时预热被漏掉。
-            self.divination_service.apply_config()
-        return self.divination_service
-
-    def _sync_divination_service(self) -> None:
-        """按开关同步抽签服务：关掉就释放，不留常驻对象。"""
-        from .divination import normalize_divination_config
-
-        if normalize_divination_config(self.config)["enabled"]:
-            self._ensure_divination_service().apply_config()
-        elif getattr(self, "divination_service", None) is not None:
-            # 停用要**显式收口**：服务持有跨天定时器，直接丢对象定时器还会留着。
-            self.divination_service.shutdown()
-            self.divination_service = None
-
-    def trigger_divination_draw(self) -> None:
-        """菜单「抽支签」：出当天的签（当天再点显示同一支）。
-
-        关掉总开关时**不做静默无反应**——明确告诉用户去哪儿打开（天气那条同口径）。
-        """
-        service = self._ensure_divination_service()
-        service.apply_config()
-        if service.draw_now() is None:
-            win = getattr(self, "win", None)
-            if win is not None:
-                try:
-                    win.show_bubble("每日一签已关闭 · 设置 → 互动 · 趣味 里打开", duration_ms=6000)
-                except Exception:
-                    logging.exception("抽签关闭提示气泡失败")
-
-    def divination_hint_on_interaction(self) -> None:
-        """用户点了桌宠：当天还没看签时冒一行提示（服务内部判开关与是否已抽）。"""
-        service = getattr(self, "divination_service", None)
-        if service is None:
-            return
-        try:
-            service.hint_on_interaction()
-        except Exception:
-            logging.exception("抽签提示失败")
-
     def system_notify(self, title: str, message: str, *, on_click=None, duration_ms: int = 5000) -> None:
         """Show a bottom-right desktop notification (self-drawn, tray-independent)."""
         self._prune_toasts()
@@ -4705,10 +4456,6 @@ class AppShell:
             menu.addAction('DeepSeek 余额', lambda: self.show_balance(win))
             menu.addAction('启动 dsh web 界面', lambda: launch_harness_gui(win, target="web"))
             menu.addAction('启动桌面端界面', lambda: launch_harness_gui(win, target="desktop"))
-        else:
-            # 纯桌宠版本不提供本地 DSH 启动入口，只保留网页版入口
-            menu.addAction('打开网页版 DeepSeek', open_deepseek_web)
-        menu.addAction('检查更新', lambda: self.check_update(win))
 
         # 批5.2a §③.3：多窗时单托盘 + 每窗一个子菜单（显示/隐藏、切换角色、退出这只），
         # 替代 spike 的平铺菜单项；图标仍单托盘，逐窗动作经子菜单路由。

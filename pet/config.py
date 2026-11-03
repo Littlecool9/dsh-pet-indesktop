@@ -93,13 +93,6 @@ DEFAULT_CONTEXT_MENU_APPEARANCE = {
     "dark_foreground": "#f3f3f3",
     "dark_hover": "#3a3a3a",
 }
-DEFAULT_MENU_EASTER_EGG = {
-    "enabled": True,
-    "title": "厉害了我的鲸",
-    "hint": "请点击",
-    "avatar": "assets/big_blue_fat_fish/ojingjing.jpg",
-    "image_dir": "assets/big_blue_fat_fish",
-}
 DEFAULT_QUICK_LAUNCH_APPS = [
     {"name": "默认浏览器", "path": "", "kind": "default_browser"},
 ]
@@ -177,41 +170,6 @@ def _clean_menu_appearance(value):
     ):
         result[key] = _clean_color(value.get(key), defaults[key])
     return result
-
-
-def _normalize_fun_asset_path(candidate: str, default: str) -> str:
-    """绝对路径若指向应用内置 assets 目录，归一化为相对路径。
-
-    旧版设置对话框会把默认相对路径固化成安装目录绝对路径；portable
-    目录一移动/自更新即失效。此处在加载时统一还原为 assets/... 相对值。
-    """
-    candidate = str(candidate or "").strip()
-    if not candidate:
-        return default
-    path = Path(candidate).expanduser()
-    if not path.is_absolute():
-        return candidate
-    assets_root = Path(__file__).resolve().parents[1] / "assets"
-    try:
-        rel = path.resolve().relative_to(assets_root.resolve())
-        # 统一正斜杠：配置值与 legacy 迁移比较、跨平台一致
-        return str(Path("assets") / rel).replace("\\", "/")
-    except ValueError:
-        return candidate
-
-
-def _clean_menu_easter_egg(value):
-    value = value if isinstance(value, dict) else {}
-    defaults = DEFAULT_MENU_EASTER_EGG
-    avatar = _normalize_fun_asset_path(str(value.get("avatar") or defaults["avatar"]).strip()[:500], defaults["avatar"])
-    image_dir = _normalize_fun_asset_path(str(value.get("image_dir") or defaults["image_dir"]).strip()[:500], defaults["image_dir"])
-    return {
-        "enabled": bool(value.get("enabled", defaults["enabled"])),
-        "title": str(value.get("title") or defaults["title"]).strip()[:40],
-        "hint": str(value.get("hint") or defaults["hint"]).strip()[:20],
-        "avatar": avatar,
-        "image_dir": image_dir,
-    }
 
 
 def _clean_quick_launch_apps(value):
@@ -848,33 +806,6 @@ def _clean_game_fps_process(value) -> str:
     return cleaned
 
 
-def _clean_character_profiles(value) -> dict:
-    """角色档案：当前先承载 click_talk_bindings，后续可扩展头像/人设字段。"""
-    if not isinstance(value, dict):
-        return {}
-    cleaned = {}
-    for character_id, profile in value.items():
-        if not isinstance(profile, dict):
-            continue
-        bindings_raw = profile.get("click_talk_bindings")
-        bindings = {}
-        if isinstance(bindings_raw, dict):
-            for action_id, texts in bindings_raw.items():
-                if not isinstance(texts, list):
-                    continue
-                items = []
-                for item in texts:
-                    text = str(item).strip()
-                    if text and text not in items:
-                        items.append(text[:120])
-                if items:
-                    bindings[str(action_id)] = items
-        entry = dict(profile)
-        entry["click_talk_bindings"] = bindings
-        cleaned[str(character_id)] = entry
-    return cleaned
-
-
 def _clean_collision_data(value: dict) -> dict:
     """归一化碰撞设置：collision_* 一组 7 键。
 
@@ -1124,10 +1055,9 @@ class Config:
             "pet_opacity": 100,  # 桌宠窗口不透明度 10-100
             "context_menu_layout": None,
             "context_menu_appearance": dict(DEFAULT_CONTEXT_MENU_APPEARANCE),
-            "menu_easter_egg": dict(DEFAULT_MENU_EASTER_EGG),
             # 动画菜单连播（#221）：默认 False = 点一个动作就把整条菜单链收起，
             # 菜单不再挡住桌宠。想连点多个动作连播的用户手改成 true（菜单行为类
-            # 偏好，与 mem_* 同口径：不进设置页，config.json 里改）。
+            # 偏好：不进设置页，config.json 里改）。
             "anim_menu_stay_open": False,
             "quick_launch_apps": [dict(item) for item in DEFAULT_QUICK_LAUNCH_APPS],
             "auto_hide_fullscreen": True,  # 全屏应用自动隐藏（Windows）
@@ -1147,7 +1077,6 @@ class Config:
             "idle_low_fps_enabled": False,  # 闲置降帧（灰度默认关）：长时间无交互时动画隔帧呈现
             "idle_low_fps_threshold": 30.0,  # 闲置阈值（秒）：超过该时长无交互且窗口可见才降帧
             "click_show_balance": False,  # 点击显示 DeepSeek 余额
-            "click_show_self_talk": False,  # 点击随机显示自定义自言自语
             "self_talk_speak_enabled": False,  # 点击自言自语同句朗读（复用语音报时音频通道，默认关）
             "self_talk_voice_precache_enabled": False,  # 台词/点击绑定本地语音预缓存（需本机 TTS 服务，默认关）
             "balance_refresh_minutes": 0,  # DeepSeek 余额自动刷新间隔（分钟，0=关闭）
@@ -1181,11 +1110,6 @@ class Config:
             "golden_spin_on_click": False,  # 点击回应动画结束后自动接一段黄金回旋
             "golden_spin_direct": False,  # 点击触发黄金回旋时跳过点击动画，直接回旋并逐圈加速
             "edge_probe_enabled": False,  # 拖到屏幕左右边缘后自动进入探头姿态
-            # 「回收内存」菜单动作（#210）：只作用于**别的**进程（自己/前台/自己
-            # 的子进程/系统关键进程一律不碰，见 pet/memory_trim.py）。菜单动作类
-            # 功能不进设置页，这两个键只存在于 config.json。
-            "mem_skip_foreground": True,  # 跳过当前前台进程（不抖用户正在用的窗口）
-            "mem_min_size_mb": 50.0,  # 工作集小于该值(MB)的进程不折腾
             "autostart_wanted": False,  # 用户曾开启过开机自启（用于启动自检：被安全软件清理时提醒）
             "harness_autostart": False,  # 随桌宠启动自动拉起（auto/service/web 目标=只起服务不开浏览器；桌面端目标=打开界面）
             # 自启目标：auto=只拉起 dsh 服务（不开浏览器、不开界面），与 service 同义；
@@ -1207,7 +1131,6 @@ class Config:
             "modern_chat_card_opacity": 84,
             "chat_bg_crops": {},  # 每个背景的用户自定义取景框 {背景标识: [x,y,w,h] 归一化}
             "character_aliases": {},  # 角色显示名别名 {角色id: 自定义名}，空名=恢复默认
-            "character_profiles": {},  # 角色档案：{角色id: {click_talk_bindings: {动画id: [台词]}}}
             "chat_always_on_top": False,  # 聊天窗置顶
             "dynamic_island": _default_dynamic_island_data(),
             # —— 灵动岛附加指标（P1 Slice C）——
@@ -1283,53 +1206,12 @@ class Config:
             "voice_chime_sapi_rate": 0,  # SAPI5 语速 −10..10（0 为系统默认）
             "voice_chime_doubao_speaker": "zh_female_peiqi_uranus_bigtts",  # 豆包 2.0 音色
             "voice_chime_doubao_pitch": 15,  # 豆包本地变调百分比（0–30）
-            # 节日提醒（农历/24 节气/西方节日；命中当日用气泡告知并附氛围匹配文案）。
-            # 总开关默认关闭：属"主动打扰"型功能，升级后不应突然冒出来，由用户显式开启。
-            "festival_reminder_enabled": False,  # 节日提醒总开关
-            "festival_reminder_cn": True,  # 中国节日
-            "festival_reminder_solar_terms": True,  # 24 节气
-            "festival_reminder_west": True,  # 西方节日
-            "festival_reminder_mode": "times",  # times（按次数）/ custom（自定义时间点）
-            "festival_reminder_count": 2,  # times 模式提醒次数（1~6，均匀铺在 09:00–21:00）
-            "festival_reminder_times": "09:00",  # custom 模式时间点（HH:MM 逗号分隔）
-            "festival_reminder_show_quote": True,  # 是否附诗词/引文
-            # 节日语音播报：复用语音报时服务的音频通道（音色/语速/音调/音量同报时），
-            # 故不新增独立的语音参数键。默认关闭。开启后同一分钟由节日让报时让位。
-            "festival_reminder_speak": False,  # 节日提醒是否语音播报
-            "festival_reminder_animation": True,  # 节日提醒是否播匹配动画
-            # 生日进「动态节日」：命中当天排最前，不进 FESTIVALS 静态表（见 festival_animations）。
-            # 默认空串＝没填，非法/不存在的日期静默落空（clean_birthday 整串 fullmatch 校验）。
-            "festival_birthday": "",
-            "festival_custom_quotes_cn": "",  # 自定义中文文案（一行一条，追加到内置库）
-            "festival_custom_quotes_west": "",  # 自定义西文文案（一行一条，追加到内置库）
-            # 每日一签（设置页在「互动 · 趣味」标签）。**纯日期驱动、零个人信息**：签只跟
-            # 日期有关，不碰生日/坐标这类字段，因此不需要隐私守卫（见 DEV-HANDOVER 的隐私铁律）。
-            # 总开关**默认开**：与报时/节日不同，它是用户主动拉取的（不点不出声、
-            # 不主动冒泡），默认关只会让第一次点击撞上一句"功能已关闭"（天气同口径）。
-            "divination_enabled": True,
-            "divination_speak": False,  # 抽签时念解曰（复用报时服务的音频通道）
-            "divination_hint": True,  # 当天没看时，第一次点桌宠冒一行提示
-            # 运行时状态：今天抽到几号 / 本轮抽过哪些 / 签册。放一个键里，
-            # 免得为"今天抽了什么"新增四个顶层键。
-            "divination_state": {},
-            # 天气（右键菜单「查看天气」/「天气城市」，issue #209）。**默认开**：
-            # 与报时/节日不同，它是纯拉取型——不点不发请求、不主动冒泡，默认关掉
-            # 只会让第一次点击撞上一句"功能已关闭"。默认**不猜城市**：气泡永远会
-            # 把城市名报出来，与其猜一个大概率不对的城市，不如给一句可执行的引导
-            # （"还没选天气城市：右键菜单 → 天气城市 → 添加城市…"）。
             # 全局快捷键（进程级，不随每宠不同）：空串 = 未绑定。
             # 三个动作见 pet/hotkeys.py 的 ACTIONS；写进来时按 hotkey_spec 收成
             # 规范形式，不认识的一律清空（配置里不存脏值）。
             "hotkey_open_chat": "",
             "hotkey_look_screen": "",
             "hotkey_screen_capture": "",
-            "weather_enabled": True,  # 天气功能总开关
-            "weather_city": "",  # 当前城市（空 = 还没选，菜单会引导去添加）
-            "weather_city_list": [],  # 城市清单（全局，上限 12，见 weather.MAX_CITIES）
-            # 城市 → 中国天气网地区码。存在的意义是**同名城市**（朝阳 北京 / 辽宁）
-            # 的身份：只有名字时每次查询都会命中检索接口的第一条，用户选了第二项
-            # 也白选。机器维护（添加城市时写入），手改无害。
-            "weather_city_codes": {},
             **DEFAULT_COLLISION_SETTINGS,
             "media_prewarm": "balanced",  # full / balanced / minimal 素材首帧预热力度
             # 批10-A3：默认 32→8MB。预测式预热（批10-A1）落地后，首帧 LRU 只需
@@ -1492,7 +1374,6 @@ class Config:
             "pet_opacity",
             "context_menu_appearance",
             "quick_launch_apps",
-            "menu_easter_egg",
             "anim_menu_stay_open",
             "auto_hide_fullscreen",
             "quiet_minutes_default",
@@ -1506,7 +1387,6 @@ class Config:
             "idle_low_fps_enabled",
             "idle_low_fps_threshold",
             "click_show_balance",
-            "click_show_self_talk",
             "self_talk_speak_enabled",
             "self_talk_voice_precache_enabled",
             "balance_refresh_minutes",
@@ -1529,8 +1409,6 @@ class Config:
             "golden_spin_on_click",
             "golden_spin_direct",
             "edge_probe_enabled",
-            "mem_skip_foreground",
-            "mem_min_size_mb",
             "balance_tier_labels_mode",
             "balance_tier_label_peak",
             "balance_tier_label_idle",
@@ -1569,29 +1447,7 @@ class Config:
             "voice_chime_sapi_rate",
             "voice_chime_doubao_speaker",
             "voice_chime_doubao_pitch",
-            "festival_reminder_enabled",
-            "festival_reminder_cn",
-            "festival_reminder_solar_terms",
-            "festival_reminder_west",
-            "festival_reminder_mode",
-            "festival_reminder_count",
-            "festival_reminder_times",
-            "festival_reminder_show_quote",
-            "festival_reminder_speak",
-            "festival_reminder_animation",
-            "festival_birthday",
-            "festival_custom_quotes_cn",
-            "festival_custom_quotes_west",
-            "divination_enabled",
-            "divination_speak",
-            "divination_hint",
-            "divination_state",
-            "weather_enabled",
-            "weather_city",
-            "weather_city_list",
-            "weather_city_codes",
             "character_aliases",
-            "character_profiles",
             "chat_always_on_top",
             "dynamic_island",
             "island_metrics",
@@ -1929,7 +1785,6 @@ class Config:
         self.data["spawn_inherit_dynamic_island"] = _bool_or_default(self.data.get("spawn_inherit_dynamic_island"), False)
         self.data["context_menu_layout"] = _clean_menu_layout_override(self.data.get("context_menu_layout"))
         self.data["context_menu_appearance"] = _clean_menu_appearance(self.data.get("context_menu_appearance"))
-        self.data["menu_easter_egg"] = _clean_menu_easter_egg(self.data.get("menu_easter_egg"))
         # 动画菜单连播（#221）：布尔走 _bool_or_default（防手写 "false" 被当开）
         self.data["anim_menu_stay_open"] = _bool_or_default(
             self.data.get("anim_menu_stay_open"), False)
@@ -1945,7 +1800,6 @@ class Config:
         # 连独立设置页都进不去。同族写法一律抄这一行。
         ui_style = str(self.data.get("chat_ui_style") or "")
         self.data["chat_ui_style"] = ui_style if ui_style in {"modern", "classic"} else "modern"
-        self.data["character_profiles"] = _clean_character_profiles(self.data.get("character_profiles"))
         self.data["chat_always_on_top"] = bool(self.data.get("chat_always_on_top", False))
         self.data["dynamic_island"] = _clean_dynamic_island_data(self.data.get("dynamic_island"))
         # 网络信息（issue #172）三键：布尔同规防字符串布尔误开；探测间隔走
@@ -2012,27 +1866,6 @@ class Config:
         self.data["golden_spin_on_click"] = _bool_or_default(self.data.get("golden_spin_on_click"), False)
         self.data["golden_spin_direct"] = _bool_or_default(self.data.get("golden_spin_direct"), False)
         self.data["edge_probe_enabled"] = _bool_or_default(self.data.get("edge_probe_enabled"), False)
-        # 「回收内存」(#210)：布尔走 _bool_or_default 防字符串布尔误开；阈值夹到
-        # [0, 8192]（上限与 pet/memory_trim.py::MIN_SIZE_MB_MAX 同值，由
-        # test_memory_trim 的漂移断言钉住）——脏值直接打死 worker 线程不可接受，
-        # 负值则会退化成"连 0 字节进程都要折腾"。
-        self.data["mem_skip_foreground"] = _bool_or_default(self.data.get("mem_skip_foreground"), True)
-        self.data["mem_min_size_mb"] = _float_or_default(self.data.get("mem_min_size_mb"), 50.0, 0.0, 8192.0)
-        # 天气四键（issue #209 + 终审 M1）：布尔走 _bool_or_default（防字符串
-        # "false" 被 bool() 误开）；城市名/清单只做**幂等**的存储归一化（宽窄字符、
-        # 空白、长度），**不剥行政区后缀**——剥离不幂等，每次保存别的设置都会再剥
-        # 一层（景德镇市 → 景德镇 → 景德），「新乡」「景德镇」这类真名也会被裁掉。
-        # 后缀容错只在查询侧做（weather.city_name_variants）。
-        from .weather import (
-            normalize_city_codes,
-            normalize_city_list,
-            normalize_city_name,
-        )
-
-        self.data["weather_enabled"] = _bool_or_default(self.data.get("weather_enabled"), True)
-        self.data["weather_city"] = normalize_city_name(self.data.get("weather_city"))
-        self.data["weather_city_list"] = normalize_city_list(self.data.get("weather_city_list"))
-        self.data["weather_city_codes"] = normalize_city_codes(self.data.get("weather_city_codes"))
         self.data["agent_link"] = _clean_agent_link_data(self.data.get("agent_link"))
         # 音乐关联 / 消费统计（#129 新增的 5 键）：此前只在默认值与 reload 白名单
         # 里登记、没进归一化——手改成脏值后数值键会让设置页构造直接抛
@@ -2143,41 +1976,6 @@ class Config:
         """
         return self.character_alias(character_id) or catalog.character_display_name(character_id)
 
-    def character_profile(self, character_id: str) -> dict:
-        """返回角色档案；不存在时返回空档案。"""
-        profiles = self.data.get("character_profiles")
-        if isinstance(profiles, dict):
-            profile = profiles.get(str(character_id))
-            if isinstance(profile, dict):
-                return profile
-        return {}
-
-    def click_talk_bindings(self, character_id: str) -> dict:
-        """返回某角色的点击动画台词绑定：{动画id: [台词, ...]}。"""
-        profile = self.character_profile(character_id)
-        bindings = profile.get("click_talk_bindings")
-        return bindings if isinstance(bindings, dict) else {}
-
-    def click_talk_texts_for(self, character_id: str, action_id: str) -> list[str]:
-        """返回某点击动画绑定的台词；未绑定返回空列表。"""
-        bindings = self.click_talk_bindings(character_id)
-        texts = bindings.get(str(action_id))
-        return texts if isinstance(texts, list) else []
-
-    def set_click_talk_bindings(self, character_id: str, bindings: dict) -> None:
-        """保存某角色的点击动画台词绑定并立即落盘。"""
-        profiles = self.data.setdefault("character_profiles", {})
-        if not isinstance(profiles, dict):
-            profiles = {}
-            self.data["character_profiles"] = profiles
-        profile = profiles.setdefault(str(character_id), {})
-        if not isinstance(profile, dict):
-            profile = {}
-            profiles[str(character_id)] = profile
-        profile["click_talk_bindings"] = bindings
-        self.data["character_profiles"] = _clean_character_profiles(profiles)
-        self.save()
-
     def set(self, key, value):
         self.data[key] = value
         before_normalize = copy.deepcopy(self.data)
@@ -2198,7 +1996,6 @@ class Config:
             "context_menu_appearance",
             "context_menu_layout",
             "quick_launch_apps",
-            "menu_easter_egg",
             "anim_menu_stay_open",
             "click_sound_enabled",
             "click_sound_pack",
@@ -2235,15 +2032,8 @@ class Config:
             "foobar_title_format",
             "agent_cost_enabled",
             "music_player_paths",
-            "mem_skip_foreground",
-            "mem_min_size_mb",
-            "character_profiles",
             "chat_always_on_top",
             "dynamic_island",
-            "weather_enabled",
-            "weather_city",
-            "weather_city_list",
-            "weather_city_codes",
             "island_metrics",
             "game_fps_target_mode",
             "game_fps_process",

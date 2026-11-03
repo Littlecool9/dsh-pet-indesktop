@@ -802,29 +802,6 @@ def test_proxy_reports_no_delivery_when_no_visible_window(qapp, tmp_path):
     assert proxy.show_alert("一条", sticky=False, alert_type="watchdog") is False
 
 
-def test_festival_reminder_on_hidden_host_is_queued_not_notified(qapp, tmp_path):
-    """M3：隐藏宿主 + 免打扰 → 节日提醒进暂存队列，不再落到系统通知。"""
-    from pet.config import Config
-    from pet.festival_service import FestivalReminderService
-
-    notified: list[tuple] = []
-    win = _HiddenHost(Config(base=tmp_path), visible=False)
-    app = type("App", (), {
-        "win": win,
-        "system_notify": lambda *args, **kwargs: notified.append(args),
-    })()
-    stub = type("Svc", (), {"_app": app, "BUBBLE_DURATION_MS": 12000})()
-
-    quiet_mode.shared_quiet_state().start(15)
-    FestivalReminderService._bubble(stub, "今天是某某节")
-
-    assert notified == [], "免打扰期间连系统通知也要压住"
-    state = quiet_mode.shared_quiet_state()
-    assert state.pending_count() == 1
-    state.end_now()
-    assert state.take_report() == ["今天是某某节"]
-
-
 def test_voice_chime_bubble_on_hidden_host_is_queued_not_notified(qapp, tmp_path):
     """M3：报时气泡同规（隐藏宿主 + 免打扰 → 暂存、不发通知；语音通道不受影响）。"""
     from pet.config import Config

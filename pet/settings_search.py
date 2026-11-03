@@ -141,9 +141,6 @@ ROW_ALIASES: dict[str, tuple[str, ...]] = {
     #    文件识别 = 「拖文件后询问解读」（该域只有 2 行，它就是整个域的功能本体，
     #    「进度汇报间隔」是它的从属参数）。
     "文件识别": ("file_interpret_enabled",),
-    # 「检查更新」**有意不收**：它是「更新」页上的按钮（`pet/update_settings.py` 的
-    # `check_button`），不是 `SettingRow`——命令类控件不进搜索候选集（与侧栏的
-    # 「恢复默认设置 / 保存并退出」同一口径）。要让它可搜得先给按钮建落点，另一件事。
 }
 
 _ROW_PREFIX = "settingRow_"

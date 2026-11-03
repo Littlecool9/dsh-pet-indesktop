@@ -11,8 +11,6 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
     assert layout["schema_version"] == 1
     assert layout["layout_id"] == "modern-default-v1"
     assert [node["id"] for node in layout["nodes"]] == [
-        "ojingjing",
-        "default.separator-profile",
         "chat",
         "look_screen",
         "screen_capture",
@@ -32,14 +30,8 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
         "todo_panel",
         "focus_mode",
         "quiet_mode",
-        "memory_trim",
-        "weather",
-        "weather_cities",
         "voice_chime_now",
         "voice_chime_toggle",
-        "festival_now",
-        "festival_toggle",
-        "divination_draw",
         "default.separator-tools",
         "modern_settings",
         "quit",
@@ -48,6 +40,28 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
         {"type": "action", "id": "modern_settings", "visible": True, "section": "system"},
         {"type": "action", "id": "quit", "visible": True, "section": "system"},
     ]
+
+
+def test_saved_layout_drops_removed_action_ids_silently():
+    """旧布局里已删除的动作 id（如 weather）必须被静默丢弃，菜单仍正常加载。"""
+    result = resolve_menu_layout(
+        {
+            "schema_version": 1,
+            "layout_id": "user",
+            "nodes": [
+                {"type": "action", "id": "weather", "visible": True},
+                {"type": "action", "id": "chat", "visible": True},
+                {"type": "action", "id": "modern_settings", "visible": True},
+                {"type": "action", "id": "quit", "visible": True},
+            ],
+        },
+        registered_actions={"chat", "modern_settings", "quit"},
+        available_actions={"chat", "modern_settings", "quit"},
+    )
+
+    ids = [node["id"] for node in result.nodes if node["type"] == "action"]
+    assert ids == ["chat", "modern_settings", "quit"]
+    assert result.source == "normalized"
 
 
 def test_legacy_section_boundaries_become_editable_separator_nodes():
@@ -189,8 +203,6 @@ def test_runtime_feature_state_does_not_filter_menu_layout_actions():
 
     class Config:
         def get(self, key, default=None):
-            if key == "menu_easter_egg":
-                return {"enabled": False}
             if key == "quick_launch_apps":
                 return []
             return default
@@ -200,13 +212,12 @@ def test_runtime_feature_state_does_not_filter_menu_layout_actions():
         on_open_chat = lambda self: None
         on_look_screen = lambda self: None
         on_show_balance = lambda self, parent=None: None
-        on_check_update = lambda self, parent=None: None
         on_open_modern_settings = lambda self: None
         on_spawn_pet = lambda self: None
 
     pet = Pet()
-    assert {"ojingjing", "quick_launch"} <= MENU_ACTIONS.available_ids(pet)
-    assert {"ojingjing", "quick_launch"}.isdisjoint(MENU_ACTIONS.enabled_ids(pet))
+    assert "quick_launch" in MENU_ACTIONS.available_ids(pet)
+    assert "quick_launch" not in MENU_ACTIONS.enabled_ids(pet)
 
 
 def test_runtime_menu_renders_alias_icon_separator_and_disabled_item():
@@ -307,7 +318,6 @@ def test_layout_restores_required_settings_and_exit_actions():
 
 def test_missing_user_layout_resolves_versioned_default():
     registered = {
-        "ojingjing",
         "chat",
         "look_screen",
         "screen_capture",
@@ -340,24 +350,14 @@ def test_missing_user_layout_resolves_versioned_default():
         "quick_launch",
         "balance",
         "harness",
-        "deepseek_web",
-        "check_update",
         "network_info",
-        "github_project",
-        "quark_download",
         "agent_link",
         "proactive_screen",
         "todo_panel",
         "focus_mode",
         "quiet_mode",
-        "memory_trim",
-        "weather",
-        "weather_cities",
         "voice_chime_now",
         "voice_chime_toggle",
-        "festival_now",
-        "festival_toggle",
-        "divination_draw",
         "modern_settings",
         "quit",
     }
@@ -371,7 +371,6 @@ def test_missing_user_layout_resolves_versioned_default():
     assert result.source == "default"
     assert result.diagnostics == ()
     assert [node["id"] for node in result.nodes if node["type"] != "separator"] == [
-        "ojingjing",
         "chat",
         "look_screen",
         "screen_capture",
@@ -388,10 +387,6 @@ def test_missing_user_layout_resolves_versioned_default():
         "todo_panel",
         "focus_mode",
         "quiet_mode",
-        "memory_trim",
-        "weather",
-        "weather_cities",
-        "divination_draw",
         "modern_settings",
         "quit",
     ]
@@ -399,7 +394,7 @@ def test_missing_user_layout_resolves_versioned_default():
     # 用户可在菜单编辑器自行加回），resolve 后被过滤，不出现在渲染结果里。
     assert all(
         item not in {node.get("id") for node in result.nodes}
-        for item in ("voice_chime_now", "voice_chime_toggle", "festival_now", "festival_toggle")
+        for item in ("voice_chime_now", "voice_chime_toggle")
     )
 
 
@@ -514,7 +509,6 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
         on_open_chat = lambda self: None
         on_look_screen = lambda self: None
         on_show_balance = lambda self, parent=None: None
-        on_check_update = lambda self, parent=None: None
         on_open_modern_settings = lambda self: None
         on_spawn_pet = lambda self: None
         idles = ["待机"]
@@ -539,7 +533,6 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
 
     root = [action.text() for action in menu.actions() if not action.isSeparator()]
     expected_root = [
-        "厉害了我的鲸",
         "AI 对话",
         "看看屏幕",
         "截图提问",
@@ -560,19 +553,14 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
         expected_root.insert(-2, "待办提醒")
         expected_root.insert(-2, "专注模式")
         expected_root.insert(-2, "免打扰")
-        expected_root.insert(-2, "回收内存")
     else:
         expected_root.insert(-2, "待办提醒")
         expected_root.insert(-2, "专注模式")
         expected_root.insert(-2, "免打扰")
-    # 天气两个入口在 tools 段末尾（待办提醒之后、桌宠设置之前）；
-    # 「抽支签」紧随其后（2026-10-15 新功能，tools 段最后一个，默认可见）
-    expected_root[-2:-2] = ["查看天气", "天气城市", "抽支签"]
-    # 报时/节日四项默认不在菜单上（模板 visible: false，2026-09-19 起）
+    # 报时两项默认不在菜单上（模板 visible: false，2026-09-19 起）
     assert root == expected_root
     rendered = ["|" if action.isSeparator() else action.text() for action in menu.actions()]
     expected_rendered = [
-        "厉害了我的鲸", "|",
         "AI 对话", "看看屏幕", "截图提问", "|",
         "播放动画", "切换角色", "播放速率", "大小", "音乐", "|",
         "桌宠控制", "快捷启动", "|",
@@ -581,15 +569,13 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     ]
     if sys.platform == "win32":
         expected_rendered.insert(-3, "主动识屏")
-    # tools 段顺序：… Agent 联动 [主动识屏] 待办提醒 免打扰 [回收内存] 查看天气 天气城市 抽支签 | 桌宠设置 退出
-    # （报时/节日四项默认 visible: false，不渲染；回收内存仅在 Windows 出现）
+    # tools 段顺序：… Agent 联动 [主动识屏] 待办提醒 专注模式 免打扰 | 桌宠设置 退出
+    # （报时两项默认 visible: false，不渲染）
     expected_rendered.insert(-3, "待办提醒")
     expected_rendered.insert(-3, "专注模式")
     expected_rendered.insert(-3, "免打扰")
     if sys.platform == "win32":
-        expected_rendered.insert(-3, "回收内存")
-    expected_rendered[-3:-3] = ["查看天气", "天气城市", "抽支签"]
-    assert rendered == expected_rendered
+        assert rendered == expected_rendered
     pet_controls = next(action.menu() for action in menu.actions() if action.text() == "桌宠控制")
     assert [action.text() for action in pet_controls.actions() if not action.isSeparator()] == [
         "拖动物理",
@@ -608,13 +594,8 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     expected_tools = [
         "DeepSeek 余额",
         "DeepSeek Harness",
-        "打开网页版 DeepSeek",
-        "检查更新",
         "网络信息",
-        "GitHub 项目页",
     ]
-    if sys.platform == "win32":
-        expected_tools.append("夸克网盘下载")
     assert [action.text() for action in tools.actions() if not action.isSeparator()] == expected_tools
     # Harness 现在是子菜单（挂在既有 harness id 上，用户老布局无需迁移）：
     # 启动（双目标：dsh web 界面 / 桌面端界面）+ 重启 / 停止必须齐全——
@@ -910,7 +891,7 @@ def test_settings_sidebar_uses_stable_domains_and_owns_representative_rows(tmp_p
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
     # 2026-09-19 新增「文件识别」域（拖文件解读，settings_file_interpret）。
-    expected = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别", "更新"]
+    expected = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别"]
     assert [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())] == expected
 
     def owner(setting_id):
@@ -1055,7 +1036,6 @@ def test_voice_domain_owns_only_tts_rows(tmp_path, monkeypatch):
 
         all_rows = dialog.findChildren(SettingRow)
         chime_rows = [r for r in all_rows if r.objectName().startswith("settingRow_voice_chime_")]
-        festival_rows = [r for r in all_rows if r.objectName().startswith("settingRow_festival")]
         # 语音报时与节日提醒的行**整组都在**：锁「一个不漏、也不留在自动化与联动」。
         # 行数不再写死（2026-10-14 provider 化后语音报时多了引擎与四家后端的字段行），
         # 改为与两页自己卡片里的行数对齐——本用例要钉的是「归属」，不是「行数」。
@@ -1077,11 +1057,7 @@ def test_voice_domain_owns_only_tts_rows(tmp_path, monkeypatch):
         for row in card.rows:
             assert voice_page.isAncestorOf(row), f"{row.objectName()} 必须在「语音」域"
         assert len(chime_rows) >= 12, "语音报时既有 12 行一个都不能少"
-        # 节日提醒整组（含 provider 化前后就有的 12 行 + 生日/动画/折叠头等新增行）
-        # 同样一行不留地进「语音」域；具体分卡见 test_festival_settings_layout。
-        for row in festival_rows:
-            assert voice_page.isAncestorOf(row), f"{row.objectName()} 必须在「语音」域"
-        for item in chime_rows + festival_rows:
+        for item in chime_rows:
             assert voice_page.isAncestorOf(item), f"{item.objectName()} 必须在「语音」域"
             assert not automation_page.isAncestorOf(item), (
                 f"{item.objectName()} 仍残留在「自动化与联动」域"
@@ -1091,19 +1067,9 @@ def test_voice_domain_owns_only_tts_rows(tmp_path, monkeypatch):
             label.text()
             for label in voice_page.findChildren(settings_mod.QLabel, "sectionTitle")
         ]
-        # 2026-10-14 起两页各自**自建卡片**交给本域：语音报时整组占一张「语音报时」
-        # （页内再分基础设置/合成后端/语音/台词歌词，见 test_voice_chime_settings_layout），
-        # 节日提醒整组由 festival_settings.build_domain_page 现造卡片收走
-        # （何时提醒/提醒哪些日子/怎么提醒/你的生日/少用项）。本域不再按「一组行」
-        # 拼小分组——那样页面容器会散架、分组标题会丢。
-        assert section_titles == [
-            "语音报时",
-            "何时提醒",
-            "提醒哪些日子",
-            "怎么提醒",
-            "你的生日",
-            "少用项",
-        ]
+        # 2026-10-14 起语音页自建卡片交给本域：语音报时整组占一张「语音报时」
+        # （页内再分基础设置/合成后端/语音/台词歌词，见 test_voice_chime_settings_layout）。
+        assert section_titles == ["语音报时"]
 
         # 音效类三组都不在「语音」域（各自回原功能分组，行本身仍照常存在）。
         for setting_id in (
@@ -1157,11 +1123,8 @@ def test_click_sound_rows_return_to_interaction_click_feedback(tmp_path, monkeyp
             "settingRow_click_sound_volume",
             "settingRow_click_sound_preview",
         ], "点击音效 4 行必须整组回到「点击反馈」且保持原顺序"
-        assert names.index("settingRow_click_self_talk") > 3, (
-            "点击音效 4 行原本排在 click_self_talk 之前"
-        )
-        # click_ 前缀里另有余额 / 点击台词绑定，同样留在「互动」。
-        for setting_id in ("click_balance", "click_talk_bindings"):
+        # click_ 前缀里另有余额，同样留在「互动」。
+        for setting_id in ("click_balance",):
             keep_row = dialog.findChild(settings_mod.SettingRow, f"settingRow_{setting_id}")
             assert keep_row is not None, f"{setting_id} 行必须存在"
             assert interaction_page.isAncestorOf(keep_row), f"{setting_id} 必须留在「互动」域"
@@ -1259,9 +1222,9 @@ def test_agent_sound_rows_stay_in_agent_link_fold(tmp_path, monkeypatch):
         app.processEvents()
 
 
-def test_sound_and_festival_search_jump_to_owning_domains(tmp_path, monkeypatch):
+def test_sound_search_jumps_to_owning_domains(tmp_path, monkeypatch):
     """搜索按「语音」定稿口径跳域：点击音效 → 互动、碰撞音效 → 桌宠、
-    节日提醒 / 语音报时 → 语音、Agent 提示音 → 自动化与联动。"""
+    语音报时 → 语音、Agent 提示音 → 自动化与联动。"""
     from PySide6.QtWidgets import QApplication
 
     from pet import modern_settings_dialog as settings_mod
@@ -1287,7 +1250,6 @@ def test_sound_and_festival_search_jump_to_owning_domains(tmp_path, monkeypatch)
             ("碰撞音效", "桌宠", True),
             ("碰撞音量", "桌宠", False),
             ("报时频率", "语音", True),
-            ("节日提醒", "语音", True),
             ("立即试听", "语音", True),
             ("agent_sound_enabled", "自动化与联动", True),
         )
@@ -1320,7 +1282,7 @@ def test_menu_domain_uses_in_page_task_tabs_without_changing_sidebar(tmp_path, m
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
 
-    expected_sidebar = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别", "更新"]
+    expected_sidebar = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音", "文件识别"]
     assert [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())] == expected_sidebar
     tabs = dialog.pages.widget(3).findChild(SettingsTabContainer, "settingsTaskTabs")
     assert tabs is not None
@@ -1400,12 +1362,10 @@ def test_runtime_toggles_refresh_menu_status_without_rewriting_tree(tmp_path, mo
     dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
     before = dialog.menu_layout_editor.value()["nodes"]
 
-    dialog.egg_enabled_check.setChecked(False)
     dialog.quick_launch_editor.list.clear()
     dialog.quick_launch_editor._sync_content_height()
     app.processEvents()
 
-    assert dialog.menu_layout_editor.item_for_action("ojingjing").text(1) == "已停用"
     assert dialog.menu_layout_editor.item_for_action("quick_launch").text(1) == "已停用"
     assert dialog.menu_layout_editor.value()["nodes"] == before
     dialog.reject()
@@ -1772,7 +1732,6 @@ def test_settings_domains_use_semantic_sidebar_icons():
         ("自动化与联动", "automation"),
         ("语音", "sound"),
         ("文件识别", "file"),
-        ("更新", "update"),
     )
 
 

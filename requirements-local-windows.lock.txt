@@ -19,7 +19,6 @@ jaraco.classes==3.4.0
 jaraco.context==6.1.2
 jaraco.functools==4.6.0
 keyring==25.7.0
-lunar_python==1.4.8
 more-itertools==11.2.1
 multidict==7.1.0
 numpy==2.5.4

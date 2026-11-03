@@ -426,7 +426,7 @@ class TodoReminderService:
         self._speak_fire(fire)
 
     def _speak_fire(self, fire: dict) -> None:
-        """经语音报时服务的音频通道把这次提醒念出来（同 festival_service._speak）。
+        """经语音报时服务的音频通道把这次提醒念出来。
 
         刻意**不自建播放器**：报时服务是进程内唯一的音频通道，共用它才能在结构上
         保证不叠音。通道不存在或播报失败都只降级为"有气泡没声音"，不影响提醒本身。

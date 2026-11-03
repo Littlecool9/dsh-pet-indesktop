@@ -293,29 +293,6 @@ def test_collision_sound_uses_participating_sprite_config(tmp_path, monkeypatch)
 
 
 # ---------------------------------------------------------------- 3. 逐只气泡
-def test_click_self_talk_bubble_lands_on_clicked_child(tmp_path, monkeypatch):
-    """子宠点击台词气泡出现在**子宠自己**头顶（此前一律落主宠）。"""
-    _silence_sound(monkeypatch)
-    shell, cfg = toggle._make_slot_shell(tmp_path)
-    try:
-        shell.overlay.show()
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        _write_slot(cfg, 1, click_show_self_talk=True, **_talk_values())
-        _notify(shell)
-        follower = shell._bubble_followers.get(child)
-        assert follower is not None and follower.bubble is not None, \
-            "spawn 必须给子宠建它自己的气泡跟随器"
-
-        shell._on_sprite_click(child, "")
-
-        assert follower.bubble._raw_text == "子宠台词"
-        main_bubble = shell._speech_bubble
-        assert getattr(main_bubble, "_raw_text", "") != "子宠台词"
-    finally:
-        toggle._teardown(shell)
-
-
 def test_balance_bubble_uses_clicked_sprite_host(tmp_path, monkeypatch):
     """余额气泡（``AppShell.show_balance``）拿到的是**被点那一只**的宿主。"""
     _silence_sound(monkeypatch)

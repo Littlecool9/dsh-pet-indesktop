@@ -46,7 +46,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "balance_tier_labels_mode",
         "character",
         "character_aliases",
-        "character_profiles",
         "chat_always_on_top",
         "chat_background",
         "chat_background_fill",
@@ -55,7 +54,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "chat_follow_pet",
         "chat_ui_style",
         "click_show_balance",
-        "click_show_self_talk",
         "click_sound_enabled",
         "click_sound_pack",
         "click_sound_volume",
@@ -72,10 +70,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "dialogue_last_scope",
         "dialogue_mode",
         "dialogue_phrases",
-        "divination_enabled",
-        "divination_hint",
-        "divination_speak",
-        "divination_state",
         "drag_physics",
         "drop_gravity",
         "dynamic_island",
@@ -101,9 +95,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "island_network_enabled",
         "lock_position",
         "media_prewarm",
-        "mem_min_size_mb",
-        "mem_skip_foreground",
-        "menu_easter_egg",
         "modern_chat_background",
         "modern_chat_background_fill",
         "modern_chat_background_opacity",
@@ -176,27 +167,10 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "voice_chime_show_quote",
         "voice_chime_tts_backend",
         "voice_chime_tts_fallback",
-        "festival_birthday",
-        "festival_custom_quotes_cn",
-        "festival_custom_quotes_west",
-        "festival_reminder_animation",
-        "festival_reminder_cn",
-        "festival_reminder_count",
-        "festival_reminder_enabled",
-        "festival_reminder_mode",
-        "festival_reminder_show_quote",
-        "festival_reminder_solar_terms",
-        "festival_reminder_speak",
-        "festival_reminder_times",
-        "festival_reminder_west",
         "voice_chime_custom_quotes_en",
         "voice_chime_custom_quotes_zh",
         "voice_chime_voice",
         "voice_chime_volume",
-        "weather_city",
-        "weather_city_codes",
-        "weather_city_list",
-        "weather_enabled",
     }
 )
 
@@ -209,10 +183,10 @@ SPECIAL_CASED_KEYS = frozenset({"version", "proactive_screen", "agent_link", "ch
 # 2026-09-22 加入点击台词朗读 / 台词本地语音预缓存 / 自言自语配图概率 3 键
 # （self_talk_speak_enabled、self_talk_voice_precache_enabled、self_talk_image_chance）。
 # 2026-10-07 加入音乐播放器来源 2 键（foobar_lyrics_enabled / foobar_title_format）。
-# 2026-10-07 深夜批次再加：天气 3（weather_enabled/weather_city/weather_city_list）、
-# 网络 3（island_network_enabled/network_probe_interval_seconds/network_info_menu_enabled）、
-# 免打扰 2（quiet_minutes_default/quiet_also_on_fullscreen）、回收内存 2
-# （mem_skip_foreground/mem_min_size_mb）、动画菜单 1（anim_menu_stay_open）。
+# 2026-10-07 深夜批次再加：网络 3
+# （island_network_enabled/network_probe_interval_seconds/network_info_menu_enabled）、
+# 免打扰 2（quiet_minutes_default/quiet_also_on_fullscreen）、动画菜单 1
+# （anim_menu_stay_open）。
 # 后实测（2026-10-07 夜间整合后复测）：白名单字面量 139 + 特例 5 = 144。
 # 2026-10-07 P1 Slice C 加灵动岛指标 1（island_metrics，列表序=优先级），白名单 140。
 # 2026-10-11 加游戏帧率 2（game_fps_target_mode 枚举 / game_fps_process 纯 exe 名，
@@ -220,10 +194,6 @@ SPECIAL_CASED_KEYS = frozenset({"version", "proactive_screen", "agent_link", "ch
 # 2026-10-13 加语音报时合成后端 9 键（tts_backend / tts_fallback / mimo_model /
 # mimo_voice / mimo_style / sapi_voice / sapi_rate / doubao_speaker / doubao_pitch，
 # 随 provider 注册表一起进来），白名单 151。
-# 2026-10-14 补登记节日提醒 2 键（festival_reminder_animation / festival_birthday）：
-# 它们随「节日动画 + 我的生日」一起进来时**漏登在 config.py 的默认 dict 与白名单里**
-# （设置页有行、config 没键），于是本轮把它们渲染出来后被
-# `test_settings_default_marks` 的「冻结集」抓到——补齐后白名单 153。
 # 2026-10-18 加待办语音播报 1 键（todo_reminder_speak，默认 False：复用语音报时的
 # 音频通道，不新增语速/音色/音量键），白名单 154。
 DEFAULTS_SNAPSHOT = RELOAD_WHITELIST_SNAPSHOT | SPECIAL_CASED_KEYS
@@ -338,17 +308,6 @@ def test_set_normalizes_music_and_cost_keys(tmp_path):
     assert cfg.data["agent_cost_enabled"] is True
 
 
-# ------------------------------------------------- 「回收内存」(#210) 两个键
-def _memory_trim_config(tmp_path, raw: dict) -> Config:
-    """把 mem_* 键写成脏值落盘，再走真实加载路径（reload + _normalize_pet_settings）。"""
-    cfg_dir = tmp_path / config_mod.APP_DIR_NAME
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    (cfg_dir / "config.json").write_text(
-        json.dumps({"version": 4, **raw}, ensure_ascii=False), encoding="utf-8",
-    )
-    return Config(base=tmp_path)
-
-
 # ------------------------------------------------- 动画菜单连播（#221）
 def _anim_menu_config(tmp_path, raw) -> Config:
     """把 ``anim_menu_stay_open`` 写成脏值落盘，再走真实加载路径。"""
@@ -364,7 +323,7 @@ def _anim_menu_config(tmp_path, raw) -> Config:
 def test_anim_menu_stay_open_defaults_to_closing_after_action(tmp_path):
     """默认 False = 点一个动作就收起菜单（#221 的产品决策）。
 
-    该键是**菜单行为类**偏好：不进设置页（与 mem_* 同口径），用户手改
+    该键是**菜单行为类**偏好：不进设置页（菜单行为类偏好，不进设置页），用户手改
     config.json 才切到连播。
     """
     assert Config(base=tmp_path).data["anim_menu_stay_open"] is False
@@ -391,95 +350,7 @@ def test_set_and_reload_keep_anim_menu_stay_open(tmp_path):
     assert Config(base=tmp_path).data["anim_menu_stay_open"] is True
 
 
-# ------------------------------------------------- 天气四键（issue #209）
-def _dirty_weather_config(tmp_path):
-    """把天气键写成脏值落盘，再走真实加载路径（reload + _normalize_pet_settings）。"""
-    cfg_dir = tmp_path / config_mod.APP_DIR_NAME
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    (cfg_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 4,
-                "weather_enabled": "false",
-                "weather_city": "  鹿城区  ",
-                "weather_city_list": ["北京", "北京", " 鹿城区 ", "", 42, "上海"],
-                "weather_city_codes": {"鹿城区": " 101210710 ", "北京": "", "": "x"},
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    return Config(base=tmp_path)
 
-
-def test_memory_trim_keys_have_documented_defaults(tmp_path):
-    """默认值：跳过前台（保护用户正在用的窗口）、阈值 50MB。
-
-    两个键都是"菜单动作类功能"的配置面，**不进设置页**——只能手改 config.json
-    或由菜单路径读取，默认值即推荐值。
-    """
-    cfg = Config(base=tmp_path)
-
-    assert cfg.data["mem_skip_foreground"] is True
-    assert cfg.data["mem_min_size_mb"] == 50.0
-
-
-def test_dirty_memory_trim_keys_are_normalized(tmp_path):
-    """脏值不得打死 worker 线程：字符串布尔不许被 bool() 误开，阈值必须落区间。
-
-    阈值下限 0 有语义（0 = 连 0 字节进程都纳入），上限与
-    ``pet/memory_trim.py::MIN_SIZE_MB_MAX`` 同值（漂移由 test_memory_trim 钉住）。
-    """
-    from pet import memory_trim
-
-    assert _memory_trim_config(
-        tmp_path / "str-bool", {"mem_skip_foreground": "false"},
-    ).data["mem_skip_foreground"] is False
-    assert _memory_trim_config(
-        tmp_path / "bad-num", {"mem_min_size_mb": "abc"},
-    ).data["mem_min_size_mb"] == memory_trim.DEFAULT_MIN_SIZE_MB
-    assert _memory_trim_config(
-        tmp_path / "negative", {"mem_min_size_mb": -5},
-    ).data["mem_min_size_mb"] == 0.0
-    assert _memory_trim_config(
-        tmp_path / "huge", {"mem_min_size_mb": 10 ** 9},
-    ).data["mem_min_size_mb"] == memory_trim.MIN_SIZE_MB_MAX
-
-
-def test_set_normalizes_memory_trim_keys(tmp_path):
-    cfg = Config(base=tmp_path)
-
-    cfg.set("mem_min_size_mb", "abc")
-    assert cfg.data["mem_min_size_mb"] == 50.0
-    cfg.set("mem_skip_foreground", "false")
-    assert cfg.data["mem_skip_foreground"] is False
-
-
-def test_dirty_weather_keys_are_normalized(tmp_path):
-    """脏 config.json 加载后：布尔判真、城市名归一化（**不剥后缀**）、列表去空去重。"""
-    cfg = _dirty_weather_config(tmp_path)
-
-    assert cfg.data["weather_enabled"] is False, "'false' 不得被 bool() 误开"
-    assert cfg.data["weather_city"] == "鹿城区"
-    assert cfg.data["weather_city_list"] == ["北京", "鹿城区", "上海"]
-    assert cfg.data["weather_city_codes"] == {"鹿城区": "101210710"}
-
-
-def test_set_normalizes_weather_keys(tmp_path):
-    """set() 的归一化名单同样覆盖天气键（设置页/菜单写回不得绕过钳制）。"""
-    from pet.weather import MAX_CITIES, normalize_city_list
-
-    cfg = Config(base=tmp_path)
-    cfg.set("weather_enabled", "yes")
-    assert cfg.data["weather_enabled"] is True
-    cfg.set("weather_city", "乌鲁木齐县")
-    assert cfg.data["weather_city"] == "乌鲁木齐县"
-    cfg.set("weather_city_list", [f"城市{i}" for i in range(MAX_CITIES + 5)])
-    assert cfg.data["weather_city_list"] == normalize_city_list(
-        [f"城市{i}" for i in range(MAX_CITIES + 5)]
-    )
-    cfg.set("weather_city_list", "北京")
-    assert cfg.data["weather_city_list"] == []
 # ------------------------------------------- 网络信息 / 灵动岛指标（#172 + Slice C）
 def _dirty_network_config(tmp_path, raw: dict) -> Config:
     """把网络信息诸键写成脏值落盘，再走真实加载路径（reload + 归一化）。"""
@@ -565,58 +436,7 @@ def test_network_keys_survive_reload_round_trip(tmp_path):
     assert restored.data["island_metrics"] == [NETWORK, CPU]
     assert restored.data["network_probe_interval_seconds"] == pytest.approx(3.0)
     assert restored.data["network_info_menu_enabled"] is False
-    cfg.set("weather_city_codes", {"景德镇市": "101240801", "坏": 5})
-    assert cfg.data["weather_city_codes"] == {"景德镇市": "101240801"}
 
-
-# --------------------------------------- M1：城市名归一化幂等、不被别的设置改坏
-def test_repeated_normalization_never_erodes_the_city_name(tmp_path):
-    """保存任何设置都会跑整表归一化：城市名必须一次定形，之后一直不变。
-
-    回归的正是终审 M1 的实测：``景德镇市`` → ``景德镇`` → ``景德``（每次保存
-    别的设置都继续剥一层），以及「新乡」「景德镇」被当后缀裁掉。
-    """
-    cfg = Config(base=tmp_path)
-    cfg.set("weather_city", "景德镇市")
-    cfg.set("weather_city_list", ["新乡", "景德镇", "鹿城区"])
-    assert cfg.data["weather_city"] == "景德镇市"
-    assert cfg.data["weather_city_list"] == ["新乡", "景德镇", "鹿城区"]
-
-    for _ in range(5):
-        cfg._normalize_pet_settings()
-        assert cfg.data["weather_city"] == "景德镇市"
-        assert cfg.data["weather_city_list"] == ["新乡", "景德镇", "鹿城区"]
-
-
-def test_setting_an_unrelated_key_leaves_the_weather_city_alone(tmp_path):
-    """改一个跟天气无关的设置（会触发整表归一化）不得动城市名。"""
-    cfg = Config(base=tmp_path)
-    cfg.set("weather_city", "景德镇市")
-    cfg.set("weather_city_codes", {"景德镇市": "101240801"})
-
-    cfg.set("pet_opacity", 90)
-    cfg.set("bubble_text_scale", 120)
-
-    assert cfg.data["weather_city"] == "景德镇市"
-    assert cfg.data["weather_city_codes"] == {"景德镇市": "101240801"}
-
-
-def test_city_name_normalization_is_a_fixed_point_on_load_and_reload(tmp_path):
-    """落盘 → 重载 → 再落盘 不得改变城市名（跨重启也不侵蚀）。"""
-    cfg_dir = tmp_path / config_mod.APP_DIR_NAME
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    (cfg_dir / "config.json").write_text(
-        json.dumps(
-            {"version": 4, "weather_city": "景德镇市", "weather_city_list": ["新乡"]},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    first = Config(base=tmp_path)
-    first.save()
-    second = Config(base=tmp_path)
-    assert second.data["weather_city"] == "景德镇市"
-    assert second.data["weather_city_list"] == ["新乡"]
 
 # ------------------------------------------------- 自启目标（harness_launch_target）
 def _launch_target_config(tmp_path, raw: str) -> Config:

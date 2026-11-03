@@ -486,16 +486,15 @@ def default_session(pid: int, name: str, session_name: str, backend: Any = None)
 
 
 def _foreground_api_instance():
-    """``pet/memory_trim.py`` 的 Win32 薄封装（惰性、进程内单例）。
+    """``pet/win32_process.py`` 的 Win32 薄封装（惰性、进程内单例）。
 
-    复用它而不是照抄一份 ctypes：那个类就是 kernel32/psapi/user32 的封装，公开、
-    有测试覆盖，import 实测 66ms 且不带 psutil。**不用 vision 模块**：它为截图/OCR
-    拖进 base64/json/urllib（import 实测 158ms），跟随前台每次切窗口都要问一次，
-    不值得为省十几行 ctypes 付这个成本。
+    只保留前台窗口与进程名所需的 kernel32/user32 面；**不用 vision 模块**：它为
+    截图/OCR 拖进 base64/json/urllib（import 实测 158ms），跟随前台每次切窗口都要
+    问一次，不值得为省十几行 ctypes 付这个成本。
     """
     global _foreground_api
     if _foreground_api is None:
-        from pet.memory_trim import Win32ProcessApi
+        from pet.win32_process import Win32ProcessApi
         _foreground_api = Win32ProcessApi()
     return _foreground_api
 
