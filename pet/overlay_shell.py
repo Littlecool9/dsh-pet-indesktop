@@ -561,11 +561,6 @@ class _SpriteSelfTalkHost:
     def cfg(self):
         return self._shell._sprite_config(self._sprite)
 
-    @property
-    def on_self_talk_speak(self):
-        """朗读通道（与主宠共用同一条：旧架构都是 ``win.on_self_talk_speak``）。"""
-        return getattr(self._shell, "on_self_talk_speak", None)
-
     # ``window_alerts`` 的 host 形函数直接读这些私有属性（同 PetWindow 口径）
     @property
     def _bubble_suppressed(self) -> bool:
@@ -2464,10 +2459,8 @@ class OverlayShell(QObject):
 
         host 形消费者（``MusicLyricController`` / ``window_alerts`` 的各种分支）
         直接读 ``win.cfg``。旧架构一窗一宠，``win.cfg`` 天然就是那只宠的视图；本壳
-        是单例，直接回主配置会让每宠键（``self_talk_texts`` /
-        ``self_talk_speak_enabled`` / ``character`` …）一律读成主配置里的缺省值
-        ——设置页写进 slot 档案、运行期却看不到。实机表现：开着「点击台词朗读」，
-        点击出气泡但**不朗读、也没有任何日志**（v4.3.3 用户实测 #307）。
+        是单例，直接回主配置会让每宠键（``self_talk_texts`` / ``character`` …）
+        一律读成主配置里的缺省值——设置页写进 slot 档案、运行期却看不到。
         """
         sprite = getattr(self, "sprite", None)
         if sprite is not None:

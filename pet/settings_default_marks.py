@@ -94,8 +94,6 @@ _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
     "click_sound": "click_sound_enabled",
     "click_sound_volume": ("click_sound_volume", 100),
     "click_balance": "click_show_balance",
-    "click_self_talk_speak": "self_talk_speak_enabled",
-    "click_self_talk_precache": "self_talk_voice_precache_enabled",
     "golden_spin_click": "golden_spin_on_click",
     # 桌宠
     "edge_probe": "edge_probe_enabled",

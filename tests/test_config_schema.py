@@ -126,9 +126,7 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "self_talk_image_scale",
         "self_talk_max_interval",
         "self_talk_min_interval",
-        "self_talk_speak_enabled",
         "self_talk_texts",
-        "self_talk_voice_precache_enabled",
         "settings_process_isolation",
         "shift_drag",
         "slingshot_enabled",
@@ -140,30 +138,7 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "throw_strength",
         "todo_reminder_enabled",
         "todo_reminder_lead_minutes",
-        "todo_reminder_speak",
         "user_customized",
-        "voice_chime_custom_quotes_en",
-        "voice_chime_custom_quotes_zh",
-        "voice_chime_custom_times",
-        "voice_chime_doubao_pitch",
-        "voice_chime_doubao_speaker",
-        "voice_chime_enabled",
-        "voice_chime_mimo_model",
-        "voice_chime_mimo_style",
-        "voice_chime_mimo_voice",
-        "voice_chime_pitch",
-        "voice_chime_rate",
-        "voice_chime_sapi_rate",
-        "voice_chime_sapi_voice",
-        "voice_chime_schedule",
-        "voice_chime_show_bubble",
-        "voice_chime_show_quote",
-        "voice_chime_tts_backend",
-        "voice_chime_tts_fallback",
-        "voice_chime_custom_quotes_en",
-        "voice_chime_custom_quotes_zh",
-        "voice_chime_voice",
-        "voice_chime_volume",
     }
 )
 
@@ -172,19 +147,12 @@ SPECIAL_CASED_KEYS = frozenset({"version", "proactive_screen", "agent_link", "ch
 
 # 默认值 dict 键集合现状快照 = 白名单 ∪ 特例键。
 # 2026-09-17 加入 music_player_paths（交付前审查 P1-3 登记）。
-# 2026-09-22 加入点击台词朗读 / 台词本地语音预缓存 / 自言自语配图概率 3 键
-# （self_talk_speak_enabled、self_talk_voice_precache_enabled、self_talk_image_chance）。
 # 2026-10-07 加入音乐播放器来源 2 键（foobar_lyrics_enabled / foobar_title_format）。
 # 2026-10-07 深夜批次再加：网络信息菜单 1（network_info_menu_enabled）、
 # 免打扰 2（quiet_minutes_default/quiet_also_on_fullscreen）、动画菜单 1
 # （anim_menu_stay_open）。
 # 后实测（2026-10-07 夜间整合后复测）：白名单字面量 139 + 特例 5 = 144。
 # 2026-10-07 P1 Slice C 加灵动岛指标 1（island_metrics，列表序=优先级），白名单 140。
-# 2026-10-13 加语音报时合成后端 9 键（tts_backend / tts_fallback / mimo_model /
-# mimo_voice / mimo_style / sapi_voice / sapi_rate / doubao_speaker / doubao_pitch，
-# 随 provider 注册表一起进来），白名单 151。
-# 2026-10-18 加待办语音播报 1 键（todo_reminder_speak，默认 False：复用语音报时的
-# 音频通道，不新增语速/音色/音量键），白名单 154。
 DEFAULTS_SNAPSHOT = RELOAD_WHITELIST_SNAPSHOT | SPECIAL_CASED_KEYS
 
 

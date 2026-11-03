@@ -886,8 +886,6 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     expected_labels.append("待办提醒")  # 待办管理面板入口（所有平台）
     expected_labels.append("专注模式")
     expected_labels.append("免打扰")    # 免打扰入口（#208，四档时长子菜单）
-    # 立即报时/语音报时开关/今日节日/节日提醒开关：2026-09-19 起默认模板
-    # visible: false，不上默认菜单（用户可在菜单编辑器加回）
     expected_labels.extend([
         "桌宠设置",
         "退出",
@@ -1125,7 +1123,7 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
     assert dialog.findChild(settings_mod.QFrame, "sidebarPane").width() == 200
     assert isinstance(dialog.sidebar, QListWidget)
     assert isinstance(dialog.pages, QStackedWidget)
-    expected_pages = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音"]
+    expected_pages = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动"]
     assert [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())] == expected_pages
     assert dialog.pages.count() == len(expected_pages)
     assert dialog.search_edit.placeholderText() == "搜索设置…"
@@ -1139,8 +1137,6 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
         "应用启动", "窗口与系统", "动画与移动", "点击反馈", "自言自语",
         "显示", "菜单外观", "对话窗口", "已配置应用", "内容与布局",
         "模型与连接", "视觉能力",
-        # 「语音」总域只收 TTS 类设置（2026-09-17 定稿口径）。
-        "语音报时", "基础设置", "合成后端", "语音", "台词/歌词",
     }.issubset(set(section_titles))
     if hasattr(dialog, "pro_enabled_check"):
         # 「自动化与联动」的「主动识屏」不再是一张压平的大卡（同上）。

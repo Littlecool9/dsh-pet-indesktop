@@ -5,7 +5,7 @@
 （``--instance slot-N`` → ``Config(instance_id="slot-N")`` → 读写
 ``config-slot-N.json``），而运行期只有 ``PER_SLOT_SETTING_KEYS`` 里的键逐宠取源
 （``overlay_shell._SpriteConfig.get``），**其余键一律读主配置**。于是子宠页上
-「语音报时 / 节日 / 待办 / 灵动岛 / 菜单外观 / 窗口级 7 键 …」约百行设置：保存
+「待办 / 灵动岛 / 菜单外观 / 窗口级 7 键 …」约百行设置：保存
 成功、回显正确、运行期零效果。窗口级 7 行还写着「（对所有桌宠生效）」——实际对
 所有桌宠都不生效。
 

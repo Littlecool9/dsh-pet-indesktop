@@ -30,8 +30,6 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
         "todo_panel",
         "focus_mode",
         "quiet_mode",
-        "voice_chime_now",
-        "voice_chime_toggle",
         "default.separator-tools",
         "modern_settings",
         "quit",
@@ -356,8 +354,6 @@ def test_missing_user_layout_resolves_versioned_default():
         "todo_panel",
         "focus_mode",
         "quiet_mode",
-        "voice_chime_now",
-        "voice_chime_toggle",
         "modern_settings",
         "quit",
     }
@@ -390,12 +386,6 @@ def test_missing_user_layout_resolves_versioned_default():
         "modern_settings",
         "quit",
     ]
-    # 报时/节日四项在默认模板里 visible: false（2026-09-19 起默认不上菜单，
-    # 用户可在菜单编辑器自行加回），resolve 后被过滤，不出现在渲染结果里。
-    assert all(
-        item not in {node.get("id") for node in result.nodes}
-        for item in ("voice_chime_now", "voice_chime_toggle")
-    )
 
 
 def test_config_persists_menu_layout_override_without_copying_default(tmp_path):
@@ -890,7 +880,7 @@ def test_settings_sidebar_uses_stable_domains_and_owns_representative_rows(tmp_p
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
-    expected = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音"]
+    expected = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动"]
     assert [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())] == expected
 
     def owner(setting_id):
@@ -898,17 +888,12 @@ def test_settings_sidebar_uses_stable_domains_and_owns_representative_rows(tmp_p
         return next(expected[index] for index in range(dialog.pages.count()) if dialog.pages.widget(index).isAncestorOf(row))
 
     assert owner("mouse_through") == "互动"
-    # 台词自动预缓存必须留在「互动」域的「点击反馈」组：它的 setting_id 用 click_
-    # 前缀才会被 claim_prefix("click_") 认领，否则掉进「待分类（开发期）」——这正是
-    # 本功能第一版踩过的坑（全量测试因此红了一条）。
-    assert owner("click_self_talk_precache") == "互动"
     # 配图概率属于「自言自语」组（必须是显式 claim 的成员，否则掉进「待分类」）。
     assert owner("self_talk_image_chance") == "互动"
     assert owner("menu_theme") == "菜单"
     assert owner("quick_launch_apps") == "菜单"
     assert owner("dynamic_island_enabled") == "桌面组件"
     assert owner("api_url") == "AI 与对话"
-    assert owner("voice_chime_enabled") == "语音"
     assert owner("music_player_netease") == "桌宠"
     assert owner("music_player_qqmusic") == "桌宠"
     assert "待分类（开发期）" not in [
@@ -916,76 +901,6 @@ def test_settings_sidebar_uses_stable_domains_and_owns_representative_rows(tmp_p
     ]
     dialog.reject()
     app.processEvents()
-
-
-def test_voice_chime_rows_live_only_in_their_own_sidebar_domain(tmp_path, monkeypatch):
-    """「语音报时」自 2026-09-17 起收在「语音」总域：voice_chime_* 行只落在该域，
-    automation 页不再持有。
-
-    历史事故：设置页里没包进 SettingRow 的控件不会被域收集机制搬运，页面移出
-    pages 后直接消失——这里把「立即试听」按钮所在行也一起断言。
-    """
-    from PySide6.QtWidgets import QApplication
-
-    from pet import modern_settings_dialog as settings_mod
-    from pet.config import Config
-    from pet.modern_settings_dialog import ModernSettingsDialog, SettingRow
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
-    try:
-        labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
-        assert "语音" in labels
-        chime_page = dialog.pages.widget(labels.index("语音"))
-        automation_page = dialog.pages.widget(labels.index("自动化与联动"))
-
-        rows = [
-            row for row in dialog.findChildren(SettingRow)
-            if row.objectName().startswith("settingRow_voice_chime_")
-        ]
-        assert rows, "语音报时设置行必须存在"
-        for row in rows:
-            assert chime_page.isAncestorOf(row), f"{row.objectName()} 不在「语音」域"
-            assert not automation_page.isAncestorOf(row), (
-                f"{row.objectName()} 仍残留在「自动化与联动」域"
-            )
-
-        preview_row = dialog.findChild(SettingRow, "settingRow_voice_chime_preview")
-        assert preview_row is not None, "「立即试听」必须在 SettingRow 内才不会被域收集漏掉"
-        assert chime_page.isAncestorOf(preview_row)
-        assert chime_page.isAncestorOf(dialog.voice_chime_page.preview_btn)
-        assert dialog.voice_chime_page.preview_btn.isVisibleTo(chime_page), (
-            "试听按钮在新域里必须可见（历史事故：打包版不可见）"
-        )
-        previews: list[str] = []
-        dialog.voice_chime_page.preview_requested.connect(previews.append)
-        dialog.voice_chime_page.preview_btn.click()
-        assert previews == [""], "搬家后「立即试听」仍须照常发信号（功能不变）"
-    finally:
-        dialog.reject()
-        app.processEvents()
-
-
-def test_voice_chime_search_jumps_to_its_own_sidebar_domain(tmp_path, monkeypatch):
-    """搜索命中语音报时行时，侧边栏应跳到「语音」总域。"""
-    from PySide6.QtWidgets import QApplication
-
-    from pet import modern_settings_dialog as settings_mod
-    from pet.config import Config
-    from pet.modern_settings_dialog import ModernSettingsDialog
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
-    try:
-        dialog.search_edit.setText("报时频率")
-        app.processEvents()
-        assert dialog.sidebar.currentItem().text() == "语音"
-        assert dialog.search_status.text() == "1/1 · 报时频率"
-    finally:
-        dialog.reject()
-        app.processEvents()
 
 
 def _section_of(dialog, settings_mod, setting_id):
@@ -1011,91 +926,11 @@ def _section_title(section) -> str:
     return label.text()
 
 
-def test_voice_domain_owns_only_tts_rows(tmp_path, monkeypatch):
-    """「语音」域按 2026-09-17 定稿口径只收鱼开口说话（TTS）类设置：
-    语音报时组 + 节日提醒组（节日提醒原在「自动化与联动」域，但带 speak/TTS 播报）。
-
-    音效类不属此域：点击音效回「互动 · 点击反馈」、碰撞音效回「桌宠」碰撞组
-    （见下面两个用例），Agent 提示音效仍留在 Agent 联动折叠框。
-    """
-    from PySide6.QtWidgets import QApplication
-
-    from pet import modern_settings_dialog as settings_mod
-    from pet.config import Config
-    from pet.modern_settings_dialog import ModernSettingsDialog, SettingRow
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
-    try:
-        labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
-        voice_page = dialog.pages.widget(labels.index("语音"))
-        automation_page = dialog.pages.widget(labels.index("自动化与联动"))
-
-        all_rows = dialog.findChildren(SettingRow)
-        chime_rows = [r for r in all_rows if r.objectName().startswith("settingRow_voice_chime_")]
-        # 语音报时与节日提醒的行**整组都在**：锁「一个不漏、也不留在自动化与联动」。
-        # 行数不再写死（2026-10-14 provider 化后语音报时多了引擎与四家后端的字段行），
-        # 改为与两页自己卡片里的行数对齐——本用例要钉的是「归属」，不是「行数」。
-        from pet.settings_widgets import SettingsSection  # noqa: PLC0415
-
-        def _card(title: str):
-            """标题为 ``title`` 的那张卡（找不到返回 None，交给断言报出来）。"""
-            for section in dialog.findChildren(SettingsSection):
-                label = section.findChild(settings_mod.QLabel, "sectionTitle")
-                if label is not None and label.text() == title:
-                    return section
-            return None
-
-        # 语音报时那张卡里的每一行都要在「语音」域：卡里除 `voice_chime_*` 行外还有
-        # 折叠头与凭据组行（`tts_backend_fold_*` / `tts_credentials`），所以这里比的是
-        # 「卡里没有一行掉队」而不是行数相等。本用例要钉的是**归属**，不是行数。
-        card = _card("语音报时")
-        assert card is not None, "「语音」域必须有「语音报时」这张卡"
-        for row in card.rows:
-            assert voice_page.isAncestorOf(row), f"{row.objectName()} 必须在「语音」域"
-        assert len(chime_rows) >= 12, "语音报时既有 12 行一个都不能少"
-        for item in chime_rows:
-            assert voice_page.isAncestorOf(item), f"{item.objectName()} 必须在「语音」域"
-            assert not automation_page.isAncestorOf(item), (
-                f"{item.objectName()} 仍残留在「自动化与联动」域"
-            )
-
-        section_titles = [
-            label.text()
-            for label in voice_page.findChildren(settings_mod.QLabel, "sectionTitle")
-        ]
-        # 2026-10-14 起语音页自建卡片交给本域：语音报时整组占一张「语音报时」
-        # （页内再分基础设置/合成后端/语音/台词歌词，见 test_voice_chime_settings_layout）。
-        assert section_titles == ["语音报时"]
-
-        # 音效类三组都不在「语音」域（各自回原功能分组，行本身仍照常存在）。
-        for setting_id in (
-            "click_sound",
-            "click_sound_pack",
-            "click_sound_volume",
-            "click_sound_preview",
-            "collision_sound_enabled",
-            "collision_sound_volume",
-        ):
-            voice_row = dialog.findChild(SettingRow, f"settingRow_{setting_id}")
-            assert voice_row is not None, f"{setting_id} 行必须存在"
-            assert not voice_page.isAncestorOf(voice_row), (
-                f"{setting_id} 是音效类，不该落在「语音」域"
-            )
-        assert "待分类（开发期）" not in [
-            label.text() for label in dialog.findChildren(settings_mod.QLabel)
-        ]
-    finally:
-        dialog.reject()
-        app.processEvents()
-
-
 def test_click_sound_rows_return_to_interaction_click_feedback(tmp_path, monkeypatch):
-    """点击音效 4 行回「互动 · 点击反馈」，且保持原有行顺序（在 click_self_talk 之前）。
+    """点击音效 4 行回「互动 · 点击反馈」，且保持原有行顺序。
 
     整组走 click_ 前缀认领（与 HEAD 一致，本批未动认领规则本身）；域归属必须
-    唯一——不能同时被「语音」域或「待分类（开发期）」收走。
+    唯一——不能同时被「待分类（开发期）」收走。
     """
     from PySide6.QtWidgets import QApplication
 
@@ -1109,7 +944,6 @@ def test_click_sound_rows_return_to_interaction_click_feedback(tmp_path, monkeyp
     try:
         labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
         interaction_page = dialog.pages.widget(labels.index("互动"))
-        voice_page = dialog.pages.widget(labels.index("语音"))
 
         section = _section_of(dialog, settings_mod, "click_sound")
         assert _section_title(section) == "点击反馈"
@@ -1126,8 +960,6 @@ def test_click_sound_rows_return_to_interaction_click_feedback(tmp_path, monkeyp
             keep_row = dialog.findChild(settings_mod.SettingRow, f"settingRow_{setting_id}")
             assert keep_row is not None, f"{setting_id} 行必须存在"
             assert interaction_page.isAncestorOf(keep_row), f"{setting_id} 必须留在「互动」域"
-        for item in section.rows:
-            assert not voice_page.isAncestorOf(item), f"{item.objectName()} 不该落在「语音」域"
     finally:
         dialog.reject()
         app.processEvents()
@@ -1135,7 +967,7 @@ def test_click_sound_rows_return_to_interaction_click_feedback(tmp_path, monkeyp
 
 def test_collision_sound_rows_return_to_pet_collision_groups(tmp_path, monkeypatch):
     """碰撞音效 2 行回「桌宠」：开关紧随碰撞开关（多开碰撞组），音量随物理参数进
-    「碰撞参数（高级）」；「语音」域不再持有。"""
+    「碰撞参数（高级）」。"""
     from PySide6.QtWidgets import QApplication
 
     from pet import modern_settings_dialog as settings_mod
@@ -1148,7 +980,6 @@ def test_collision_sound_rows_return_to_pet_collision_groups(tmp_path, monkeypat
     try:
         labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
         pet_page = dialog.pages.widget(labels.index("桌宠"))
-        voice_page = dialog.pages.widget(labels.index("语音"))
 
         primary = _section_of(dialog, settings_mod, "collision_sound_enabled")
         assert _section_title(primary) == "多开碰撞"
@@ -1169,15 +1000,13 @@ def test_collision_sound_rows_return_to_pet_collision_groups(tmp_path, monkeypat
             item = dialog.findChild(settings_mod.SettingRow, f"settingRow_{setting_id}")
             assert item is not None, f"{setting_id} 行必须存在"
             assert pet_page.isAncestorOf(item)
-            assert not voice_page.isAncestorOf(item), f"{setting_id} 不该落在「语音」域"
     finally:
         dialog.reject()
         app.processEvents()
 
 
 def test_agent_sound_rows_stay_in_agent_link_fold(tmp_path, monkeypatch):
-    """Agent 提示音效 6 行按主人拍板留在「自动化与联动」的 Agent 联动折叠框内，
-    不随「语音」域搬家。"""
+    """Agent 提示音效 6 行按主人拍板留在「自动化与联动」的 Agent 联动折叠框内。"""
     from PySide6.QtWidgets import QApplication
 
     from pet import modern_settings_dialog as settings_mod
@@ -1189,7 +1018,6 @@ def test_agent_sound_rows_stay_in_agent_link_fold(tmp_path, monkeypatch):
     dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
     try:
         labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
-        voice_page = dialog.pages.widget(labels.index("语音"))
         automation_page = dialog.pages.widget(labels.index("自动化与联动"))
         group_titles = [
             section.findChild(settings_mod.QLabel, "sectionTitle").text()
@@ -1212,17 +1040,13 @@ def test_agent_sound_rows_stay_in_agent_link_fold(tmp_path, monkeypatch):
             assert automation_page.isAncestorOf(row), (
                 f"{setting_id} 必须留在「自动化与联动」域"
             )
-            assert not voice_page.isAncestorOf(row), (
-                f"{setting_id} 不应被「语音」域收走"
-            )
     finally:
         dialog.reject()
         app.processEvents()
 
 
 def test_sound_search_jumps_to_owning_domains(tmp_path, monkeypatch):
-    """搜索按「语音」定稿口径跳域：点击音效 → 互动、碰撞音效 → 桌宠、
-    语音报时 → 语音、Agent 提示音 → 自动化与联动。"""
+    """搜索跳域：点击音效 → 互动、碰撞音效 → 桌宠、Agent 提示音 → 自动化与联动。"""
     from PySide6.QtWidgets import QApplication
 
     from pet import modern_settings_dialog as settings_mod
@@ -1247,8 +1071,6 @@ def test_sound_search_jumps_to_owning_domains(tmp_path, monkeypatch):
             ("click_sound_volume", "互动", True),
             ("碰撞音效", "桌宠", True),
             ("碰撞音量", "桌宠", False),
-            ("报时频率", "语音", True),
-            ("立即试听", "语音", True),
             ("agent_sound_enabled", "自动化与联动", True),
         )
         for query, domain, should_be_visible in cases:
@@ -1280,7 +1102,7 @@ def test_menu_domain_uses_in_page_task_tabs_without_changing_sidebar(tmp_path, m
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
 
-    expected_sidebar = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音"]
+    expected_sidebar = ["常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动"]
     assert [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())] == expected_sidebar
     tabs = dialog.pages.widget(3).findChild(SettingsTabContainer, "settingsTaskTabs")
     assert tabs is not None
@@ -1728,7 +1550,6 @@ def test_settings_domains_use_semantic_sidebar_icons():
         ("桌面组件", "island"),
         ("AI 与对话", "chat"),
         ("自动化与联动", "automation"),
-        ("语音", "sound"),
     )
 
 

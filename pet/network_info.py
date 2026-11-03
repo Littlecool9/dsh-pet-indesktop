@@ -19,7 +19,7 @@
 出口口径：属地按**当前出口 IP** 判定，所以开着系统代理 / VPN 时显示的是出口
 节点的位置，"在中国：否"也可能是代理造成的——这是 feature 不是 bug（见
 ``docs/NETWORK-PROXY-AND-VPN-2026-09-22.md``），文案里明说。取数一律走系统
-代理（与 TTS / 更新同类，不做逐功能绕过），只有实测证明"代理有害"才改。
+代理（与更新同类，不做逐功能绕过），只有实测证明"代理有害"才改。
 """
 from __future__ import annotations
 
@@ -314,7 +314,7 @@ def source_label(url: str) -> str:
 
 
 def _default_opener():
-    """默认 opener：走系统代理（与 TTS / 更新同口径，见模块 docstring）。"""
+    """默认 opener：走系统代理（与更新同口径，见模块 docstring）。"""
     return urllib.request.build_opener()
 
 

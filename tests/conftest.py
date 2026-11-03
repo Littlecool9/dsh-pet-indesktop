@@ -189,49 +189,6 @@ def _clear_click_sound_pool():
         pass
 
 
-def drop_stale_chime_quiet_listeners() -> None:
-    """摘掉共享免打扰表里残留的 ``VoiceChimeService`` 回调（用既有 ``remove_listener``）。
-
-    唯一实现：全局 autouse fixture ``_no_stale_chime_quiet_listeners`` 用的就是它；
-    要自证收口效果的用例直接调这一条（``test_voice_chime_service`` /
-    ``test_overlay_app_hosts``），不在测试里各写一份。
-
-    按身份摘（``__func__`` 命中本模块的 ``_on_quiet_state_changed``）：不碰别人的订阅，
-    也不改 ``quiet_mode`` 状态机——``reset_shared_quiet_state()`` 只复位状态，监听表归
-    订阅方管（产品侧 ``stop()`` 才摘），所以残留只能在测试边界上由收口手段清。
-    """
-    try:
-        from pet import quiet_mode
-        from pet.voice_chime_service import VoiceChimeService
-    except Exception:
-        return
-    try:
-        state = quiet_mode.shared_quiet_state()
-        target = VoiceChimeService._on_quiet_state_changed
-        for callback in list(state._listeners):
-            if getattr(callback, "__func__", None) is target:
-                state.remove_listener(callback)
-    except Exception:
-        pass
-
-
-@pytest.fixture(autouse=True)
-def _no_stale_chime_quiet_listeners():
-    """用例边界上摘掉"构造即挂"留下的免打扰回调（共享表是**进程级**的）。
-
-    ``VoiceChimeService`` 构造就注册 ``quiet_mode`` 监听（复审 #6：手动报时/试听通道
-    从不 ``start()``，也必须在免打扰开启时被切），而大量用例构造后从不 ``stop()``
-    （只测一拍内的行为）。回调对空闲服务是无害 no-op，但进程级共享订阅表会随用例数
-    线性增长、并持有服务与它的播放器不放；``reset_shared_quiet_state()`` 只复位状态、
-    不动监听表。这条防线因此必须全局面：它此前只长在 ``test_voice_chime_service.py``
-    里，模块级 autouse 不跨文件，``test_overlay_app_hosts.py`` 那种"构造完就不管"的
-    域照旧给共享表添残留。
-    """
-    drop_stale_chime_quiet_listeners()
-    yield
-    drop_stale_chime_quiet_listeners()
-
-
 @pytest.fixture(autouse=True)
 def _no_filesystem_player_scan(monkeypatch):
     """音乐播放器路径扫描（#140 的启动/菜单预热）绝不允许在测试里真实发生。

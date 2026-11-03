@@ -392,12 +392,6 @@ def build_pet_controls(host) -> None:
     if host.include_ai:
         host.click_balance_check = ToggleSwitch(host)
         host.click_balance_check.setChecked(bool(host.config.get("click_show_balance", False)))
-    host.click_self_talk_speak_check = ToggleSwitch(host)
-    host.click_self_talk_speak_check.setChecked(bool(host.config.get("self_talk_speak_enabled", False)))
-    host.self_talk_voice_precache_check = ToggleSwitch(host)
-    host.self_talk_voice_precache_check.setChecked(
-        bool(host.config.get("self_talk_voice_precache_enabled", False))
-    )
     host.music_sing_check = ToggleSwitch(host)
     host.music_sing_check.setChecked(bool(host.config.get("music_sing_enabled", False)))
     host.music_lyric_check = ToggleSwitch(host)
@@ -696,8 +690,6 @@ def build_pet_controls(host) -> None:
     host.todo_reminder_lead_spin.setRange(0, 60)
     host.todo_reminder_lead_spin.setSuffix(" 分钟")
     host.todo_reminder_lead_spin.setValue(int(host.config.get("todo_reminder_lead_minutes", 5) or 0))
-    host.todo_reminder_speak_check = ToggleSwitch(host)
-    host.todo_reminder_speak_check.setChecked(bool(host.config.get("todo_reminder_speak", False)))
 
     appearance = host.config.get("context_menu_appearance", DEFAULT_CONTEXT_MENU_APPEARANCE)
     host.menu_theme_select = ModernSelect(host, width=132)

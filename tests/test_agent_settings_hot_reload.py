@@ -192,7 +192,6 @@ def _start_shell(tmp_path, monkeypatch, *, dsh=True, topology="overlay", win=Non
     shell._sync_dynamic_island = lambda: None
     shell._install_session_watcher = lambda: None
     shell._sync_todo_service = lambda: None
-    shell._sync_chime_service = lambda: None
     shell._sync_festival_service = lambda: None
     if win is not None:
         shell.instance.win = win

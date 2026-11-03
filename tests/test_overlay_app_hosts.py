@@ -35,7 +35,6 @@ from pet.config import Config
 from pet.overlay_shell import OverlayShell, _SettingsIdentity
 from pet.pet_sprite import PetSprite
 from pet.todo_reminder import TodoReminderService
-from pet.voice_chime_service import VoiceChimeService
 
 app = QApplication.instance() or QApplication([])
 
@@ -86,7 +85,6 @@ def _make_overlay_app(tmp_path, *, chat_ui_style: str | None = None):
         sprite_factory=lambda lib, pos, scale: PetSprite(lib, pos=pos, scale=scale),
         agent_link_manager=shell._shared.agent_link,
         proactive_watcher=shell._shared.proactive)
-    overlay.on_self_talk_speak = shell.speak_self_talk
     shell._overlay_shell = overlay
     return shell, inst, overlay
 
@@ -382,74 +380,6 @@ def test_show_bubble_returns_delivery_verdict_on_both_topologies(tmp_path):
         assert window_mod.PetWindow.show_bubble(legacy, "普通气泡") is False
     finally:
         _teardown(overlay)
-
-
-def test_voice_chime_bubble_on_overlay_host(tmp_path):
-    """报时宿主 = 壳（此前 win 恒 None → 直接落系统通知）。"""
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        overlay.overlay.show()
-        chime = VoiceChimeService(shell)
-        chime.apply_config()
-
-        chime._bubble("现在是上午九点整。")
-        assert "九点" in _bubble_text(overlay)
-        assert shell._toast_windows == [], "落了气泡就不该再弹系统通知"
-    finally:
-        _teardown(overlay)
-
-
-# ---------------------------------------------------------------- P3 免打扰监听表隔离
-
-
-# 上一条用例是否真的制造过残留（供紧邻的边界体检用例判断"这次有没有东西可查"）。
-_LEAK_PROBE: dict = {}
-
-
-def _chime_quiet_listeners() -> list:
-    """共享免打扰表里属于 ``VoiceChimeService`` 的模块回调（按身份认，不碰别人的订阅）。"""
-    from pet import quiet_mode
-
-    target = VoiceChimeService._on_quiet_state_changed
-    return [callback for callback in list(quiet_mode.shared_quiet_state()._listeners)
-            if getattr(callback, "__func__", None) is target]
-
-
-def test_chime_construction_without_stop_leaves_quiet_listener(tmp_path, request):
-    """P3：构造即挂的免打扰监听确实会在**进程级共享表**里留一条。
-
-    本文件此前正是这样漏的：``test_voice_chime_bubble_on_overlay_host``
-    构造 ``VoiceChimeService`` 却从不 ``stop()``（只测一拍内的气泡落点），而清理
-    fixture 只长在 ``tests/test_voice_chime_service.py`` 里——模块级 autouse 不跨文件，
-    而 ``reset_shared_quiet_state()`` 只复位状态、**不动监听表**（订阅表是订阅方的
-    责任）。于是别的域照样漏一条持着服务与播放器的回调进共享表。
-
-    这里同时锁定收口手段的**位置**：必须是 conftest 提供给所有测试文件的那一条
-    （本文件自己的 fixture 修不了"别的域也漏"这件事）。
-    """
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        chime = VoiceChimeService(shell)     # 构造即挂；本用例刻意不 stop()
-        chime.apply_config()
-
-        assert len(_chime_quiet_listeners()) == 1, "前提：构造确实往共享表挂了一条"
-        # 残留**故意留着**：下一条用例的边界体检靠它才有东西可查
-        _LEAK_PROBE["constructed"] = True
-        assert "_no_stale_chime_quiet_listeners" in request.fixturenames, \
-            "收口 fixture 必须由 conftest 全局面提供（只长在某个测试文件里等于别的域照旧漏）"
-    finally:
-        _teardown(overlay)
-
-
-def test_shared_quiet_table_is_clean_at_this_boundary():
-    """P3 边界体检：上一条用例留下的残留必须已被用例边界摘掉。
-
-    断言的是**边界收口**（上一条造残留 → 本条开头表干净），不是"表永远为空"：
-    单独跑本用例（``-k``）时前面没有制造残留的用例，跳过而不是空过。
-    """
-    if not _LEAK_PROBE.get("constructed"):
-        pytest.skip("单独/乱序运行时没有上一条用例制造的残留可查（边界断言针对测试序列）")
-    assert _chime_quiet_listeners() == [], "上一个用例的残留必须已被边界收口摘掉"
 
 
 class _NoThread:

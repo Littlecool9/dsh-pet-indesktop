@@ -49,11 +49,11 @@
       2026-10-13).
 
     Credential store + bundled notices (2026-10-17):
-      Every variant collects keyring, including the no-chat ones: the voice-chime
-      settings page and its paid TTS backends (MiMo / Doubao API keys) exist in all
-      four variants, and a bundle without keyring can only keep a key in the memory
-      of the process that wrote it (settings pages run in their own process), so the
-      main pet process never sees it while the UI says "saved". The repo-root LICENSE
+      Every variant collects keyring, including the no-chat ones: a bundle without
+      keyring can only keep a key in the memory of the process that wrote it
+      (settings pages run in their own process), so the main pet process never sees
+      it while the UI says "saved". Keyring is a storage dependency, not part of the
+      chat subsystem, so its collection never forks by variant. The repo-root LICENSE
       and THIRD_PARTY_NOTICES.md are bundled too: the click sounds under
       assets\sounds\duck are MIT assets whose license text only lives in the notices
       file, so shipping the assets without it ships the material without the license.
@@ -85,8 +85,6 @@ Write-Host "[build] pet-runtime-2026-09-01.1 build_started=$buildStamp source=$r
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 
-python scripts\verify_bundle_tts.py --environment
-if ($LASTEXITCODE -ne 0) { throw '[tts] upgrade build dependencies with pip install -r requirements.txt' }
 
 $variants = @{
     'webm-chat' = @{ Name = 'dsh-pet-standalone-webm-chat'; Entry = 'packaging\pet_entry.py' }
@@ -143,10 +141,9 @@ if ($nodeExe) {
 # GIF builds ship assets/characters_gif (webm dir must NOT be bundled, else runtime prefers webm)
 $datas = if ($isGif) { 'assets/characters_gif;assets/characters_gif' } else { 'assets/characters;assets/characters' }
 # no-chat 变体只排 chat 子系统本体（2026-10-17 起不再排 keyring）：
-# 语音报时设置页与它的收费 TTS 后端（MiMo / 豆包都要 API Key）在四个变体里都在，
-# 少了 keyring 的变体只能把 Key 留在**写它的那个进程**的内存里——而设置页跑在独立
-# 进程（--settings），主程序读不到，界面却报「已保存」。四个变体三个平台都由
-# tests/test_packaging_keyring_notices.py 钉住。
+# 凭据存储是独立依赖，不属于 chat 子系统；少了 keyring 的变体只能把 Key 留在
+# **写它的那个进程**的内存里——而设置页跑在独立进程（--settings），主程序读不到，
+# 界面却报「已保存」。四个变体三个平台都由 tests/test_packaging_keyring_notices.py 钉住。
 $excludes = if ($noChat) { @('--exclude-module', 'pet.chat') } else { @() }
 # PyOpenGL 与本应用无关（Qt 用自带 OpenGL），但其 freeglut_README.txt 是
 # CP1252 编码，会触发 check_bundle_encoding 的 UTF-8 严格校验（该自检针对
@@ -169,8 +166,8 @@ foreach ($m in @('torch','transformers','datasets','langchain','langchain_core',
                  'spacy','playwright','narwhals','sympy','fsspec')) {
     $excludes += @('--exclude-module', $m)
 }
-# Qt 绑定互斥（2026-09-22 实测：构建被直接中止——不修好这一条，edge-tts 根本
-# 打不进包，因为 PyInstaller 在收集阶段就退出了）。
+# Qt 绑定互斥（2026-09-22 实测：构建被直接中止——不修好这一条，
+# PyInstaller 在收集阶段就退出了）。
 # 打包机上装了 PyQt5 时，上面那批库（连同 matplotlib 这类经笔记本/绘图栈被连带
 # 收集的模块）里的 `qt_compat` 会**条件导入任意 Qt 绑定**，于是 hook-PyQt5 与
 # 先运行的 hook-PySide6 冲突，PyInstaller 直接终止：
@@ -204,9 +201,8 @@ foreach ($m in @('django','hypothesis')) {
     $excludes += @('--exclude-module', $m)
 }
 # keyring 必须显式收集，且**四个变体都要**（API Key 的系统安全存储）：no-chat 变体把
-# pet.chat 排掉了，静态分析因此摸不到 keyring（chat 的 SecretStore 是它原来的唯一入口），
-# 而语音报时的收费后端（pet/tts/mimo、pet/tts/doubao）照旧收 API Key。少了它，凭据只能
-# 留在写它的进程内存里，主程序永远读不到（见上面 $excludes 那段）。
+# pet.chat 排掉了，静态分析因此摸不到 keyring（chat 的 SecretStore 是它的入口）。
+# 少了它，凭据只能留在写它的进程内存里，主程序永远读不到（见上面 $excludes 那段）。
 $keyringCollect = @('--collect-all', 'keyring')
 # **keyring 的 Windows 后端要 win32ctypes**（pywin32-ctypes 包，import 名 `win32ctypes`）。
 #
@@ -222,9 +218,7 @@ $keyringCollect = @('--collect-all', 'keyring')
 #
 # 仍然显式收集，理由换成加固：那条收集是**隐式**的，依赖 PyInstaller hook 与 keyring
 # 版本恰好的配合；hook 消失或依赖布局变化就静默丢，症状是钥匙串后端不可用（凭据只活在
-# 写它的进程内存里：界面显示"已保存"、重启后读到空）。显式收集让这件事在构建期可见，
-# 并进 `scripts/verify_bundle_tts.py` 的 **Windows** 兜底清单（缺了退出码 4；Linux/macOS
-# 不装这个依赖，门禁不许要求它）。
+# 写它的进程内存里：界面显示"已保存"、重启后读到空）。显式收集让这件事在构建期可见即可。
 $keyringCollect += @('--collect-all', 'win32ctypes')
 # 随包分发的许可与声明：assets\sounds\duck 下的内置点击音是 MeteorNOX 的 MIT 素材，
 # 许可正文写在仓根 THIRD_PARTY_NOTICES.md 第 1 节——只打 assets\sounds 等于只分发素材、
@@ -368,8 +362,6 @@ if (-not $SkipBuild) {
         --collect-all imageio_ffmpeg `
         --collect-all certifi `
         --collect-all PySide6.QtMultimedia `
-        --collect-all edge_tts `
-        --collect-all aiofiles `
         --collect-all tzdata `
         --collect-all psutil `
         @keyringCollect `
@@ -618,8 +610,6 @@ if ($LASTEXITCODE -ne 0) { throw "[rapidocr] bundle cannot run local OCR (module
 Write-Host "[rapidocr] bundle carries the engine module + models + rapidocr config" -ForegroundColor Green
 
 # ---------- exe smoke test（启动成功才继续打包） ----------
-python scripts\verify_bundle_tts.py --app-dir $appDir
-if ($LASTEXITCODE -ne 0) { throw '[tts] bundled dependency version or modules are invalid' }
 # 注意：PyInstaller --windowed 在 import 失败时会弹错误对话框且进程存活，
 # 只看"进程 8 秒没退出"是假阳性。这里先做确定性加载链验证（从 bundle 布局
 # 真实加载 Shiboken/QtCore/QtGui/QtWidgets），再启动 exe 检查主窗口出现。

@@ -334,33 +334,6 @@ def test_decode_fanout_does_not_depend_on_window_or_player():
         assert banned not in src, f"decode_fanout 反向依赖 {banned}，破坏单向依赖"
 
 
-# TTS provider 层（pet/tts/）的机器化守卫（2026-10-17 加入）：provider 是可被第三方
-# 照抄的模板（docs/ADDING-A-TTS-PROVIDER.md），两条红线写在 pet/tts/base.py 的模块
-# 文档里——① 顶层不得 import Qt；② 可选/重量级依赖（edge_tts、aiohttp…）只能延迟到
-# synth() 里 import。违反的代价是「每个用户白付这笔 import」或「无 Qt 环境测不了」，
-# 所以这里把它守住：只扫模块顶层（不含函数体内的延迟 import）。
-_PET_TTS_TOP_LEVEL_BANNED = (
-    "PySide6", "PyQt",            # provider 是纯逻辑 + 一层 IO，不许碰 Qt
-    "edge_tts", "aiohttp", "requests",  # 可选/重量级依赖：必须延迟到 synth() 内
-)
-
-
-def test_tts_providers_keep_top_level_imports_light():
-    providers = sorted((PET_DIR / "tts").glob("*.py"))
-    assert providers, "pet/tts/ 下应当有 provider 模块（别把守卫扫空了还不自知）"
-    offenders: list[str] = []
-    for path in providers:
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.startswith(("import ", "from ")):
-                continue  # 只扫顶层：函数体内的延迟 import 缩进了，不在此列
-            if any(banned in line for banned in _PET_TTS_TOP_LEVEL_BANNED):
-                offenders.append(f"pet/tts/{path.name}:{number}: {line.strip()}")
-    assert not offenders, (
-        "pet/tts/*.py 顶层引入了 Qt 或重量级/可选依赖（见 pet/tts/base.py 的写 provider 红线）：\n"
-        + "\n".join(offenders)
-    )
-
-
 # 多进程多宠退役层（PHASE4_DESIGN.md §3 T6 清单，4.4a 停用 / 4.4b 删除）。
 # 4.4a 机器化守卫：**overlay 新路径**（单合成窗渲染面）必须零 import 这些
 # 模块——新架构的多宠碰撞/身份/生命周期全部在进程内 sprite 世界自足，

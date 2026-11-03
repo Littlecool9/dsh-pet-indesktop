@@ -123,12 +123,6 @@ class _StubAppShell:
     def open_network_info(self):
         self._record("open_network_info")
 
-    def trigger_voice_chime_now(self, text=""):
-        self._record("trigger_voice_chime_now", text)
-
-    def toggle_voice_chime(self):
-        self._record("toggle_voice_chime")
-
     def open_settings_process(self, instance=None):
         self._record("open_settings_process", instance)
         return True
@@ -199,8 +193,6 @@ def _reference_window(config, *, chat=True):
     win.on_clear_spawned_pets = lambda: None
     win.on_open_todo_panel = lambda: None
     win.on_network_info = lambda: None
-    win.on_voice_chime_now = lambda text="": None
-    win.on_toggle_voice_chime = lambda: None
     win.on_switch_character = lambda character_id: None
     return win
 

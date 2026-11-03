@@ -101,7 +101,6 @@ ACTION_ICONS = {
     "quiet_mode": "pause", "focus_mode": "pause",
     "network_info": "web",
     "modern_settings": "settings", "quit": "quit",
-    "voice_chime_now": "chat", "voice_chime_toggle": "chat",
 }
 
 CUSTOM_ICON_CHOICES = (
@@ -165,30 +164,6 @@ def _build_todo_panel(menu, pet):
     return add_action(menu, "待办提醒", "todo", pet.on_open_todo_panel, close_on_trigger=True)
 
 
-def _build_voice_chime_now(menu, pet):
-    return add_action(menu, "立即报时", "chat", pet.on_voice_chime_now, close_on_trigger=True)
-
-
-def _flag_toggle_spec(key: str, on_label: str, off_label: str, icon: str,
-                      callback: str):
-    """布尔开关菜单项的规约工厂：按配置当前值翻转标签，点击回回调。
-
-    语音报时开关此前把「读配置 → 选标签 → add_action」内联在建造器里，这里
-    收成一处；标签翻转、图标、回调与 close_on_trigger 语义逐点
-    不变。注意 `enabled` 只影响展示标签，不影响回调可用性（可用性仍由
-    `MenuActionSpec.available` 的 `_callback_available` 判定）。
-    """
-    def _build(menu, pet):
-        cfg = getattr(pet, "cfg", None)
-        enabled = bool(cfg.get(key, False)) if cfg is not None else False
-        return add_action(
-            menu, on_label if enabled else off_label, icon,
-            getattr(pet, callback), close_on_trigger=True,
-        )
-
-    return _build
-
-
 def _network_info_enabled(pet) -> bool:
     """「网络信息」入口的运行时启用态：设置里开着才可用（默认开）。
 
@@ -198,11 +173,6 @@ def _network_info_enabled(pet) -> bool:
     """
     return network_info_menu_enabled(pet)
 
-
-_build_voice_chime_toggle = _flag_toggle_spec(
-    "voice_chime_enabled", "关闭语音报时", "启用语音报时", "chat",
-    "on_toggle_voice_chime",
-)
 
 class MenuActionRegistry:
     """Resolve capability-aware action IDs and render a resolved menu tree."""
@@ -276,12 +246,6 @@ class MenuActionRegistry:
             ),
             "todo_panel": MenuActionSpec(
                 _build_todo_panel, _callback_available("on_open_todo_panel")
-            ),
-            "voice_chime_now": MenuActionSpec(
-                _build_voice_chime_now, _callback_available("on_voice_chime_now")
-            ),
-            "voice_chime_toggle": MenuActionSpec(
-                _build_voice_chime_toggle, _callback_available("on_toggle_voice_chime")
             ),
             # 天气：回调缺失 = 能力不可用（隐藏）；开关关掉 = 运行时置灰、位置保留
             # （CONTEXT.md 的 Capability Unavailable / Runtime Disabled 口径）。

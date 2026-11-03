@@ -199,7 +199,6 @@ def _real_shell(tmp_path, monkeypatch, *, dsh_link: bool, autostart: bool = True
     shell._apply_balance_timer = lambda: None
     shell._sync_dynamic_island = lambda: None
     shell._sync_todo_service = lambda: None
-    shell._sync_chime_service = lambda: None
     shell._sync_festival_service = lambda: None
     return shell
 

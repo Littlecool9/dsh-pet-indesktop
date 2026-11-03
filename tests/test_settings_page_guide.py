@@ -150,9 +150,8 @@ def _section(dialog, domain: str, title: str, tab_key: str | None = None) -> Set
             elif isinstance(widget, SettingsSection) and _title_of(widget) == title:
                 return widget
             elif type(widget) is QWidget:
-                # 域装配可能先起一层普通容器再往里放卡片（「语音」域就是：一张
-                # 语音报时平卡）。这些容器没有自己的标题，只是布局层，递归进去找，
-                # 别让分组在测试眼里"消失"。
+                # 域装配可能先起一层普通容器再往里放卡片。这些容器没有自己的
+                # 标题，只是布局层，递归进去找，别让分组在测试眼里"消失"。
                 hit = find(widget)
                 if hit is not None:
                     return hit
@@ -265,38 +264,6 @@ def test_agent_box_and_phrase_box_are_prebuilt_widgets_in_the_table(tmp_path, mo
         dialog.close()
 
 
-# ------------------------------------------------------------------- 语音域
-def test_voice_domain_keeps_its_self_built_cards(tmp_path, monkeypatch):
-    """语音报时**自建卡片**交给「语音」域：整组占一张平卡（含基础设置 / 合成后端
-    折叠编排 / 凭据组 / 语音 / 台词歌词的全部行）。行数与行归属一个不变——只是不再
-    由本域按「一组行」拼小分组（那样页面容器会散架、分组标题会跟着丢）。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        top = _top_level_titles(_content(dialog, "语音"))
-        assert top == ["语音报时"], top
-        # 语音报时整组：既有行一个不少，外加 provider 化带来的引擎/后端字段行。
-        voice_rows = [row.objectName().replace("settingRow_", "")
-                      for row in _section(dialog, "语音", "语音报时").rows]
-        for key in ("voice_chime_enabled", "voice_chime_schedule", "voice_chime_custom_times",
-                    "voice_chime_volume", "voice_chime_show_bubble", "voice_chime_show_quote",
-                    "voice_chime_custom_quotes_zh", "voice_chime_custom_quotes_en",
-                    "voice_chime_preview", "voice_chime_voice", "voice_chime_rate",
-                    "voice_chime_pitch"):
-            assert key in voice_rows, f"「语音报时」丢了既有行：{key}"
-        # 引擎下拉与四家后端的参数行都由 provider 声明生成（加后端不用改设置页）
-        for key in ("voice_chime_tts_backend", "voice_chime_tts_fallback",
-                    "voice_chime_doubao_speaker", "voice_chime_doubao_pitch",
-                    "voice_chime_mimo_model", "voice_chime_mimo_voice", "voice_chime_mimo_style",
-                    "voice_chime_sapi_voice", "voice_chime_sapi_rate"):
-            assert key in voice_rows, f"「语音报时」缺后端字段行：{key}"
-        # 「立即试听」仍在 SettingRow 里（历史事故：没包进行里就不会被域收集搬运）。
-        assert _page(dialog, "语音").isAncestorOf(_row(dialog, "voice_chime_preview"))
-        assert "待分类（开发期）" not in [
-            label.text() for label in dialog.findChildren(QLabel)]
-    finally:
-        dialog.close()
-
-
 # --------------------------------------------------- 桌面胶囊：压平仍是定稿口径（不动）
 def test_desktop_island_keeps_its_single_flattened_card(tmp_path, monkeypatch):
     """「桌面胶囊（灵动岛）」的压平是定稿口径（见装配处注释）。"""
@@ -334,8 +301,7 @@ def _visible_chips(bar) -> list[QPushButton]:
 def _blocks_of(domain_content: QWidget) -> list[tuple[str, QWidget]]:
     """页内容顶层块（分区 / 折叠框），测试自己走布局顺序（不调被测函数自证）。
 
-    2026-10-14 起域装配可能先起一层**普通容器**再把卡片放进去（「语音」域就是：
-    一张「语音报时」平卡）。这层没有标题、只是布局层，所以
+    域装配可能先起一层**普通容器**再把卡片放进去。这层没有标题、只是布局层，
     这里也要穿透——否则测试看到的块比用户看到的少，会得出"跳转条格数不对"的假结论。
     """
     blocks = []
@@ -366,8 +332,8 @@ def _all_groups(dialog) -> list[tuple[str, QWidget]]:
             found.append((title, widget))
             if isinstance(widget, CollapsibleGroup):
                 walk(widget.body)
-            # 普通容器层：域装配可能先起一层（「语音」域 = 平卡 + 自建卡片组），
-            # 里面的卡片也要算进来，否则它们的描述会被误判成"已不存在"。
+            # 普通容器层：域装配可能先起一层，里面的卡片也要算进来，
+            # 否则它们的描述会被误判成"已不存在"。
             elif type(widget) is QWidget:
                 walk(widget)
 
@@ -461,7 +427,7 @@ def test_anchor_bar_shows_only_on_pages_that_actually_scroll(tmp_path, monkeypat
     视口里，点它没有任何位移——用户要的是“短页不摆跳转条，长页才摆”。
 
     **两个尺寸都要过**：720×500（最小窗口）下区数够的页几乎都真的装不下，只在这一档
-    量不到"短页不摆"这件事；1000×1000 下「常规」装得下、「语音」（6 区）装不下，
+    量不到"短页不摆"这件事；1000×1000 下「常规」装得下、「自动化与联动」装不下，
     同一次装配里同时给出两种判据结果（区数按**实际构造**算：非 Windows 的常规只有 3 区，
     那儿"不摆"是区数不够而不是短页，仍由本用例的动态判据覆盖）。
     """
@@ -1245,11 +1211,6 @@ def test_section_descriptions_pass_the_copy_lint():
         if _tokens(text)
     ]
     assert not offenders, "组描述里出现黑话（改文案）：\n" + "\n".join(offenders)
-
-
-def test_quiet_guide_mentions_voice_muting():
-    """免打扰的组描述必须写明「语音也静音」（2026-10-08 口径，防文案回退）。"""
-    assert "语音" in settings_page_guide.SECTION_GUIDE["免打扰"]
 
 
 def test_advanced_group_shows_its_description_while_collapsed(tmp_path, monkeypatch):

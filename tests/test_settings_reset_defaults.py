@@ -106,7 +106,7 @@ def _dirty_config(base: Path) -> Config:
             "click_sound_volume": 0.2,
             "collision_restitution": 0.1,
             "todo_reminder_lead_minutes": 30,
-            "voice_chime_enabled": True,
+            "network_info_menu_enabled": False,
             "character_aliases": {"default": "小名"},
             "context_menu_appearance": {"theme": "dark", "density": "compact"},
             "chat": {
@@ -451,7 +451,7 @@ def test_slot_page_reset_confirm_copy_states_its_scope(qapp, tmp_path: Path):
             assert "只重置这只桌宠自己的那份设置" in text
             assert "尺寸、速度、音效、气泡与角色" in text, "写明重置哪些面"
             assert "当前所在位置不变" in text, "位置保留是本宠 reset 的口径（G1b）"
-            assert "语音报时、灵动岛、AI 对话等全局设置" in text, "写明哪些全局设置不受影响"
+            assert "灵动岛、AI 对话等全局设置" in text, "写明哪些全局设置不受影响"
             assert "其它桌宠" in text, "别的桌宠不受影响同样要说"
             # 主宠页的承诺一个字都不许出现在这里：
             assert "将重置全部设置" not in text

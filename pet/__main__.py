@@ -38,8 +38,8 @@ def _exec_settings(app, config, *, include_ai: bool = True, initial_page: str = 
         return 0
     from .modern_settings_dialog import ModernSettingsDialog
 
-    # parent=None + standalone=True：没有桌宠窗口可依附，试听/避让由
-    # pet.settings_standalone 提供进程内最小宿主。
+    # parent=None + standalone=True：没有桌宠窗口可依附，打开位置由
+    # pet.settings_standalone 的 runtime 状态文件避让提供。
     dialog_kwargs = {"include_ai": include_ai, "standalone": True}
     if initial_page:
         dialog_kwargs["initial_page"] = initial_page

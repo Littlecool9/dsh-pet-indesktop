@@ -191,7 +191,7 @@ def test_default_window_shows_every_domain_without_scrolling(tmp_path, monkeypat
     dialog = _dialog(tmp_path, monkeypatch)
     try:
         sidebar = dialog.sidebar
-        assert sidebar.count() >= 8, "能力域少了一个（本用例会假绿）"
+        assert sidebar.count() >= 7, "能力域少了一个（本用例会假绿）"
         assert sidebar.verticalScrollBar().maximum() == 0, (
             "默认尺寸下侧栏仍需滚动：最后一个能力域被截在视口外")
         viewport = sidebar.viewport().height()
@@ -335,7 +335,7 @@ def test_wide_window_keeps_the_form_at_a_reading_width(tmp_path, monkeypatch):
                 f"「{domain}」在 1600px 宽的窗口里内容宽 {root.width()}px，"
                 f"没有收到阅读宽度 {READING_WIDTH}px")
             checked += 1
-        assert checked >= 7, f"只量到 {checked} 个设置域，本用例会假绿"
+        assert checked >= 6, f"只量到 {checked} 个设置域，本用例会假绿"
     finally:
         dialog.close()
 
@@ -437,7 +437,7 @@ def test_save_and_exit_button_asks_for_the_save_icon(tmp_path, monkeypatch):
 #: 快照，免得豁免名单悄悄扩大成垃圾桶。
 # 「桌面组件」在删掉灵动岛内置指标（含「网络延迟检测」组）后只剩胶囊一组；阶段 2 把灵动岛
 # 拆成模块时会重排设置域，届时再决定它是并入别的域还是补回第二组。
-DOMAINS_WITH_ONE_GROUP = {"语音", "桌面组件"}
+DOMAINS_WITH_ONE_GROUP = {"桌面组件"}
 
 
 def test_new_top_level_domain_must_own_at_least_two_setting_groups(tmp_path, monkeypatch):

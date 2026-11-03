@@ -16,8 +16,7 @@
     cfg/scale/change_scale/playback_speed/set_playback_speed  → 被点 sprite + 各自那份 config
     on_open_chat / on_open_chat_settings                      → PetInstance.open_chat*
     on_open_modern_settings                                   → OverlayShell.open_settings_for
-    on_show_balance / on_open_todo_panel /
-    on_voice_chime_*                                          → AppShell（进程级服务）
+    on_show_balance / on_open_todo_panel                      → AppShell（进程级服务）
     toggle_agent_link                                         → agent_link_manager（共享 manager）
     toggle_proactive_enabled / set_proactive_option           → proactive_watcher（共享监视器）
     trigger_golden_spin / look_at_screen / rename_character   → 壳的 sprite 等价实现（作用被点 sprite）
@@ -404,14 +403,6 @@ class SpriteMenuFacade:
         会静默少一项（tests/test_sprite_menu_parity.py 逐项比对拦得住）。
         """
         return _first_callable(self._hosts(), ("open_network_info",))
-
-    @property
-    def on_voice_chime_now(self):
-        return _first_callable(self._hosts(), ("trigger_voice_chime_now",))
-
-    @property
-    def on_toggle_voice_chime(self):
-        return _first_callable(self._hosts(), ("toggle_voice_chime",))
 
     def _behavior(self, sprite=None):
         """该 sprite **所在宿主**的行为控制器。

@@ -802,30 +802,6 @@ def test_proxy_reports_no_delivery_when_no_visible_window(qapp, tmp_path):
     assert proxy.show_alert("一条", sticky=False, alert_type="watchdog") is False
 
 
-def test_voice_chime_bubble_on_hidden_host_is_queued_not_notified(qapp, tmp_path):
-    """M3：报时气泡同规（隐藏宿主 + 免打扰 → 暂存、不发通知；语音通道不受影响）。"""
-    from pet.config import Config
-    from pet.voice_chime_service import VoiceChimeService
-
-    notified: list[tuple] = []
-    win = _HiddenHost(Config(base=tmp_path), visible=False)
-    app = type("App", (), {
-        "win": win,
-        "system_notify": lambda *args, **kwargs: notified.append(args),
-    })()
-    stub = type("Svc", (), {
-        "_app": app, "_cfg": {"show_bubble": True}, "BUBBLE_DURATION_MS": 8000,
-    })()
-
-    quiet_mode.shared_quiet_state().start(15)
-    VoiceChimeService._bubble(stub, "现在是下午三点")
-
-    assert notified == []
-    state = quiet_mode.shared_quiet_state()
-    assert state.pending_count() == 1
-    state.end_now()
-    assert state.take_report() == ["现在是下午三点"]
-
 def test_overlay_fullscreen_exit_settles_after_overlay_is_shown(qapp):
     """overlay 拓扑同序：退场结算必须晚于 ``overlay.show()``。
 
