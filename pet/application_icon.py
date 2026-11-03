@@ -8,8 +8,7 @@
 两条口径：
 
 1. **双候选**：冻结包取 ``sys._MEIPASS/assets/icon.ico``，源码运行取仓库根下的同一
-   相对路径（与 ``pet/game_fps.py::bundled_backend_path`` 同一约定，按 ``__file__``
-   解析，因此与当前工作目录无关）。冻结包里那份**必须真的进包**（``--add-data``，
+   相对路径（按 ``__file__`` 解析，因此与当前工作目录无关）。冻结包里那份**必须真的进包**（``--add-data``，
    三端构建脚本已加），否则窗口图标在冻结版里静默消失——打包契约由
    ``tests/test_application_icon.py`` 钉住。
 2. **拿不到就给空图标**：候选缺失、或存在但读不出来（截断/非法字节），一律返回空
@@ -38,9 +37,8 @@ __all__ = [
     "load_application_icon",
 ]
 
-#: 图标在源码树 / 冻结包里的相对路径（冻结包按 ``sys._MEIPASS`` 为根，与
-#: ``pet/game_fps.py`` 的 ``BACKEND_RELATIVE_DIR`` 同一约定）。三端构建脚本里的
-#: ``--add-data`` 目标必须与它一致。
+#: 图标在源码树 / 冻结包里的相对路径（冻结包按 ``sys._MEIPASS`` 为根）。
+#: 三端构建脚本里的 ``--add-data`` 目标必须与它一致。
 APPLICATION_ICON_RELATIVE_PATH = ("assets", "icon.ico")
 
 #: 缓存内容：``(所属应用实例, QIcon)``。用应用实例做键：QIcon 不能早于应用构造，

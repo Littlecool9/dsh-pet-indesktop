@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """灵动岛「段」的契约层：注册表 + 宽度自测量 + 字段盒 + 四态兜底（零 Qt）。
 
-段是胶囊上的一个信息单元（``CPU 24%``、``↓ 1.2M``），本模块只管**契约**，
+段是胶囊上的一个信息单元（``WiFi 24``、``↓ 1.2M``），本模块只管**契约**，
 不画一个像素：注册接口给第三方段用，其余是布局层的硬护栏。
 
 五条设计取舍：
@@ -16,9 +16,8 @@
 - **四态兜底呈现**：``ok`` 才有真读数；``sampling``/``unknown``/``error`` 一律
   同宽 ``--``（区别只在卡片与颜色，纯逻辑层同文），``unsupported`` 直接不占位。
   ``--`` 与 max_text 同盒宽语义，所以状态切换不改岛宽——不跳。
-- **告警级判定**：CPU/内存的占用率有普适阈值（warn/crit 两级 + 3pt 滞回，见
-  :func:`alert_severity`），网络段的延迟/速率没有，所以内置阈值表只收前者；
-  第三方段可以自带阈值（见 :class:`SegmentDeclaration`），注册时并进同一张表。
+- **告警级判定**：第三方段可以自带阈值（见 :class:`SegmentDeclaration`），注册时
+  并进同一个阈值表（warn/crit 两级 + 3pt 滞回，见 :func:`alert_severity`）。
   判断只吃"读数 + 上一拍"，是纯函数——滞回状态归调用方持有。
 - **第三方段公开注册面**（P3 Slice F1）：第三方只交数据与声明
   （:func:`register_segment`），**拿不到 QPainter**——本模块零 Qt，排版是宿主的
@@ -38,30 +37,6 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-#: 内置段 id（稳定标识：折叠、+N chip、卡片行都按它索引）。
-NETWORK = "network"
-CPU = "cpu"
-MEM = "mem"
-#: GPU 段：读数来自 ``pet/gpu_monitor.py``（Windows PDH 的**最忙引擎**占用），由
-#: ``pet/sys_monitor.py`` 的共享采样线程按订阅喂。它如今与其它内置段同规——胶囊上
-#: 一个定宽读数、展开卡片一行详情；平台不支持时按 ``unsupported`` 不占位（卡片仍
-#: 写原因）。把它登记成已知 id 而不是"未实现的残留 id"，是为了让「这台机器没有这个
-#: 能力」与「配置里写了个不存在的 id」在 UI 上分得开（前者进卡片原因行，后者是
-#: ``--`` 降级段）。
-GPU = "gpu"
-#: 游戏帧率段（``island_metrics`` 的 fps 成员，**默认关**）：读数是**游戏的 Present
-#: 帧率**——游戏每秒真正呈现到屏幕上的帧数。三个口径不许混算，也不许互相替代：
-#: ①它不是桌宠动画的帧率（素材 fps / 渲染节拍）；②它不是显卡占用推算出来的；
-#: ③它只对"当前采集目标"成立（目标由 ``game_fps_target_mode`` 决定：跟随前台程序
-#: 或指定程序名），目标切走后的旧读数一律丢弃。采集链路的平台边界是 Windows
-#: （系统级性能事件接口，首次使用可能需要授权）：其他平台上这一段按
-#: ``unsupported`` 不占位，卡片里写原因——"这台机器没有这个能力"与"配置里写了
-#: 个不存在的 id"必须分得开（同 GPU 的登记口径）。
-FPS = "fps"
-#: 内置段 id 全集——它们是**保留字**：第三方段注册同名 id 会与内置段的折叠/卡片
-#: 索引撞车，故注册时直接拒注（见 :func:`register_segment`）。
-BUILTIN_SEGMENT_IDS = frozenset({NETWORK, CPU, MEM, GPU, FPS})
-
 #: 段状态词表（呈现见 :func:`render_compact`）。
 STATE_OK = "ok"
 STATE_SAMPLING = "sampling"
@@ -78,15 +53,10 @@ ALERT_WARN = "warn"
 ALERT_CRIT = "crit"
 #: 两级告警的词表（同 ``STATES`` 的用法）：查"这个串是不是告警级"。
 ALERT_LEVELS = frozenset({ALERT_WARN, ALERT_CRIT})
-#: 逐指标的两级阈值 ``(warn, crit)``（百分比）。**内置段只收有普适阈值的指标**：
-#: CPU/内存的占用率是跨机器可比的量纲；网络段的延迟与速率差几个数量级
-#: （家宽 vs 机房），给死线就是伪精确，所以它刻意不在这张表里。
-#: 第三方段按自己声明的阈值在注册时并进本表（见 ``register_segment``：注销时撤回），
-#: 所以判定链（:func:`alert_severity`）对内置段与第三方段完全是同一条。
-ALERT_THRESHOLDS = {
-    CPU: (80.0, 92.0),
-    MEM: (85.0, 95.0),
-}
+#: 逐指标的两级阈值 ``(warn, crit)``（百分比）。**第三方段按自己声明的阈值在注册时
+#: 并进本表**（见 ``register_segment``：注销时撤回），判定链（:func:`alert_severity`）
+#: 只认这张表；没有声明阈值的段永不告警。
+ALERT_THRESHOLDS: dict[str, tuple[float, float]] = {}
 #: 滞回带宽（pt）：升过线才上色、降过"线 − 3"才褪色。79/80 反复横跳不再闪色。
 ALERT_HYSTERESIS = 3.0
 #: 告警级的序（取最高级用）：越危险越大。
@@ -100,11 +70,6 @@ LABEL_MAX_CHARS = 6
 LABEL_GAP_PX = 4
 #: 四种兜底态共用的占位文案（与 max_text 同盒宽语义，不占位异常宽、不伪造 0）。
 UNKNOWN_TEXT = "--"
-#: 百分比段的单位（cpu / 内存）。单位是**段契约的呈现元素**而不是格式化器的一部分：
-#: 数值进数值盒、单位进单位盒（双盒排版见 ``island_layout.place_info_segments``）。
-#: 格式化器仍输出合并串（``sys_monitor.format_cpu/format_mem``）——卡片与其他消费方
-#: 用同一个串，兼容面不因拆盒而破。
-PERCENT_UNIT = "%"
 #: 右省略符。用单字符 …（``...`` 会白占两列，盒宽紧张时更早截断）。
 ELLIPSIS = "…"
 #: 字体指纹的探针串：度量对象不暴露字体（QFontMetrics 没有 ``font()``），
@@ -195,9 +160,8 @@ class SegmentRegistry:
 
 
 # ---------------------------------------------------------------- 宽度自测量
-#: 声明盒宽缓存：``(段 id, 字体指纹) -> 宽度``。段数量有界（内置 3 段 +
-#: 未来第三方段），字体切换会自然产生新键，无需 LRU；:func:`clear_width_cache`
-#: 给测试与"手动失效"用。
+#: 声明盒宽缓存：``(段 id, 字体指纹) -> 宽度``。段数量有界，字体切换会自然
+#: 产生新键，无需 LRU；:func:`clear_width_cache` 给测试与"手动失效"用。
 _WIDTH_CACHE: dict[tuple[str, Any], int] = {}
 
 
@@ -356,10 +320,10 @@ def seed_thresholds(segment_id: Any, thresholds: Any) -> tuple[float, float] | N
 def drop_thresholds(segment_id: Any) -> bool:
     """撤掉**声明源**并进告警表的阈值（组件卸载 = 撤声明、撤阈值，不留第二真值）。
 
-    内置段与已注册段的条目不动：前者是产品自己的账，后者归 ``unregister_segment``
-    管（那条路径会一并撤）。返回是否真的撤掉了。
+    已注册段的条目不动：它归 ``unregister_segment`` 管（那条路径会一并撤）。
+    返回是否真的撤掉了。
     """
-    if segment_id in BUILTIN_SEGMENT_IDS or segment_id in _SEGMENTS:
+    if segment_id in _SEGMENTS:
         return False
     return ALERT_THRESHOLDS.pop(segment_id, None) is not None
 
@@ -376,7 +340,7 @@ def alert_severity(metric_id: Any, value: Any, previous: str = "") -> str:
       ``previous``——"还没读数"不等于"读数降到安全值"（与四态兜底的 ``--``
       不伪造 0 同口径）。折叠态会停掉被折段的采样，这条让告警不因停采样而凭空
       消失（chip 告警点的前提）；
-    - **没阈值的指标恒无色**：网络段的延迟/速率没有普适阈值，``previous`` 也不还。
+    - **没阈值的指标恒无色**：``previous`` 也不还。
     """
     limits = alert_thresholds(metric_id)
     if limits is None:
@@ -448,8 +412,6 @@ def _clean_segment_id(value: Any) -> str:
     if len(segment_id) > MAX_SEGMENT_ID_CHARS:
         raise ValueError(
             f"段 id 超过 {MAX_SEGMENT_ID_CHARS} 字符：{segment_id[:MAX_SEGMENT_ID_CHARS]}…")
-    if segment_id in BUILTIN_SEGMENT_IDS:
-        raise ValueError(f"段 id {segment_id!r} 是内置段保留字（第三方段不得占用）")
     return segment_id
 
 
@@ -503,14 +465,13 @@ class SegmentDeclaration:
 
     字段的纪律：
 
-    - ``id`` 必须唯一、非空、单行、无空白、≤ :data:`MAX_SEGMENT_ID_CHARS`，且不是
-      内置保留字（见 :data:`BUILTIN_SEGMENT_IDS`）；
+    - ``id`` 必须唯一、非空、单行、无空白、≤ :data:`MAX_SEGMENT_ID_CHARS`；
     - ``max_text`` **必填**：它是声明盒宽的最坏样本。没有它就没有盒宽契约，岛宽会
       跟着读数跳——那是本项目的红线，所以缺它直接拒注；
     - ``format_value`` 把裸值转成文案。**异常与巨型串都在这里被兜住**
       （error 态 + 度量前截断），所以一个失控的格式化函数只会弄坏自己那一段；
-    - ``thresholds`` 可选，声明后并进 :data:`ALERT_THRESHOLDS`，第三方段与
-      CPU/内存走**同一条**告警判定（含 3pt 滞回）；
+    - ``thresholds`` 可选，声明后并进 :data:`ALERT_THRESHOLDS`，走**同一条**
+      告警判定（含 3pt 滞回）；
     - ``read`` 可选：无参取值函数。声明了就能用 :meth:`sample` 一步拿到快照；
       没声明也能注册，只是 :meth:`sample` 会如实报 error（"没有数据源"不是"读数是 0"）。
     """
@@ -626,7 +587,7 @@ def register_segment(declaration: SegmentDeclaration = None, /, **fields) -> Seg
 
     失败面（都是"早死早超生"的明确报错，不静默吞）：
 
-    - 字段缺失/非法（空 id、含空白、超长、保留的内置 id、缺 ``max_text``、
+    - 字段缺失/非法（空 id、含空白、超长、缺 ``max_text``、
       阈值不是 ``warn < crit``）→ ``ValueError``；
     - 类型不对（id 非 str、``format_value`` 不可调用、多给了字段关键字）→ ``TypeError``；
     - 重复 id → ``ValueError``（同一 id 只允许一段：折叠/卡片索引会指到两个对象）。
@@ -654,9 +615,6 @@ def register_segment(declaration: SegmentDeclaration = None, /, **fields) -> Seg
 def unregister_segment(segment_id: Any) -> bool:
     """注销一个第三方段（返回是否真的注销了）：声明与它并进阈值表的阈值一起撤。
 
-    内置段撤不动（:data:`BUILTIN_SEGMENT_IDS` 本来也不允许注册）——阈值表里的
-    内置条目不该被一次第三方注销带走。
-
     **同时清空盒宽缓存**：缓存按 ``(id, 字体指纹)`` 记，注销后同名 id 带着新
     ``max_text`` 重新注册时必须重测，否则新声明会拿到旧样本的盒宽。注销是插件
     卸载这条冷路径，整表清缓存比"按 id 精细失效"更简单且不可能漏。
@@ -667,8 +625,7 @@ def unregister_segment(segment_id: Any) -> bool:
     """
     if _SEGMENTS.pop(segment_id, None) is None:
         return False
-    if segment_id not in BUILTIN_SEGMENT_IDS:
-        ALERT_THRESHOLDS.pop(segment_id, None)
+    ALERT_THRESHOLDS.pop(segment_id, None)
     for key in [item for item in _OVERSIZE_WARNED if item[0] == segment_id]:
         _OVERSIZE_WARNED.discard(key)
     clear_width_cache()

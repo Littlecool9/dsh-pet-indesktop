@@ -13,12 +13,7 @@
 本文件三层验证：
 
 - **纯判定**（``plan_info_row``）：逐级触发、尾部优先、主信息永不折、逆序恢复；
-- **采样联动**（窗口级）：折掉的段退订、展开重订阅且首轮显示 ``--``；
-- **几何**：``+N`` chip 的盒宽/居中/无竖线、三分区锚点、拖拽中宽度冻结、
-  多屏迁移后重算。
-
-采样器一律替身（``_make_net_monitor`` / ``_make_sys_monitor`` 替换点）：测试不发
-探测包、不碰 psutil。
+- **几何**：``+N`` chip 的盒宽/居中/无竖线、三分区锚点。
 """
 from __future__ import annotations
 
@@ -26,25 +21,17 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QRect
-from PySide6.QtWidgets import QApplication
-
-import pet.dynamic_island as island_mod
 from pet import island_layout as layout
 from pet import island_segments as isl
-from pet import sys_monitor as sm
-from pet.config import Config
-from pet.dynamic_island import DynamicIsland
 from pet.island_layout import (
     LEVEL_FOLD_BASE, LEVEL_NAME_ELIDE, LEVEL_NAME_HIDE, LEVEL_NONE,
     _InfoSeg, anchored_x, apply_shrink, elide_to_width, plan_info_row,
     place_info_segments,
 )
-from pet.island_segments import CPU, MEM, NETWORK
-
-app = QApplication.instance() or QApplication([])
-
 _PRIMARY = "primary"
+#: 测试用的通用段 id（内置段已整体移除，这里只验布局与收缩）。
+_CPU = "alpha"
+_MEM = "beta"
 _ELLIPSIS = isl.ELLIPSIS
 
 
@@ -95,8 +82,8 @@ def _metric(seg_id, label="", text="24%", box="888%", *, state=isl.STATE_OK):
 
 
 def _metrics():
-    """两个指标段（CPU/内存），尾部 = 内存（列表序 = 优先级降序）。"""
-    return [_metric(CPU, "CPU"), _metric(MEM, "内存")]
+    """两个指标段，尾部 = 第二个（列表序 = 优先级降序）。"""
+    return [_metric(_CPU, "_CPU"), _metric(_MEM, "内存")]
 
 
 def _plan(segments, available, *, name=_LONG_NAME):
@@ -120,7 +107,7 @@ def test_plan_within_budget_touches_nothing():
     assert plan.level == LEVEL_NONE
     assert plan.name == _LONG_NAME
     assert plan.folded == ()
-    assert _ids(plan) == [_PRIMARY, CPU, MEM]
+    assert _ids(plan) == [_PRIMARY, _CPU, _MEM]
     assert plan.width <= 10_000
 
 
@@ -130,7 +117,7 @@ def test_plan_elides_the_name_before_dropping_anything():
     assert plan.level == LEVEL_NAME_ELIDE
     assert plan.name.endswith(_ELLIPSIS) and plan.name_w <= 40
     assert plan.folded == ()
-    assert _ids(plan) == [_PRIMARY, CPU, MEM]
+    assert _ids(plan) == [_PRIMARY, _CPU, _MEM]
     assert plan.width <= 340
 
 
@@ -139,7 +126,7 @@ def test_plan_hides_the_name_before_folding_segments():
     assert plan.level == LEVEL_NAME_HIDE
     assert plan.name == "" and plan.name_w == 0
     assert plan.folded == ()
-    assert _ids(plan) == [_PRIMARY, CPU, MEM]
+    assert _ids(plan) == [_PRIMARY, _CPU, _MEM]
 
 
 def test_plan_folds_from_the_tail_and_adds_a_chip():
@@ -147,8 +134,8 @@ def test_plan_folds_from_the_tail_and_adds_a_chip():
     segments = [_primary(), *_metrics()]
     plan = _plan(segments, 250)
     assert plan.level == LEVEL_FOLD_BASE + 1
-    assert plan.folded == (MEM,), "先折尾部那一段"
-    assert _ids(plan) == [_PRIMARY, CPU, "chip"]
+    assert plan.folded == (_MEM,), "先折尾部那一段"
+    assert _ids(plan) == [_PRIMARY, _CPU, "chip"]
     chip = _row(plan, segments)[-1]
     assert chip.kind == "chip" and chip.text == "+1"
     assert plan.width <= 250
@@ -157,7 +144,7 @@ def test_plan_folds_from_the_tail_and_adds_a_chip():
 def test_plan_keeps_folding_until_it_fits():
     segments = [_primary(), *_metrics()]
     plan = _plan(segments, 200)
-    assert plan.folded == (MEM, CPU), "折叠顺序 = 段 id 序的严格倒序"
+    assert plan.folded == (_MEM, _CPU), "折叠顺序 = 段 id 序的严格倒序"
     assert plan.level == LEVEL_FOLD_BASE + 2
     assert _ids(plan) == [_PRIMARY, "chip"]
     assert _row(plan, segments)[-1].text == "+2"
@@ -170,7 +157,7 @@ def test_plan_never_folds_the_primary():
     row = _row(plan, segments)
     assert row[0].seg_id == _PRIMARY, "主信息段永远在第一位"
     assert row[0].text == "12:00", "定宽主信息不做省略"
-    assert plan.folded == (MEM, CPU)
+    assert plan.folded == (_MEM, _CPU)
     assert plan.width > 100, "折无可折：宽度如实溢出，由绘制层截断（不静默吃字）"
 
 
@@ -199,10 +186,10 @@ def test_plan_is_stateless_so_widening_restores_everything():
     """逆序恢复：同一份输入换个预算就全展开——收缩状态纯计算，不落盘。"""
     segments = [_primary(), *_metrics()]
     narrow = _plan(segments, 200)
-    assert narrow.folded == (MEM, CPU)
+    assert narrow.folded == (_MEM, _CPU)
     wide = _plan(segments, 10_000)
     assert wide.level == LEVEL_NONE and wide.folded == ()
-    assert _ids(wide) == [_PRIMARY, CPU, MEM]
+    assert _ids(wide) == [_PRIMARY, _CPU, _MEM]
     assert wide.name == _LONG_NAME
 
 
@@ -221,14 +208,14 @@ def test_plan_without_info_segments_only_shrinks_the_name():
 def test_chip_carries_the_alert_flag_when_a_folded_segment_errors():
     """折叠不埋没告警：被折段里有 error → chip 左侧色点（告警级已从 bool 升格为
     ``""|warn|crit``：error 态一律按 crit 算，见 ``island_layout._folded_alert``）。"""
-    segments = [_primary(), _metric(CPU, "CPU", "--", "888%", state=isl.STATE_ERROR),
-                _metric(MEM, "内存")]
+    segments = [_primary(), _metric(_CPU, "_CPU", "--", "888%", state=isl.STATE_ERROR),
+                _metric(_MEM, "内存")]
     plan = _plan(segments, 250)
-    assert plan.folded == (MEM,)
-    assert plan.chip_alert == "", "折掉的是内存，CPU 的 error 还在画"
+    assert plan.folded == (_MEM,)
+    assert plan.chip_alert == "", "折掉的是内存，_CPU 的 error 还在画"
 
     plan = _plan(segments, 200)
-    assert CPU in plan.folded and MEM in plan.folded
+    assert _CPU in plan.folded and _MEM in plan.folded
     assert plan.chip_alert == isl.ALERT_CRIT
 
 
@@ -254,7 +241,7 @@ def test_place_info_segments_gives_a_wide_chip_a_minimum_width():
 
 
 def test_chip_after_a_metric_still_gets_no_divider():
-    segments = [_metric(CPU, "CPU"),
+    segments = [_metric(_CPU, "_CPU"),
                 _InfoSeg(kind="chip", seg_id="chip", label="", text="+1",
                          box_text="+1", state=isl.STATE_OK)]
     cpu, chip = place_info_segments(segments, start_x=0.0, primary_fm=FM,
@@ -311,331 +298,3 @@ def test_anchored_x_pins_the_center_in_the_middle_third():
 def test_anchored_x_without_screen_info_keeps_the_edge():
     assert anchored_x(x=77, width=200, new_width=600,
                       screen_left=0, screen_width=0) == 77
-
-
-def _place_island(island, x: int) -> None:
-    """把岛挪到 (x, 300) 并让它按新位置重算一次几何。"""
-    island.move(x, 300)
-    island._update_size()
-
-
-def test_growth_in_the_right_third_pins_the_right_edge(tmp_path, monkeypatch):
-    """锚点接进了几何重算（不是只躺在纯函数里）：右 1/3 的岛变宽时向左长。"""
-    island, _made, _screen = _island(tmp_path, monkeypatch, screen_width=1400, x=1100)
-    try:
-        island.show()
-        app.processEvents()
-        _place_island(island, 1100)
-        before = island.geometry()
-
-        island.config.set("island_metrics", [CPU, MEM])
-        island.refresh_from_config()
-        assert island.width() > before.width()
-        assert island.geometry().right() == before.right(), "右缘不动（向左长）"
-        assert island.x() < before.x()
-    finally:
-        island.close()
-
-
-def test_growth_in_the_left_third_pins_the_left_edge(tmp_path, monkeypatch):
-    island, _made, _screen = _island(tmp_path, monkeypatch, screen_width=1400, x=10)
-    try:
-        island.show()
-        app.processEvents()
-        _place_island(island, 10)
-        before = island.geometry()
-
-        island.config.set("island_metrics", [CPU, MEM])
-        island.refresh_from_config()
-        assert island.width() > before.width()
-        assert island.x() == before.x(), "左缘不动（向右长）"
-    finally:
-        island.close()
-
-
-# ------------------------------------------------------------ 窗口级：采样联动
-class StubMonitor:
-    """采样器替身：只记录生命周期与订阅调用，样本由测试塞进去。"""
-
-    def __init__(self, interval: float = sm.DEFAULT_INTERVAL_SECONDS):
-        self.interval = interval
-        self.sample = None
-        self.starts = 0
-        self.stops = 0
-        self.closed = False
-        self.started = False
-        self.subscribed: set[str] = set()
-        self.unsubscribed: list[str] = []
-
-    def subscribe(self, key: str) -> int:
-        self.subscribed.add(str(key))
-        return len(self.subscribed)
-
-    def unsubscribe(self, key: str) -> int:
-        self.unsubscribed.append(str(key))
-        self.subscribed.discard(str(key))
-        return len(self.subscribed)
-
-    def start(self) -> bool:
-        if self.started:
-            return False
-        self.starts += 1
-        self.started = True
-        return True
-
-    def stop(self, **_kwargs) -> None:
-        self.stops += 1
-        self.started = False
-
-    def close(self) -> None:
-        self.closed = True
-        self.started = False
-
-    def set_interval(self, interval: float) -> float:
-        self.interval = interval
-        return self.interval
-
-    def snapshot(self):
-        return self.sample
-
-
-class FakeScreen:
-    """屏幕替身：动态岛只问 ``availableGeometry()``（多屏/窄屏都是它）。"""
-
-    def __init__(self, width: int, height: int = 768, left: int = 0, top: int = 0):
-        self._rect = QRect(left, top, width, height)
-
-    def availableGeometry(self) -> QRect:
-        return QRect(self._rect)
-
-
-def _config(tmp_path, *, metrics=(), **overrides) -> Config:
-    cfg = Config(base=tmp_path)
-    data = {
-        "enabled": True, "show_icon": True, "show_name": True,
-        "show_info": True, "info_mode": "time", "custom_text": "",
-        "show_status": True, "style": "dark", "x": 40, "y": 300,
-    }
-    data.update(overrides)
-    cfg.set("dynamic_island", data)
-    cfg.set("island_metrics", list(metrics))
-    return cfg
-
-
-def _island(tmp_path, monkeypatch, *, metrics=(), screen_width=1200, **overrides):
-    made: list[StubMonitor] = []
-
-    def factory(_self, interval):
-        monitor = StubMonitor(interval)
-        made.append(monitor)
-        return monitor
-
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor", factory)
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor", factory)
-    screen = FakeScreen(screen_width)
-    monkeypatch.setattr(island_mod.DynamicIsland, "_current_screen", lambda self: screen)
-    island = DynamicIsland(_config(tmp_path, metrics=metrics, **overrides))
-    return island, made, screen
-
-
-def _segment(island: DynamicIsland, seg_id: str):
-    """段管线里的**未收缩**段（折叠不改它：折叠只发生在行计划里）。"""
-    for segment in island._compose_info_segments():
-        if segment.seg_id == seg_id:
-            return segment
-    raise AssertionError(f"段列表里没有 {seg_id!r}")
-
-
-def _sys_sample(cpu=42.0, mem=61.0, *, sampled_at=1.0):
-    return sm.SysSample(cpu_percent=cpu, mem_percent=mem, sampled_at=sampled_at)
-
-
-def _narrow_to(island, screen, predicate, *, lo=150, hi=1500, step=4):
-    """把岛挪到"收缩级满足 ``predicate``"的那块屏上，返回命中的屏宽。
-
-    **从宽往窄搜**：返回满足条件里最宽的那块屏——它是"刚好要收缩"的那一档，
-    宽度仍在预算内（再窄下去会落到保底级，那时溢出是设计行为，测不出 fits）。
-
-    屏宽**按真实字体实测搜索**而不是写死 px：段宽来自当前系统字体，写死的阈值
-    换台机器（换字体/DPI）就会落到别的收缩级上，测试会变成环境相关的假红。
-    """
-    for width in range(hi, lo, -step):
-        screen._rect = QRect(0, 0, width, 768)
-        island.refresh_from_config()
-        plan = island._row_plan()
-        if predicate(plan):
-            assert island._shrink_budget() == width - 32, "触发线 = 屏可用宽 − 32px"
-            return width, plan
-    raise AssertionError("在 150–1500px 的屏宽里找不到满足条件的收缩级")
-
-
-# ------------------------------------------------------------ 窄屏收缩 + 退订
-def test_narrow_screen_folds_tail_segments_and_unsubscribes_them(tmp_path, monkeypatch):
-    metrics = [NETWORK, CPU, MEM]
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=metrics,
-                                    screen_width=1400)
-    try:
-        island.show()
-        app.processEvents()
-        assert island._row_plan().folded == (), "先给一块够宽的屏"
-        net_stub, sys_stub = island._net_monitor, island._sys_monitor
-
-        # 只折尾部那一段（内存）：另外两段还在画 → 采样也必须还在
-        _width, plan = _narrow_to(island, screen, lambda p: p.folded == (MEM,))
-        assert plan.folded == (MEM,), "折叠顺序 = 段序的严格倒序（尾部优先）"
-        assert MEM in sys_stub.unsubscribed, "折掉的段必须退订"
-        assert CPU in sys_stub.subscribed, "没被折的兄弟段不许被牵连"
-        assert net_stub.started is True and net_stub.closed is False
-        assert island._row_plan().visible[-1] == "chip"
-
-        # 继续窄到把网络段也折掉：整条网络采样器收口
-        _width, plan = _narrow_to(island, screen, lambda p: NETWORK in p.folded)
-        assert net_stub.closed is True, "折掉的网络段必须收口（撤销订阅）"
-        assert island._net_monitor is None and island._net_sample is None
-    finally:
-        island.close()
-
-
-def test_unfolded_segment_resubscribes_and_starts_from_dashes(tmp_path, monkeypatch):
-    """恢复出采样段：重订阅 + 首轮 ``--``（不显示折叠前的陈旧值）。"""
-    metrics = [CPU, MEM]
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=metrics,
-                                    screen_width=1200)
-    try:
-        island.show()
-        app.processEvents()
-        sys_stub = island._sys_monitor
-        sys_stub.sample = _sys_sample()
-        island._tick_sys()
-        assert island._row_plan().folded == (), "宽屏不折叠"
-        assert _segment(island, MEM).text == "61"
-
-        # 只折尾部（内存）、CPU 还活着：共享采样器不重建，陈旧读数的坑正在这里
-        _width, plan = _narrow_to(island, screen, lambda p: p.folded == (MEM,))
-        assert island._sys_monitor is sys_stub, "还有段在采：采样器不该被重建"
-        assert MEM in sys_stub.unsubscribed
-        assert sys_stub.snapshot() is not None, "快照还在（兄弟段仍要读它）"
-
-        screen._rect = QRect(0, 0, 1200, 768)     # 搬回宽屏 → 恢复
-        island.refresh_from_config()
-        assert island._row_plan().folded == ()
-        assert MEM in sys_stub.subscribed, "恢复必须重新订阅"
-        restored = _segment(island, MEM)
-        assert restored.state == isl.STATE_SAMPLING and restored.text == "--", \
-            "恢复的第一轮是 sampling（不拿折叠前的读数冒充当下）"
-        assert _segment(island, CPU).state == isl.STATE_OK, "一直没被折的段照常报读数"
-
-        # 新快照到手之后才报读数
-        sys_stub.sample = _sys_sample(cpu=7.0, mem=8.0, sampled_at=2.0)
-        island._tick_sys()
-        assert _segment(island, MEM).state == isl.STATE_OK
-        assert _segment(island, MEM).text == "8"
-    finally:
-        island.close()
-
-
-def test_folded_network_stops_sampling_and_unfold_recreates_it(tmp_path, monkeypatch):
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=[NETWORK],
-                                    screen_width=1400)
-    try:
-        island.show()
-        app.processEvents()
-        first = island._net_monitor
-        assert first is not None and first.started is True
-
-        _width, plan = _narrow_to(island, screen, lambda p: p.folded == (NETWORK,))
-        assert plan.visible == (_PRIMARY, "chip"), "保底只剩主信息 + chip"
-        assert first.closed is True and first.started is False
-        assert island._net_monitor is None and island._net_sample is None
-
-        screen._rect = QRect(0, 0, 1400, 768)
-        island.refresh_from_config()
-        island.show()
-        app.processEvents()
-        assert island._row_plan().folded == ()
-        assert island._net_monitor is not None and island._net_monitor is not first
-        assert island._net_monitor.started is True
-        assert _segment(island, NETWORK).state == isl.STATE_SAMPLING
-    finally:
-        island.close()
-
-
-def test_fold_transition_reenters_the_width_whitelist(tmp_path, monkeypatch):
-    """折叠/展开是**内容结构**变化：必须走白名单（键变），采样值变化则不许变。"""
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=[CPU, MEM],
-                                    screen_width=1200)
-    try:
-        island.show()
-        app.processEvents()
-        wide_key = island._width_key()
-        wide_width = island.width()
-
-        _width, plan = _narrow_to(island, screen, lambda p: bool(p.folded))
-        folded_key = island._width_key()
-        assert folded_key != wide_key, "折叠态必须进白名单键"
-        assert island.width() < wide_width, "收缩后自然宽必须变小"
-        assert island.width() <= island._shrink_budget()
-
-        island._sys_monitor.sample = _sys_sample(cpu=99.0, mem=99.0)
-        island._tick_sys()
-        assert island._width_key() == folded_key, "采样值不进白名单（哪怕折叠态）"
-        assert plan.folded
-    finally:
-        island.close()
-
-
-def test_dragging_freezes_the_width_and_the_shrink_level(tmp_path, monkeypatch):
-    """拖拽中冻结：既不重算宽度也不重算收缩级，松手落定后才按新屏重算。"""
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=[CPU, MEM],
-                                    screen_width=1200)
-    try:
-        island.show()
-        app.processEvents()
-        before = island.width()
-
-        island._dragging = True
-        screen._rect = QRect(0, 0, 200, 768)   # 拖到极窄屏：这一帧什么都不许动
-        island.refresh_from_config()
-        assert island.width() == before, "拖拽中改宽 = 岛在光标底下抽动"
-        assert island._row_plan().folded == (), "收缩级同样冻结（不然内容先跳）"
-
-        island._dragging = False
-        island.refresh_from_config()
-        assert island.width() < before, "松手后才按新屏收缩"
-        assert island._row_plan().folded
-    finally:
-        island.close()
-
-
-def test_screen_migration_recomputes_the_shrink_level(tmp_path, monkeypatch):
-    metrics = [NETWORK, CPU, MEM]
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=metrics,
-                                    screen_width=1400)
-    try:
-        island.show()
-        app.processEvents()
-        assert island._row_plan().level == LEVEL_NONE
-
-        _width, plan = _narrow_to(island, screen, lambda p: len(p.folded) >= 2)
-        assert plan.level > LEVEL_NAME_HIDE, "窄屏要折段，不只是省名字"
-
-        screen._rect = QRect(0, 0, 1400, 768)
-        island.refresh_from_config()
-        assert island._row_plan().level == LEVEL_NONE, "搬回宽屏要逆序全恢复"
-    finally:
-        island.close()
-
-
-def test_chip_paints_without_crashing(tmp_path, monkeypatch):
-    """画得出来才算数：带 chip 的内容层与整窗重绘都不许抛。"""
-    island, _made, screen = _island(tmp_path, monkeypatch, metrics=[CPU, MEM],
-                                    screen_width=1200)
-    try:
-        island.show()
-        app.processEvents()
-        _narrow_to(island, screen, lambda p: bool(p.folded))
-        pixmap = island._content_cache()
-        assert pixmap is not None and not pixmap.isNull()
-        assert not island.grab().isNull()
-    finally:
-        island.close()

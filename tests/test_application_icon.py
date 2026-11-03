@@ -7,7 +7,7 @@
 新的唯一入口 ``pet/application_icon.py::load_application_icon()`` 钉住三条硬契约：
 
 1. **双候选、cwd 无关**：冻结包取 ``sys._MEIPASS/assets/icon.ico``，源码运行取仓库根下的
-   同一相对路径（与 ``pet/game_fps.py::bundled_backend_path`` 同一约定）。候选由
+   同一相对路径。候选由
    ``__file__`` 解析，与当前工作目录无关。
 2. **缺件/坏件安全回退**：候选不存在、或存在但读不出（截断/非法字节）都返回**空图标**、
    不抛异常；第一个候选坏掉时继续试下一个（``_MEIPASS`` 里那份坏掉不该让图标整体消失）。

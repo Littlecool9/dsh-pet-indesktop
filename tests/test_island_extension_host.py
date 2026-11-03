@@ -96,8 +96,7 @@ def _clean_state(tmp_path, monkeypatch):
     host.reset_cache()
     isl.clear_segments()
     yield root
-    for segment_id in [key for key in isl.ALERT_THRESHOLDS
-                       if key not in isl.BUILTIN_SEGMENT_IDS]:
+    for segment_id in list(isl.ALERT_THRESHOLDS):
         isl.drop_thresholds(segment_id)
         isl.ALERT_THRESHOLDS.pop(segment_id, None)
     isl.clear_segments()
@@ -161,12 +160,11 @@ def test_declaration_is_read_from_an_explicit_trusted_directory(_clean_state):
     assert host.declared_metric_ids() == frozenset({"cpu_temp"})
 
 
-def test_allowed_ids_are_builtins_plus_declared_components(_clean_state):
-    """配置准入 = 内置 ∪ 已声明；**不看运行期注册表**（两个进程因此同源）。"""
-    assert host.allowed_metric_ids() == isl.BUILTIN_SEGMENT_IDS
+def test_allowed_ids_are_declared_components_only(_clean_state):
+    """配置准入 = 已声明组件；**不看运行期注册表**（两个进程因此同源）。"""
+    assert host.allowed_metric_ids() == frozenset()
     _write_component(_clean_state)
-    allowed = host.allowed_metric_ids()
-    assert isl.BUILTIN_SEGMENT_IDS < allowed and "cpu_temp" in allowed
+    assert host.allowed_metric_ids() == frozenset({"cpu_temp"})
 
     isl.register_segment(id="runtime_only", format_value=lambda value: str(value),
                          max_text="88")
@@ -220,7 +218,6 @@ def test_provider_missing_is_reported_as_temporarily_absent(_clean_state):
 
 # ---------------------------------------------------------------- 拒收面
 @pytest.mark.parametrize("manifest,expected", [
-    ({"id": "cpu"}, "非法"),                       # 内置保留 id
     ({"max_text": ""}, "非法"),                    # 缺盒宽契约
     ({"provider": "../escape.py"}, "相对路径"),     # provider 爬出组件目录
     ({"provider": "/abs/provider.py"}, "相对路径"),

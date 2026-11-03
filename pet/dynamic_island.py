@@ -36,16 +36,14 @@ from PySide6.QtWidgets import (
 )
 
 from . import (
-    catalog, gpu_monitor, island_extension_host, island_fps, island_layout,
-    island_segments, net_monitor, quiet_mode, sys_monitor,
+    catalog, island_extension_host, island_layout, island_segments, quiet_mode,
 )
 from .config import _clean_island_coordinate
 from .dsh_state import DshState
 from .island_layout import (
     _BASELINE_DY, _CHIP_ALERT_DOT_PX, _CHIP_H_PX, _CHIP_RADIUS_PX, _CONTENT_PAD_PX,
-    _DEVICE_LABELS, _DIVIDER_H_PX, _DIVIDER_W_PX, _GPU_LABEL, _ICON_GAP_PX, _ICON_PX,
-    _NAME_GAP_PX, _NAME_MAX_PX, _NETWORK_BOX_SAMPLE, _PRIMARY_ELIDE_PX,
-    _PRIMARY_SAMPLES, _STATUS_DOT_PX, _STATUS_GAP_PX, _SYS_METRIC_IDS, _InfoSeg,
+    _DIVIDER_H_PX, _DIVIDER_W_PX, _ICON_GAP_PX, _ICON_PX, _NAME_GAP_PX, _NAME_MAX_PX,
+    _PRIMARY_ELIDE_PX, _PRIMARY_SAMPLES, _STATUS_DOT_PX, _STATUS_GAP_PX, _InfoSeg,
     place_info_segments,
 )
 
@@ -106,9 +104,6 @@ _TILT_V_MAX = 40.0
 # 不是墙钟——停表期间的墙钟不计入）。
 _BUMP_ANIM_MAX_S = 0.9
 _ANIM_TICK_MS = 16  # ~60fps，仅动画活跃时运行，静止零开销
-#: 游戏帧率段的读表节拍（1Hz）：采集器自己按 0.25s 发布，GUI 只按秒读一次快照
-#: （读数比这更勤地刷没有意义，而采样是后台线程的事——读表绝不进 16ms 动画预算）。
-_FPS_TICK_MS = 1000
 
 _DOCK_EDGES = ("none", "top", "bottom", "left", "right")
 
@@ -223,22 +218,6 @@ _CARD_STATUS_DOT_GAP = 6  # 概览区状态点与状态文字的间距
 #: 详情列宽样本里的"更新时间"占位：宽度只吃这个固定串、不吃真实读数
 #: （"3 秒前" → "00 秒前"），所以采样值永远改不动卡片宽（与胶囊宽度白名单同纪律）。
 _CARD_UPDATED_SAMPLE = "00 秒前"
-#: 卡片里每段的人话名字（胶囊里网络段是纯 glyph 无 label，卡片得说清是哪一段）。
-_CARD_METRIC_NAMES = {
-    island_segments.NETWORK: "网络",
-    island_segments.CPU: "CPU",
-    island_segments.MEM: "内存",
-    island_segments.GPU: "GPU",
-    island_segments.FPS: "FPS",
-}
-#: 卡片里的**单位全称**（k3 §5.3：胶囊只给紧凑读数，量纲在卡片说清）。
-#: 刻意短：这一列和"来源 · 更新时间"共用一个详情列，写长了会把更新时间挤掉
-#: （宽度的上限是 420，见 _CARD_WIDTH_MAX）。
-_CARD_UNIT_FULL = {
-    island_segments.NETWORK: "速率 KB/s · 延迟 ms",
-    island_segments.CPU: "百分比",
-    island_segments.MEM: "百分比",
-}
 #: 概览区的状态文字（E1 五态语义的字面化；颜色仍走 ``_status_dot_style``）。
 #: ``_DOT_HIDDEN`` 不在这张表里——它要分"桌宠隐藏"与"DSH 离线"两种说法。
 _CARD_STATUS_TEXT = {
@@ -251,11 +230,6 @@ _CARD_STATUS_TEXT = {
 #: 四态兜底/不可用段在详情列的整句说明（顶掉"单位 · 来源 · 时间"三段）。
 _CARD_UNAVAILABLE_NOTE = "该指标不可用"
 _CARD_UNKNOWN_REASON = "未注册的段 id"
-#: 段的**来源口径**（k3 §5.3：卡片说清"这个数从哪来"，胶囊一个字都不提）。
-#: 口径一律用人话：网络段的读网卡计数器 / 探 DNS 都是实现细节（设置页那一刀
-#: 的去黑话同约定），用户要知道的只是"本机采出来的"。
-_CARD_SOURCE_SYS = "本机采样"
-_CARD_SOURCE_NET = "本机采样"
 #: 卡片行完整上下文（tooltip / 无障碍描述）的字符上限。细节全是外部输入（显卡名、
 #: 引擎名、PDH 错误原文），放它无限长只会把 tooltip 撑成一个窗口。取段契约 detail
 #: 上限的两倍：它与详情列那一列放的**同一批**信息，只是不省略。
@@ -502,15 +476,6 @@ _FONT_LAYERS = {
 #: 单位盒的降色系数（裁决稿 §二-5：单位弱化靠"10px + α×70%"双管，缺一档就是
 #: 13px 与 10px 之间的"差 1px、弱化不足"）。
 _UNIT_ALPHA = 0.7
-#: 设备槽段的**数值盒**样本：``sys_monitor.MAX_TEXT`` 经同一条「值/单位分离」路径
-#: 拆掉单位的那一半（单位本身取 ``island_segments.PERCENT_UNIT`` 声明值，单位盒宽
-#: 由布局层另算，见 ``island_layout.place_info_segments``）。
-_DEVICE_VALUE_SAMPLE = island_segments.split_value_unit(
-    sys_monitor.MAX_TEXT, island_segments.PERCENT_UNIT)[0]
-#: GPU 段的数值盒样本：同一条路径，样本来自 GPU 自己的最坏读数声明
-#: （``gpu_monitor.MAX_TEXT`` = ``"100%"``，口径夹紧在 0–100）。
-_GPU_VALUE_SAMPLE = island_segments.split_value_unit(
-    gpu_monitor.MAX_TEXT, island_segments.PERCENT_UNIT)[0]
 
 
 class DynamicIsland(QWidget):
@@ -619,29 +584,11 @@ class DynamicIsland(QWidget):
         self._plan_inputs_seen: tuple | None = None
         self._plan = None
         # 折叠态（收缩流水线折进 +N 的段 id）：采样订阅跟着它走——看不见的段
-        # 不该继续烧 psutil/探测包（见 _sync_fold_sampling）。
+        # 不该继续采样（见 _sync_fold_sampling）。
         self._folded_metrics: frozenset[str] = frozenset()
-        # 上一次同步时的停靠细条态（P2 Slice E6）：细条一样是"看不见"，
-        # 采样同样全停（见 _sync_content_sampling）。
+        # 上一次同步时的停靠细条态：细条一样是"看不见"，采样同样全停
+        # （见 _sync_content_sampling）。
         self._strip_sampling_off = False
-        # 设备槽订阅的影子计数（订阅集合自己记一份：底座只回报计数，问不出
-        # "这个 key 是不是刚订阅的"），用于"恢复首轮显示 --"。
-        self._sys_subscribed: set[str] = set()
-        self._sys_pending: set[str] = set()
-        # 被折前最后一拍是采样故障的保持表（metric_id → 原因），见 ③①
-        self._sys_error_hold: dict[str, str] = {}
-        # GPU 段：读数来自底座 GPU 那一本账（``subscribe_gpu``），与设备槽各记一份。
-        # ``_gpu_subscribed`` 是订阅影子，``_gpu_error_hold`` 是它与设备槽同形的
-        # "折叠不埋没故障"保持表，``_gpu_sample`` 是最近一份**这一代**的读数。
-        self._gpu_sample: gpu_monitor.GpuSample | None = None
-        self._gpu_subscribed = False
-        self._gpu_error_hold: dict[str, str] = {}
-        # 恢复屏障（两份各自一份）：暂停/退订那一刻底座手里**那一个**快照对象。
-        # 恢复后读到同一个对象 = 还是上一代的读数，一律拒收（见 _tick_gpu_slot /
-        # _tick_device_slot）——底座 stop() 不清最后一份快照，直接读它就是把历史
-        # 冒充成实时。
-        self._sys_barrier: object | None = None
-        self._gpu_barrier: object | None = None
         # 光标是否在岛内（自记 hover 旗帜，见 expand_card 的 hover 暂停与 enter/leaveEvent）
         self._cursor_inside = False
         # 逐指标的**上一拍告警级**（""|warn|crit，P2 Slice E2）：滞回要的"上一拍"
@@ -649,9 +596,8 @@ class DynamicIsland(QWidget):
         # 停掉被折段的采样，靠它把告警保持住——chip 告警点因此不会一闪即灭。
         self._alert_severity: dict[str, str] = {}
         # 「已知但当前不可用」的段 id → 原因（P2 Slice E5 的机制）：胶囊不占位、
-        # 卡片写原因。这是一张**宿主填写的能力表**（新能力占位往这里塞条目即可），
-        # 内置段如今都能采，所以它默认空着；GPU 的不可用与否是**当刻读数**说了算
-        # （见 ``_gpu_unavailable_reason``），不写死在这张表里。
+        # 卡片写原因。这是一张**宿主填写的能力表**（新能力占位往这里塞条目即可）；
+        # 第三方组件 provider 暂缺由声明清单在运行期判定（见 _unavailable_segments）。
         self._unavailable_reasons: dict[str, str] = {}
         self._geo_from: QRect | None = None
         self._geo_to: QRect | None = None
@@ -682,29 +628,11 @@ class DynamicIsland(QWidget):
         self._info_timer.timeout.connect(self._refresh)
         self._info_timer.start()
 
-        # 网络段（``island_metrics`` 的 network 成员，默认关）：采样在后台线程里跑
-        # （psutil 计数器单次调用实测 23ms，不能进 16ms 的动画帧预算），
-        # 这里只按探测间隔读一次快照、文本变了才重绘。
-        self._net_monitor: net_monitor.NetMonitor | None = None
-        self._net_sample: net_monitor.NetSample | None = None
-        self._net_timer = QTimer(self)
-        self._net_timer.setSingleShot(False)
-        self._net_timer.timeout.connect(self._tick_network)
-
-        # 设备槽段（``island_metrics`` 的 cpu/mem 成员，默认关）：与网络段同一套
-        # 生命周期纪律（岛可见才采样、段撤掉即收口），但采样器是**共享**的
-        # （``SysMonitor`` 一条线程喂两个段），订阅按段 id 计：0 订阅零 syscall。
-        self._sys_monitor: sys_monitor.SysMonitor | None = None
-        self._sys_sample: sys_monitor.SysSample | None = None
-        self._sys_timer = QTimer(self)
-        self._sys_timer.setSingleShot(False)
-        self._sys_timer.timeout.connect(self._tick_sys)
-
         # 第三方段（声明清单 + 运行期 ``register_segment``，见 ``island_extension_host``）：
-        # 采样走**一条**有界节拍的后台线程（与设备槽同款生命周期纪律：岛可见才采、
-        # 段撤掉/被折/隐藏即退订），GUI **既不 read 也不 format**——它只读快照。
-        # ``_ext_manifest`` 是可信目录里的静态声明（设置进程与主进程同源），
-        # ``_ext_subscribed`` 是订阅影子（恢复订阅 = 新序列，与设备槽同口径）。
+        # 采样走**一条**有界节拍的后台线程（岛可见才采、段撤掉/被折/隐藏即退订），
+        # GUI **既不 read 也不 format**——它只读快照。``_ext_manifest`` 是可信目录
+        # 里的静态声明（设置进程与主进程同源），``_ext_subscribed`` 是订阅影子
+        # （恢复订阅 = 新序列）。
         self._ext_manifest: dict[str, object] = {}
         self._ext_seeded_thresholds: set[str] = set()
         self._ext_sampler = None
@@ -718,17 +646,6 @@ class DynamicIsland(QWidget):
         self._ext_timer.setSingleShot(False)
         self._ext_timer.timeout.connect(self._on_ext_tick)
         self._refresh_extension_declarations()
-
-        # 游戏帧率段（``island_metrics`` 的 fps 成员，**默认关**）：采集是**进程里唯一
-        # 一场** ETW 会话（宿主 ``island_fps.FpsHub`` 按岛计数，多宠共用一个采集器），
-        # 段自己的状态机（订阅/屏障/四态/卡片素材）全在 ``pet/island_fps.py``——这里只
-        # 留两行接线：配置或可见性一变调 ``sync``、按 1Hz 调 ``poll`` 读快照。读数因此
-        # 不进绘制路径（GUI 不做 syscall、不 join 采集线程）。
-        self._fps = island_fps.FpsSlot()
-        self._fps_timer = QTimer(self)
-        self._fps_timer.setSingleShot(False)
-        self._fps_timer.setInterval(_FPS_TICK_MS)
-        self._fps_timer.timeout.connect(self._tick_fps)
 
         # 余额峰谷档位切换的准点刷新：单次定时到下一切换边界，刷新后再排下一次。
         self._tier_tick_timer = QTimer(self)
@@ -746,21 +663,13 @@ class DynamicIsland(QWidget):
             if focus_changed is not None:
                 focus_changed.connect(self._on_own_window_focused)
             app.applicationStateChanged.connect(self._on_application_state_changed)
-            # 退出收口：应用退出**不发** closeEvent（Qt 直接销毁窗口），若不在这里挂一刀，
-            # 帧率段的订阅与采集线程就只剩"进程退出 + job 对象兜底"这一条路。挂同一个槽
-            # 是幂等的（退订按岛计、重复调用只停一次）。
-            app.aboutToQuit.connect(self._release_fps_slot)
 
         # 卡片建在**所有定时器与采样器就位之后**：卡片高度是实测出来的，而实测要
-        # 走段管线（`_capsule_width` → `_row_plan` → 采样订阅同步），早建就会在
-        # `_net_timer` 还不存在时碰到订阅分支（见 _plan_inputs / _sync_network_slot）。
+        # 走段管线（`_capsule_width` → `_row_plan` → 采样订阅同步）。
         self._build_card()
 
         self._apply_position()
-        self._sync_network_slot()
-        self._sync_sys_slot()
         self._sync_extension_slot()
-        self._sync_fps_slot()
 
     # ------------------------------------------------------------ 模式/配置
     @property
@@ -809,40 +718,6 @@ class DynamicIsland(QWidget):
         """
         return bool(self.config.get("quiet_also_on_fullscreen",
                                     quiet_mode.DEFAULT_QUIET_ALSO_ON_FULLSCREEN))
-
-    def _net_enabled(self) -> bool:
-        """网络段开关：``island_metrics`` 里有没有 network（默认关）。
-
-        网络是**普通指标段**（P1 Slice D1 起）：它和信息槽内容各占各的位置，
-        信息槽永远由 ``info_mode`` 决定，不再有"网络接管信息槽"的特殊形态。
-
-        真值只有一个来源：列表的成员关系（P1 Slice C 起）。旧键
-        ``island_network_enabled`` 只在归一化阶段单向迁移进列表，这里不再读它；
-        非列表值（手改配置 / 桩对象）一律按"没开"处理，不做子串匹配。
-        """
-        return island_segments.NETWORK in self._metric_ids()
-
-    def _net_interval(self) -> float:
-        return net_monitor.clamp_interval(
-            self.config.get("network_probe_interval_seconds", net_monitor.DEFAULT_INTERVAL_SECONDS))
-
-    def _net_active(self) -> bool:
-        """网络槽的**有效**开关：段在列表里 AND 信息槽可见 AND 没被折 AND 不在细条态。
-
-        信息槽被关掉时一条信息段都画不出来（``_visible_parts`` 的第 3 位），
-        继续跑采样线程只是白烧 psutil 的 23ms/秒与探测包——所以"显示信息槽"是
-        三态里的一态，不是只看网络段在不在列表里。窄屏收缩把它折进 +N
-        （``_folded_metrics``）时同理：看不见的段不采样，展开时再订阅。停靠细条态
-        （``_strip_hidden``，P2 Slice E6）是同一逻辑的极端档：那时候整行内容都不画。
-        """
-        if not self._net_enabled():
-            return False
-        if island_segments.NETWORK in self._folded_metrics:
-            return False
-        if self._strip_hidden():
-            return False
-        _icon, _name, info, _status = self._visible_parts()
-        return bool(info)
 
     def _edge_dock_enabled(self) -> bool:
         return bool(self._cfg.get("edge_dock", True))
@@ -1142,10 +1017,7 @@ class DynamicIsland(QWidget):
         # 卡片——顺序在 _sync_card_labels 之前，免得卡片先按旧清单画一遍
         self._refresh_extension_declarations()
         self._sync_card_labels()
-        self._sync_network_slot()
-        self._sync_sys_slot()
         self._sync_extension_slot()
-        self._sync_fps_slot()
         # 头像必须跟着刷新作废：provider 取的是**当前形象**的帧，而角色热切换
         # 只调 refresh_from_config（不动 island 配置），不换缓存就一直挂旧头像
         if self._icon_image_mode() or self._icon_spec() != old_icon:
@@ -1223,404 +1095,6 @@ class DynamicIsland(QWidget):
         self._clamp_to_screen()
         self.update()
 
-    # ------------------------------------------------------------ 网络槽
-    def _make_net_monitor(self, interval: float) -> net_monitor.NetMonitor:
-        """建采样器（**测试替换点**：替身不碰 psutil、不发探测包）。"""
-        return net_monitor.NetMonitor(interval=interval)
-
-    def _sync_network_slot(self) -> None:
-        """按配置启停网络槽的采样线程与读取定时器（幂等）。
-
-        有效开关 = 岛可见 AND 显示信息槽 AND 网络槽开着（见 ``_net_active``）；
-        任一不满足即停采样——关闭 → 彻底收口（线程停、socket 关、快照丢弃，信息槽
-        回到 ``info_mode``），只是暂时不可见 → 保留对象不采样（同 hideEvent 的
-        "隐藏即休眠"口径）。采样间隔变化（设置页改
-        ``network_probe_interval_seconds``）即时生效，不重建线程。
-        """
-        if not self._net_active():
-            self._pause_network_slot()
-            if self._net_monitor is not None:
-                self._net_monitor.close()
-                self._net_monitor = None
-            self._net_sample = None
-            return
-        interval = self._net_interval()
-        if self._net_monitor is None:
-            self._net_monitor = self._make_net_monitor(interval)
-        else:
-            self._net_monitor.set_interval(interval)
-        self._net_timer.setInterval(max(200, int(round(interval * 1000))))
-        if self.isVisible():
-            self._net_monitor.start()
-            self._net_timer.start()
-        else:
-            self._pause_network_slot()
-
-    def _pause_network_slot(self) -> None:
-        """停表停线程但保留对象（隐藏/不可见时用；socket 由线程自己收口）。"""
-        self._net_timer.stop()
-        if self._net_monitor is not None:
-            self._net_monitor.stop()
-
-    def _tick_network(self) -> None:
-        """读一次采样快照；值没变就什么都不做（静止时零重绘）。
-
-        **刻意不调 ``_update_size``**：网络段盒宽由声明样本定死（见
-        ``_NETWORK_BOX_SAMPLE``），读数在盒内右对齐伸缩，几何重算走宽度白名单
-        （``_width_key``）——采样值不归它管。也不走 ``_refresh``：那会每秒重申
-        一次置顶（原生 SetWindowPos），没必要，30s 心跳已覆盖置顶保活。
-        """
-        monitor = self._net_monitor
-        if monitor is None:
-            return
-        sample = monitor.snapshot()
-        if sample is None or sample == self._net_sample:
-            return
-        self._net_sample = sample
-        self.update()
-
-    # ------------------------------------------------------------ 设备槽（CPU/内存）
-    def _make_sys_monitor(self, interval: float) -> sys_monitor.SysMonitor:
-        """建共享采样器（**测试替换点**：替身不碰 psutil）。"""
-        return sys_monitor.SysMonitor(interval=interval)
-
-    def _sys_metric_ids(self) -> tuple[str, ...]:
-        """设备槽的**订阅集合**：``island_metrics`` 里的 cpu/mem 去掉被折进 +N 的。
-
-        保序、去重（列表序 = 优先级），折叠只影响"要不要订阅"——被折的段还在
-        配置里，只是看不见了（见 :meth:`_sync_fold_sampling`）。
-        """
-        return tuple(metric_id for metric_id in self._metric_ids()
-                     if metric_id in _SYS_METRIC_IDS
-                     and metric_id not in self._folded_metrics)
-
-    def _gpu_metric_enabled(self) -> bool:
-        """GPU 段的采样闸门（与设备槽逐条同款）：在列表里、没被折进 +N。
-
-        GPU **不是**设备槽成员：它不在 :data:`_SYS_METRIC_IDS` 里，所以既不占
-        psutil 快照、也不会误用 cpu/mem 的 subscribe（那会读到内存百分比）。
-        """
-        return (island_segments.GPU in self._metric_ids()
-                and island_segments.GPU not in self._folded_metrics)
-
-    def _sys_active(self) -> bool:
-        """共享底座的**有效**开关：还有 cpu/mem **或** GPU 要采，且信息槽可见、非细条。
-
-        "两者并集"是刻意的：只勾 GPU 时底座同样要起来（GPU 走同一条线程），但
-        两本账各订各的——GPU-only 一个 psutil 调用都不发生。
-        """
-        if self._strip_hidden():
-            return False
-        return bool(self._sys_metric_ids() or self._gpu_metric_enabled()) \
-            and bool(self._visible_parts()[2])
-
-    def _sync_sys_slot(self) -> None:
-        """按配置启停共享底座的订阅、采样线程与读取定时器（幂等）。
-
-        订阅**按段**计：段在列表里且没被折就 subscribe / subscribe_gpu，否则退订
-        ——0 订阅时底座只空转计时、不产生任何 syscall（关掉/折掉指标段就该真的
-        零开销）。段全撤 / 信息槽关闭 → 彻底收口（线程停、快照丢弃）；只是暂时
-        不可见 → 保留对象与订阅、停线程（同 hideEvent 的"隐藏即休眠"口径）。采样
-        间隔固定 1Hz（不可配，见 ``sys_monitor.clamp_interval``），不重建线程。
-
-        订阅集合自己记一份影子（``_sys_subscribed`` / ``_gpu_subscribed``）：底座
-        只回报订阅**计数**，问不出"这个 key 是不是刚订阅的"。刚订阅的段进
-        ``_sys_pending``（GPU 直接清掉旧读数），在拿到一份**新快照**之前按四态报
-        ``--``——展开恢复的段不显示折叠前的陈旧读数。
-
-        **恢复屏障**（``monitor.start()`` 真的起了线程才算）：把底座此刻手里那一个
-        快照对象记成屏障，并把所有在采的段标成待新样本——暂停前那一代的读数不许在
-        恢复后冒充实时值（隐藏→显示之间读数会静默过期，这是用户最容易看到的假象）。
-        """
-        if not self._sys_active():
-            self._unsubscribe_sys()
-            self._pause_sys_slot()
-            if self._sys_monitor is not None:
-                self._sys_monitor.close()
-                self._sys_monitor = None
-            # 收口袋之前：最近一份快照是故障就把故障留住（6.1sol 终审——
-            # 「折叠不埋没告警」不能只靠 severity：error 态段的 chip 点会随
-            # 快照清空而消失）。故障不是 severity，它是状态；留住后
-            # ``_device_segment`` / ``_gpu_segment`` 在无快照且仍被折时如实报 error。
-            # **只在有快照时改写保持表**：本分支在同一次刷新里可能被调两遍
-            # （折叠同步 + 刷新直连），第二遍快照已是 None，若清空会把
-            # 第一遍刚留住的故障抹掉（实测复现）。
-            if self._sys_sample is not None:
-                if self._sys_sample.state != island_segments.STATE_OK:
-                    reason = str(getattr(self._sys_sample, "error_reason", "") or "")
-                    # 保持面 = 配置里当前的所有设备段（astra 保底 M2）：共享快照的
-                    # 故障同时影响 cpu/mem 两段，先折的段不能因为「收口袋时已不在
-                    # 订阅集」就把故障丢了（它曾通过共享快照呈现 error）。
-                    self._sys_error_hold = {
-                        mid: reason for mid in _SYS_METRIC_IDS
-                        if mid in self._metric_ids()}
-                else:
-                    self._sys_error_hold = {}
-            if self._gpu_sample is not None:
-                if self._gpu_sample.state != island_segments.STATE_OK:
-                    self._gpu_error_hold = {
-                        island_segments.GPU:
-                            str(getattr(self._gpu_sample, "error_reason", "") or ""),
-                    }
-                else:
-                    self._gpu_error_hold = {}
-            self._sys_sample = None
-            self._gpu_sample = None
-            self._sys_subscribed = set()
-            self._gpu_subscribed = False
-            self._sys_pending = set()
-            self._sys_barrier = None
-            self._gpu_barrier = None
-            # 滞回记忆**不清**：全折后 chip 告警点只靠它亮（E2）；恢复订阅时
-            # 由 enabled 分支的 restoring 清算新序列的账（M3）。
-            return
-        monitor = self._sys_monitor
-        if monitor is None:
-            monitor = self._make_sys_monitor(sys_monitor.DEFAULT_INTERVAL_SECONDS)
-            self._sys_monitor = monitor
-        enabled = self._sys_metric_ids()
-        gpu_enabled = self._gpu_metric_enabled()
-        restoring = set(enabled) - self._sys_subscribed
-        for metric_id in _SYS_METRIC_IDS:
-            if metric_id in enabled:
-                monitor.subscribe(metric_id)
-                if metric_id in restoring:
-                    # 恢复订阅 = 新的采样序列（ops5.5 评审 M3）：滞回记忆与故障
-                    # 保持都在这一刻清——92 折掉、掉到 85 恢复时按旧记忆会保 crit，
-                    # 按新序列是 warn。**折叠（退订）时不清**：被折段的 severity
-                    # 是 chip 告警点的唯一来源（E2「折叠不埋没告警」）。
-                    self._alert_severity.pop(metric_id, None)
-                    self._sys_error_hold.pop(metric_id, None)
-            else:
-                monitor.unsubscribe(metric_id)
-        # GPU 走自己那本账。**只在真的订过/要订时才调底座**：CPU-only 的替身与
-        # 真实路径都不该被"顺手问一句 GPU"打扰（那正是"没有段就没有 PDH"的机器化）。
-        if gpu_enabled:
-            monitor.subscribe_gpu(island_segments.GPU)
-            if not self._gpu_subscribed:
-                self._alert_severity.pop(island_segments.GPU, None)
-                self._gpu_error_hold.pop(island_segments.GPU, None)
-                self._gpu_sample = None      # 新序列：折叠前的读数不许端出来
-        elif self._gpu_subscribed:
-            monitor.unsubscribe_gpu(island_segments.GPU)
-        self._sys_pending = ((self._sys_pending | (set(enabled) - self._sys_subscribed))
-                             & set(enabled))
-        self._sys_subscribed = set(enabled)
-        self._gpu_subscribed = gpu_enabled
-        self._sys_timer.setInterval(max(200, int(round(monitor.interval * 1000))))
-        if self.isVisible():
-            if monitor.start():
-                # 新线程 = 新序列：屏障 = 底座此刻手里那一份（旧代），所有在采的段
-                # 先按"等新样本"处理。旧代晚到的发布已被底座的代隔离拒收。
-                self._sys_barrier = monitor.snapshot()
-                self._sys_pending |= set(enabled)
-                if gpu_enabled:
-                    self._gpu_barrier = monitor.gpu_snapshot()
-                    self._gpu_sample = None
-            self._sys_timer.start()
-        else:
-            self._pause_sys_slot()
-
-    def _unsubscribe_sys(self) -> None:
-        """退掉两本账的全部订阅（收口前的最后一步：订阅计数不许留在底座上）。
-
-        设备槽按 id 退、GPU 按影子退（**没订过就一次都不调底座**：CPU-only 的路径
-        不该顺手去问 GPU 那半边 API）。影子同时清零——退了就是退了。
-        """
-        monitor = self._sys_monitor
-        if monitor is None:
-            return
-        for metric_id in _SYS_METRIC_IDS:
-            monitor.unsubscribe(metric_id)
-        if self._gpu_subscribed:
-            monitor.unsubscribe_gpu(island_segments.GPU)
-        self._sys_subscribed = set()
-        self._gpu_subscribed = False
-
-    def _pause_sys_slot(self) -> None:
-        """停表停线程但保留对象与订阅（隐藏/不可见时用）。"""
-        self._sys_timer.stop()
-        if self._sys_monitor is not None:
-            self._sys_monitor.stop()
-
-    def _tick_sys(self) -> None:
-        """读一次快照：设备槽与 GPU **各读各的**（各自判断、各自推进、一次重绘）。
-
-        两边都**绝不调 ``_update_size``**——``CPU 9%→100%`` 只在盒内左扩，不推邻居；
-        内容层位图按 ``_content_cache`` 的 key 自行重建。唯一会改宽的是 GPU 的
-        ``unsupported`` 段增删，那在 ``_tick_gpu_slot`` 里显式处理。
-        """
-        changed = self._tick_device_slot()
-        if self._tick_gpu_slot():
-            changed = True
-        if changed:
-            self.update()
-
-    def _tick_device_slot(self) -> bool:
-        """读一次设备槽快照；值没变就什么都不做。返回是否要重绘。
-
-        新快照到手才清 ``_sys_pending``：刚（重新）订阅的段在这一刻之前一直报
-        ``--``——"采样中"与"拿折叠前的旧读数冒充它一直在采"必须分得开。恢复屏障
-        （``_sys_barrier``）期间连"值没变"的短路都要让路：那一份可能是旧代的对象，
-        必须等真正的新样本。
-        """
-        monitor = self._sys_monitor
-        if monitor is None:
-            return False
-        sample = monitor.snapshot()
-        if sample is None or sample is self._sys_barrier:
-            return False
-        if sample == self._sys_sample and not self._sys_pending:
-            return False
-        self._sys_barrier = None
-        self._sys_sample = sample
-        self._sys_pending.clear()
-        self._update_alert_severity(sample)
-        return True
-
-    def _tick_gpu_slot(self) -> bool:
-        """读一次 GPU 快照；返回是否要重绘。
-
-        与设备槽同款但有两处 GPU 专有：① 屏障拒绝的是**同一个样本对象**（读数器每
-        拍发一个新对象，所以"还是那一个"精确等于"上一代"）；②
-        ``unsupported ↔ 支持`` 是**段的增删**，跨过这道门要重算窗口几何（读数本身
-        永远不改宽）。
-        """
-        monitor = self._sys_monitor
-        if monitor is None or not self._gpu_metric_enabled():
-            return False
-        sample = monitor.gpu_snapshot()
-        if sample is None or sample is self._gpu_barrier:
-            return False
-        if sample == self._gpu_sample:
-            return False
-        self._gpu_barrier = None
-        unavailable_before = bool(self._gpu_unavailable_reason())
-        self._gpu_sample = sample
-        self._update_gpu_alert(sample)
-        if unavailable_before != bool(self._gpu_unavailable_reason()):
-            self._update_size()
-        return True
-
-    def _update_alert_severity(self, sample) -> None:
-        """按新快照推进各指标的告警级（滞回要的"上一拍"状态，P2 Slice E2）。
-
-        必须在 **GUI 读取快照的那一刻**算（``_tick_sys`` 是读数的唯一入口），不能在
-        绘制时惰性算：两次读数之间不绘制是常态（窗口隐藏、值没变不 update），
-        惰性算会把中间那拍整个漏掉，滞回退化成"每次都从零开始"——92 降 91 会被
-        误判成首次越过 warn 线而画成黄，正好是滞回要防的事。
-
-        告警语义是**按 UI 读取拍**而不是按后台每份采样（R1 评审裁决）：后台采样
-        只留最新一份快照，GUI 1Hz 定时器来取——GUI 繁忙时后台连发两拍（92→91）
-        只会被读到 91。这是刻意的：**告警色跟随用户实际看到的读数**（没看到 92
-        就不该按 92 上色），与显示值永远一致；要"每份采样都推进"得在采样端维护
-        告警状态，那是另一条路，本版本不取。
-
-        折叠不影响这里：快照是 cpu/mem 共享的，被折段的读数照旧推进它的告警级
-        （哪怕这一段自己已经退订、显示退回 ``--``）——chip 告警点靠这条活着。
-        快照报 error（读数全 None）时跳过：无读数不褪色，保持上一拍。
-        """
-        if sample.state != island_segments.STATE_OK:
-            return
-        for metric_id in _SYS_METRIC_IDS:
-            value = (sample.cpu_percent if metric_id == island_segments.CPU
-                     else sample.mem_percent)
-            self._alert_severity[metric_id] = island_segments.alert_severity(
-                metric_id, value, self._alert_severity.get(metric_id, ""))
-
-    def _update_gpu_alert(self, sample) -> None:
-        """按新 GPU 快照推进 GPU 段的告警级（与设备槽共用同一张滞回表）。
-
-        GPU **没有声明阈值**（``island_segments.ALERT_THRESHOLDS`` 里没有它）：最忙
-        引擎 100% 是"有个引擎跑满了"，不是故障，给 CPU 那条线是伪精确——这里照走
-        同一条判定链，所以"没阈值恒无色"是判定链自己给的结论，不是这里的分支。
-        将来产品要数值告警，只需往阈值表登记 GPU，这里的账就自动跟上。
-
-        非 ``ok`` 拍不推进也不褪色（与 ``_update_alert_severity`` 同口径）：无读数
-        不等于"降到安全值"。error 态在**折叠**时由 ``island_layout._folded_alert``
-        按 crit 计——那是 chip 告警点的事，不在这里。
-        """
-        if sample.state != island_segments.STATE_OK:
-            return
-        self._alert_severity[island_segments.GPU] = island_segments.alert_severity(
-            island_segments.GPU, sample.percent,
-            self._alert_severity.get(island_segments.GPU, ""))
-
-    # ------------------------------------------------------------ 游戏帧率段
-    def _fps_metric_enabled(self) -> bool:
-        """帧率段的采样闸门（与 GPU 逐条同款）：在 ``island_metrics`` 里、没被折进 +N。"""
-        return (island_segments.FPS in self._metric_ids()
-                and island_segments.FPS not in self._folded_metrics)
-
-    def _fps_active(self) -> bool:
-        """帧率段的**有效**开关：还有这一段要采，且信息槽可见、不是停靠细条。
-
-        与 ``_sys_active`` 同口径（细条态内容一个像素都不画 = 全停采样）：帧率段独
-        占一整场 ETW 采集会话，比设备槽更该守"看不见就不采"。
-        """
-        if self._strip_hidden():
-            return False
-        return self._fps_metric_enabled() and bool(self._visible_parts()[2])
-
-    def _fps_target(self) -> tuple[str, str]:
-        """当前的目标配置 ``(跟随方式, 指定程序名)``——**进程级**键，直接读配置。
-
-        两个键都是全局设置（不在 ``PER_SLOT_SETTING_KEYS`` 里），子宠的
-        ``SlotRoutedConfig`` 也读主配置那份，所以多宠共用同一个目标；改了就即时
-        生效（``FpsMonitor.configure`` 换代重解析目标，旧代读数被代次闸门丢弃）。
-        """
-        return (str(self.config.get("game_fps_target_mode") or "foreground"),
-                str(self.config.get("game_fps_process") or ""))
-
-    def _sync_fps_slot(self) -> None:
-        """按配置与可见性驱动帧率段（幂等）。
-
-        与 ``_sync_sys_slot`` 的三条纪律逐条对齐：① 段不在列表里 / 被折 / 细条 /
-        信息槽关 → 退订收口（看不见的段不该继续烧 ETW）；② 岛不可见只是停线程、
-        保留订阅（隐藏→显示按同一路径恢复）；③ 恢复时先清旧值，且**只认新序列的
-        第一份新读数**（屏障在 ``FpsSlot`` 里）。
-
-        段自己的状态机全在 ``pet/island_fps.py``：这里既不管订阅计数，也不管"哪一
-        份快照该拒收"——多宠共用一个采集器，那些账必须集中在一处。
-        """
-        mode, process = self._fps_target()
-        self._fps.sync(enabled=self._fps_active(), visible=self.isVisible(),
-                       mode=mode, process=process)
-        if self.isVisible() and self._fps_active():
-            self._fps_timer.start()
-        else:
-            self._fps_timer.stop()
-
-    def _pause_fps_slot(self) -> None:
-        """隐藏即休眠：停读表与采集线程，**保留订阅**（显示回来幂等恢复）。"""
-        self._fps_timer.stop()
-        self._fps.pause()
-
-    def _release_fps_slot(self) -> None:
-        """最终收口（窗口销毁 / 应用退出）：停表 + 停线程 + 退订（幂等、**不 join**）。
-
-        退订按岛计：还有别的岛在看读数时，这一个岛的收口不会把采集链路带走。收口不在
-        GUI 线程上等采集进程退出（有界等待在采集线程自己那边），所以"关个岛/退出应用"
-        不会被 PresentMon 的会话收口吊住。
-        """
-        self._fps_timer.stop()
-        self._fps.release()
-
-    def _tick_fps(self) -> bool:
-        """读一次帧率快照（1Hz）；返回是否要重绘。
-
-        与 ``_tick_gpu_slot`` 同款，但"段增删"来自两处：采集器报 ``unsupported``
-        （内置采集程序不在）与平台闸门（非 Windows）——两者都由
-        ``island_fps.FpsSlot.unavailable_reason`` 说，所以这里只按它变没变决定要不
-        要重算几何。**读数本身永远不改宽**。
-        """
-        if not self._fps_active():
-            return False
-        result = self._fps.poll()
-        if result.occupying_changed:
-            self._update_size()
-        return result.changed
-
     # ------------------------------------------------------------ 第三方段（声明清单 + 运行期注册）
     def _make_extension_sampler(self, interval: float):
         """建第三方段采样器（**测试替换点**：替身不起线程、不 import 组件）。"""
@@ -1679,11 +1153,10 @@ class DynamicIsland(QWidget):
                     and getattr(declaration, "provider_present", False))
 
     def _extension_metric_ids(self) -> tuple[str, ...]:
-        """配置里有声明的第三方段 id（保序；内置段不在此列——它们各有自己的采样账）。"""
+        """配置里有声明的第三方段 id（保序）。"""
         return tuple(
             metric_id for metric_id in self._metric_ids()
-            if metric_id not in island_segments.BUILTIN_SEGMENT_IDS
-            and self._extension_declaration(metric_id) is not None)
+            if self._extension_declaration(metric_id) is not None)
 
     def _extension_enabled_ids(self) -> tuple[str, ...]:
         """要采的段：有可执行声明、且没被折进 +N（看不见的段不采样）。"""
@@ -1698,7 +1171,7 @@ class DynamicIsland(QWidget):
         return bool(self._extension_enabled_ids()) and bool(self._visible_parts()[2])
 
     def _sync_extension_slot(self) -> None:
-        """按配置启停第三方段采样（幂等；与设备槽逐条同款的生命周期纪律）。
+        """按配置启停第三方段采样（幂等）。
 
         订阅按段 id 计：段在配置里、有可执行声明、且没被折 → 订阅，否则退订；
         全撤 / 信息槽关闭 / 细条态 → 收口（**停线程、丢快照、清订阅账**，但**保留
@@ -1736,7 +1209,7 @@ class DynamicIsland(QWidget):
             self._ext_subscribed = set()
             self._ext_pending = set()
             self._ext_epoch = None
-            # 滞回记忆**不清**：全折后 chip 告警点只靠它亮（与设备槽同口径）。
+            # 滞回记忆**不清**：全折后 chip 告警点只靠它亮。
             return
         sampler = self._ext_sampler
         if sampler is None:
@@ -1806,8 +1279,8 @@ class DynamicIsland(QWidget):
         三处拒收，都是"不伪造读数"的机器化：① 采样器换代后的旧代结果；② 已退订
         段的迟到结果；③ 还没到第一份新样本的段（``_ext_pending``）按四态报 ``--``。
 
-        与设备槽的差别只有一处：第三方段**没有**共享快照，退订就等于没有读数，
-        所以被折段的读数不再推进（chip 告警点靠滞回记忆与故障保持亮着）。
+        第三方段没有共享快照，退订就等于没有读数，所以被折段的读数不再推进
+        （chip 告警点靠滞回记忆与故障保持亮着）。
         """
         sampler = self._ext_sampler
         if sampler is None or self._ext_epoch is None:
@@ -1859,7 +1332,7 @@ class DynamicIsland(QWidget):
         return True
 
     def _extension_segment(self, segment_id: str) -> _InfoSeg:
-        """第三方段的胶囊形态：``label + 定宽值盒 (+ 单位盒)``，与内置段同一条排版路径。
+        """第三方段的胶囊形态：``label + 定宽值盒 (+ 单位盒)``，走同一条排版路径。
 
         盒宽样本 = 组件声明的 ``max_text``（**读数永不进宽度键**：值只在盒内右对齐
         伸缩）；单位取声明值（拆分只用来把单位从数值那半剥掉），所以 ok ↔ 采样态
@@ -2283,72 +1756,44 @@ class DynamicIsland(QWidget):
 
     @staticmethod
     def _card_row_name(seg) -> str:
-        """段名：内置段查人话名字表，其余沿用胶囊的口径（label 或 id 前 6 字符）。"""
-        return _CARD_METRIC_NAMES.get(seg.seg_id) or seg.label or \
-            seg.seg_id[:island_segments.LABEL_MAX_CHARS]
+        """段名：优先组件声明的 label，其余沿用胶囊口径（id 前 6 字符）。"""
+        return seg.label or seg.seg_id[:island_segments.LABEL_MAX_CHARS]
 
     def _card_row_for_segment(self, seg, folded: tuple = ()) -> _CardMetricRow:
         """一个指标段 → 一行卡片数据。
 
-        "当前值合并串" = ``段文案 + 单位``：E4 把合并串拆成"数值盒 + 单位盒"供胶囊
-        排版，但格式化器的合并串仍是唯一真值（``split_value_unit`` 只在以单位结尾时
-        拆分，拼回来逐字相同）——卡片不再自己格式化一遍，免得两处漂移。
+        "当前值合并串" = ``段文案 + 单位``：合并串是格式化器的唯一真值
+        （``split_value_unit`` 只在以单位结尾时拆分，拼回来逐字相同）——卡片不再
+        自己格式化一遍，免得两处漂移。
 
-        GPU 的上下文比设备槽多几样（量纲是"最忙引擎"、来源口径是 PDH 计数器路径、
-        还有显卡名与引擎），它们**全部取自这一段的快照**：
-        ``sample.sampled_at``（不是 GUI 收到它的时刻、更不是 CPU 的时间）、
-        ``detail`` 里的 ``unit_full`` / ``source`` / ``detail`` / ``names_error``。
-        读数器是这些字符串的唯一来源，卡片不自己拼第二份。
+        第三方段（声明清单 / 运行期注册）在场时，卡片上下文全部来自组件自己的
+        声明 + 这一拍的快照：单位全称 / 来源口径 / 采样时刻（monotonic）。
         """
         ok = seg.state == island_segments.STATE_OK
         value = seg.text + (seg.unit if ok else "")
         value_sample = seg.box_text + (seg.unit if seg.unit else "")
         source = ""
         updated = ""
-        unit_full = _CARD_UNIT_FULL.get(seg.seg_id, "")
+        unit_full = ""
         hint = ""
-        # 第三方段（声明清单 / 运行期注册）在场时，卡片上下文全部来自组件自己的
-        # 声明 + 这一拍的快照：单位全称 / 来源口径 / 采样时刻（monotonic）。
         ext = self._extension_declaration(seg.seg_id)
+        sampled_at = None
         if ext is not None:
             ext_detail = str(getattr(ext, "detail", "") or "")
             source = str(getattr(ext, "source", "") or "")
-            unit_full = str(getattr(ext, "unit_full", "") or "") or unit_full
+            unit_full = str(getattr(ext, "unit_full", "") or "")
             sample = self._ext_samples.get(seg.seg_id)
             sampled_at = None if sample is None else getattr(sample, "sampled_at", None)
-        elif seg.seg_id == island_segments.NETWORK:
-            source = _CARD_SOURCE_NET
-            sampled_at = self._net_sample.sampled_at if self._net_sample is not None else None
-        elif seg.seg_id in _SYS_METRIC_IDS:
-            source = _CARD_SOURCE_SYS
-            sampled_at = self._sys_sample.sampled_at if self._sys_sample is not None else None
-        elif seg.seg_id == island_segments.GPU:
-            source = _CARD_SOURCE_SYS
-            sample = self._gpu_sample
-            sampled_at = None if sample is None else sample.sampled_at
-            unit_full = str(sample.detail.get("unit_full") or "") if sample is not None \
-                else gpu_monitor.UNIT_FULL
-        elif seg.seg_id == island_segments.FPS:
-            # 帧率行的上下文全部来自 `island_fps` 的快照与呈现口径（目标进程 / Present
-            # 来源 / 可选上屏帧率只在卡片说，胶囊上永远只有一个 4 位数字）。
-            source = _CARD_SOURCE_SYS
-            sampled_at = self._fps.sampled_at
-            unit_full = island_fps.unit_full(self._fps.sample)
-        else:
-            sampled_at = None
         note = ""
         if seg.state == island_segments.STATE_OK:
             updated = self._card_updated_text(sampled_at)
             if seg.seg_id in folded:
-                # 只折一部分时共享快照仍在顺带更新它（兄弟段还订阅着）——
-                # 值是活的要如实显示，但「已被胶囊折叠」这件事也必须标注
-                # （R1 评审修复：修复前这种行看起来与正常采样行毫无区别）。
+                # 只折一部分时同一条采样线程仍在顺带更新它——值是活的要如实显示，
+                # 但「已被胶囊折叠」这件事也必须标注。
                 updated = f"已折叠 · {updated}"
         elif seg.state == island_segments.STATE_SAMPLING:
             # 冷启动/刚恢复订阅的首轮：胶囊上是 ``--``，卡片在来源行注「采样中」
             # （k3 §6.3 的四态口径），不写成"不可用"——它不是不会来，是还没来。
-            # 例外：被胶囊折进 +N 的段根本没在采样（性能契约），卡片是唯一还看得见
-            # 它的地方，如实说"暂停"而不是拿"采样中"糊弄（采样闸门语义不动）。
             updated = ("已折叠 · 暂停采样" if seg.seg_id in folded else "采样中")
         elif seg.state == island_segments.STATE_ERROR:
             note = f"{_CARD_UNAVAILABLE_NOTE}：{self._card_sample_error_reason(seg.seg_id)}"
@@ -2357,66 +1802,20 @@ class DynamicIsland(QWidget):
             # 如实写原因，不冒充"未注册的段 id"。
             note = (f"{_CARD_UNAVAILABLE_NOTE}："
                     f"{self._card_sample_error_reason(seg.seg_id)}")
-        elif seg.seg_id == island_segments.FPS:
-            # 帧率段的 ``unknown`` 是"当前没有可采集的目标"（没开游戏 / 桌宠在前台 /
-            # 目标退出了），**不是**配置里写了个不存在的段 id：原因句直接进详情列
-            # （四态里只有它和 error 会走到这里，error 已经被上面那一支接走）。
-            note = self._fps.reason() or f"{_CARD_UNAVAILABLE_NOTE}：{_CARD_UNKNOWN_REASON}"
         else:
             # 未注册的段 id（配置残留）：胶囊按 ``--`` 降级段占位，卡片说清原因
             note = f"{_CARD_UNAVAILABLE_NOTE}：{_CARD_UNKNOWN_REASON}"
         if ext is not None:
-            # 第三方行的完整上下文（详情列放不下时从 tooltip / 无障碍描述读）：
-            # 组件自己声明的一句话补充 + 来源 + 单位全称 + 这一拍的时刻，全部来自
-            # 声明与快照，宿主不替它编第二份。
+            # 第三方行的完整上下文（详情列放不下时从 tooltip / 无障碍描述读）。
             hint = _card_hint_text(
                 unit_full, ext_detail, source, note,
                 f"采样于 {updated}" if seg.state == island_segments.STATE_OK else "")
-        elif seg.seg_id == island_segments.GPU:
-            hint = self._gpu_card_hint(seg, note=note, updated=updated)
-        elif seg.seg_id == island_segments.FPS:
-            hint = self._fps_card_hint(seg, note=note, updated=updated)
         return _CardMetricRow(
             seg_id=seg.seg_id, name=self._card_row_name(seg), value=value,
             value_sample=value_sample,
             unit_full=unit_full, source=source,
             updated=updated, state=seg.state, severity=seg.severity, note=note,
             hint=hint)
-
-    def _gpu_card_hint(self, seg, *, note: str, updated: str) -> str:
-        """GPU 行的完整上下文（详情列放不下时从 tooltip / 无障碍描述读）。
-
-        内容全部来自这一段的快照：量纲（最忙引擎而非总算力）、显卡名与引擎
-        （``adapter_label``：名字只从 DXGI 来，拿不到就如实显示真实 LUID）、
-        PDH 来源路径、名字枚举失败的原因（``names_error``，读数照常显示但原因不丢）、
-        这一拍的采样时刻。段名与值不重复进来（它们在行上已经可见）。
-        """
-        sample = self._gpu_sample
-        if sample is None:
-            # 还没有快照（采样中 / 只知道一个保持下来的故障原因）：能说的只有口径。
-            return _card_hint_text(gpu_monitor.UNIT_FULL,
-                                   note or gpu_monitor.SOURCE_TEXT)
-        detail = sample.detail if isinstance(sample.detail, dict) else {}
-        return _card_hint_text(
-            detail.get("unit_full") or gpu_monitor.UNIT_FULL,
-            detail.get("detail") or gpu_monitor.adapter_label(sample.adapter),
-            detail.get("names_error"),
-            detail.get("source") or gpu_monitor.SOURCE_TEXT,
-            note,
-            f"采样于 {updated}" if seg.state == island_segments.STATE_OK else "",
-        )
-
-    def _fps_card_hint(self, seg, *, note: str, updated: str) -> str:
-        """帧率行的完整上下文（详情列放不下时从 tooltip / 无障碍描述读）。
-
-        文案**不在岛侧拼**：口径全称 / 目标进程 / 目标选定方式 / 可选上屏帧率（另一
-        口径）/ 溢出说明 / 后端 stderr 原文 / Present 采集来源 / 采样时刻，全部由
-        ``island_fps.hint_parts`` 从这一段的快照给出——多宠共用一个采集器，口径与
-        拒收口径必须同源。段名与值不重复进来（行上已可见）。
-        """
-        return _card_hint_text(*self._fps.hint_parts(
-            reason=note or self._fps.reason(), updated=updated,
-            ok=seg.state == island_segments.STATE_OK))
 
     def _card_sample_error_reason(self, metric_id: str) -> str:
         """采样失败的原因：这一段的快照自带 ``error_reason``，没有就如实说"采样失败"。"""
@@ -2426,37 +1825,19 @@ class DynamicIsland(QWidget):
                 return reason
         if self._ext_error_hold.get(metric_id, "").strip():
             return self._ext_error_hold[metric_id].strip()
-        if island_segments.get_segment(metric_id) is not None \
-                or metric_id in self._ext_manifest:
+        if island_segments.get_segment(metric_id) is not None                 or metric_id in self._ext_manifest:
             # 第三方段：没有快照也没有保持的故障 = 采样器这一拍还没说话
             return "组件采样失败"
-        if metric_id == island_segments.FPS:
-            # 帧率段的原因在快照里（权限不足/异常退出的原文）或折叠前的保持表里；
-            # "折一下就没了"是静默吞故障，所以这条路径必须能读到它。
-            reason = self._fps.reason()
-            if reason:
-                return reason
-        if metric_id == island_segments.GPU and self._gpu_sample is not None:
-            reason = str(getattr(self._gpu_sample, "error_reason", "") or "").strip()
-            if reason:
-                return reason
-        elif metric_id in _SYS_METRIC_IDS and self._sys_sample is not None:
-            reason = str(getattr(self._sys_sample, "error_reason", "") or "").strip()
-            if reason:
-                return reason
-        for hold in (self._gpu_error_hold, self._sys_error_hold):
-            reason = hold.get(metric_id, "").strip()
-            if reason:
-                return reason
         return "采样失败"
 
     def _unavailable_row(self, metric_id: str, reason: str) -> _CardMetricRow:
         """已知但不可用的一段 → 卡片原因行（胶囊里它一个像素都不占）。"""
         note = f"{_CARD_UNAVAILABLE_NOTE}：{reason}"
+        declaration = self._ext_manifest.get(metric_id)
+        name = str(getattr(declaration, "label", "") or "") or             metric_id[:island_segments.LABEL_MAX_CHARS]
         return _CardMetricRow(
             seg_id=metric_id,
-            name=_CARD_METRIC_NAMES.get(metric_id)
-            or metric_id[:island_segments.LABEL_MAX_CHARS],
+            name=name,
             value=island_segments.UNKNOWN_TEXT,
             value_sample=island_segments.UNKNOWN_TEXT,
             state=island_segments.STATE_UNSUPPORTED,
@@ -2940,73 +2321,6 @@ class DynamicIsland(QWidget):
                         box_text=sample, state=island_segments.STATE_OK,
                         elide_px=elide_px)
 
-    def _network_segment(self) -> _InfoSeg:
-        """网络段：定宽槽串（``format_network_slot`` 的 5 列契约）直接进字段盒。
-
-        没有 label（↓↑ 是槽串自带的 glyph），采样还没出第一轮时按四态显示 ``--``。
-        盒宽**恒为声明样本**（「千兆满速 + 近秒级延迟」现实包络）：读数在盒内右对齐
-        伸缩，采样值永不进宽度键——R1 评审修复：``7947a18`` 曾让盒宽取 max(样本,
-        现文案)，结果采样值经 ``box_text`` 变相进键，临界预算下会形成「折叠→清样本
-        →恢复→再折叠」的订阅振荡；包络外读数（G 级速率/四位毫秒）改由字段盒右省略
-        护栏承接（``format_field_box`` 自带 warning），不破坏宽度不变量。
-        """
-        sample = self._net_sample
-        if sample is None:
-            text = island_segments.UNKNOWN_TEXT
-            state = island_segments.STATE_SAMPLING
-        else:
-            text = net_monitor.format_network_slot(
-                sample.down_bps, sample.up_bps, sample.latency_ms,
-                lost=sample.latency_lost)
-            state = island_segments.STATE_OK
-        return _InfoSeg(kind=island_layout.KIND_METRIC, seg_id=island_segments.NETWORK, label="",
-                        text=text, box_text=_NETWORK_BOX_SAMPLE, state=state)
-
-    def _device_segment(self, metric_id: str) -> _InfoSeg:
-        """CPU / 内存段：读数来自共享的 ``SysMonitor`` 快照（无快照 = sampling）。
-
-        有快照但该字段是 None（CPU 差分首样本）也算 sampling——"还没读数"与
-        "读数是 0"必须分得开（``--`` 不伪造 0）。刚被恢复（重新订阅）的段同样先报
-        sampling：见 ``_sys_pending``。
-
-        格式化器仍输出合并串（``38%``，卡片与其他消费方照用），这里用同一条
-        「值/单位分离」路径把它拆成"数值盒的 38 + 单位盒的 %"。**单位取声明值**
-        而不是拆分结果：拆分对兜底串 ``--`` 返回空单位，跟着读数走就会在采样态
-        与 ok 态之间差一个单位盒宽（状态切换跳宽）；声明值进宽度白名单键，
-        读数不进。
-
-        ``severity``（告警级）不在这里算，而是**读** ``self._alert_severity``——那一拍
-        的账在样本到达时（``_update_alert_severity``）就记好了。这样做有两个必要
-        的效果：滞回不会因为"两次读数之间没绘制"而漏拍；被折进 +N 的段退订后显示
-        退回 ``--``，但它的告警级照旧推进/保持，chip 告警点不会一闪即灭。
-        """
-        sample = self._sys_sample
-        if sample is None or metric_id in self._sys_pending:
-            if metric_id in self._sys_error_hold:
-                # 被折前最后一拍是采样故障（``_sys_error_hold``，见
-                # ``_sync_sys_slot`` 收口袋）：折叠不埋没故障——chip 告警点
-                # 与卡片原因行靠这条保持，直到恢复订阅/新快照到达。
-                state, value = island_segments.STATE_ERROR, None
-            else:
-                state, value = island_segments.STATE_SAMPLING, None
-        elif sample.state != island_segments.STATE_OK:
-            state, value = island_segments.STATE_ERROR, None
-        else:
-            value = (sample.cpu_percent if metric_id == island_segments.CPU
-                     else sample.mem_percent)
-            state = (island_segments.STATE_OK if value is not None
-                     else island_segments.STATE_SAMPLING)
-        formatter = (sys_monitor.format_cpu if metric_id == island_segments.CPU
-                     else sys_monitor.format_mem)
-        text, _unit = island_segments.split_value_unit(
-            self._state_text(state, formatter(value)), island_segments.PERCENT_UNIT)
-        return _InfoSeg(kind=island_layout.KIND_METRIC, seg_id=metric_id,
-                        label=_DEVICE_LABELS[metric_id],
-                        text=text,
-                        box_text=_DEVICE_VALUE_SAMPLE, state=state,
-                        unit=island_segments.PERCENT_UNIT,
-                        severity=self._alert_severity.get(metric_id, ""))
-
     @staticmethod
     def _unknown_segment(metric_id: str) -> _InfoSeg:
         """未实现的段 id（配置残留）：降级成 unknown 态 ``--`` 段，不崩不留洞。"""
@@ -3016,69 +2330,12 @@ class DynamicIsland(QWidget):
                         box_text=island_segments.UNKNOWN_TEXT,
                         state=island_segments.STATE_UNKNOWN)
 
-    def _gpu_segment(self) -> _InfoSeg:
-        """GPU 段：读数来自底座 GPU 那一本账（无快照 = sampling）。
-
-        与 ``_device_segment`` 逐条同款：只有 ``ok`` 才画数值，其余一律同宽 ``--``；
-        值/单位拆两盒、单位取声明值（读数不进宽度键）。**格式化的唯一出口**是
-        ``gpu_monitor.format_gpu``（读数器自己的口径：取整 + 无读数给 ``--``），
-        卡片读的是同一个段对象，所以胶囊与卡片不可能各格式化一遍。
-
-        ``text`` 里永远是裸百分比（如 ``"42"``），显卡名/引擎/量纲只进卡片详情——
-        胶囊上多一个字的设备名都会把邻居推歪（与网络段的 glyph 口径同一纪律）。
-        """
-        sample = self._gpu_sample
-        if sample is None:
-            if island_segments.GPU in self._gpu_error_hold:
-                # 被折前最后一拍是采样故障（``_gpu_error_hold``，见
-                # ``_sync_sys_slot`` 收口袋）：折叠不埋没故障。
-                state, percent = island_segments.STATE_ERROR, None
-            else:
-                state, percent = island_segments.STATE_SAMPLING, None
-        else:
-            state = sample.state
-            percent = sample.percent if state == island_segments.STATE_OK else None
-        text, _unit = island_segments.split_value_unit(
-            self._state_text(state, gpu_monitor.format_gpu(percent)),
-            island_segments.PERCENT_UNIT)
-        return _InfoSeg(kind=island_layout.KIND_METRIC, seg_id=island_segments.GPU,
-                        label=_GPU_LABEL, text=text,
-                        box_text=_GPU_VALUE_SAMPLE, state=state,
-                        unit=island_segments.PERCENT_UNIT,
-                        severity=self._alert_severity.get(island_segments.GPU, ""))
-
-    def _fps_segment(self) -> _InfoSeg:
-        """游戏帧率段：读数来自 ``pet/island_fps.py`` 的段状态机（无快照 = sampling）。
-
-        与 GPU 逐条同款，但**段对象与四态判定都不在这里**：``FpsSlot.segment`` 是唯一
-        出口（它同时管"格式化出口唯一"与"盒宽样本恒为 4 位"）。这里只做转发，岛侧不
-        重新解释读数——多宠共用一个采集器，口径必须集中在一处。
-
-        段里没有 ``unit``：帧率的单位就是段标签 FPS 本身，多画一个单位盒只会白占
-        ``_unit_box_width`` 那一档宽度（同网络段不画单位的口径）。
-        """
-        return self._fps.segment()
-
-    def _gpu_unavailable_reason(self) -> str:
-        """GPU 当前**不可用**的原因（``""`` = 可用）。
-
-        只有读数器明确报 ``unsupported``（如平台没有 PDH）才算"这台机器没有这个
-        能力"——那一段按既有 E5 机制**不占位**、卡片留一行原因。``sampling`` /
-        ``unknown`` / ``error`` 都不是"没有能力"：段照占位（``--``）并在卡片里说
-        明这一拍为什么没有读数，把"当前没实例"说成"没 GPU"才是谎话。
-        """
-        sample = self._gpu_sample
-        if sample is None or sample.state != island_segments.STATE_UNSUPPORTED:
-            return ""
-        return (str(getattr(sample, "error_reason", "") or "").strip()
-                or "GPU 采集在当前平台不可用")
-
     def _unavailable_segments(self) -> dict[str, str]:
-        """**已知但当前不可用**的段 id → 原因（P2 Slice E5 的机制 + GPU 的动态判定）。
+        """**已知但当前不可用**的段 id → 原因（P2 Slice E5 的机制）。
 
         两个来源：① 宿主填写的能力表 ``_unavailable_reasons``（新能力占位往那里塞
-        条目即可）；② GPU 的当刻读数（见 :meth:`_gpu_unavailable_reason`）——它是
-        **运行期**能力，不能写死成静态条目。
+        条目即可）；② 第三方组件**暂缺**（清单声明了、provider 文件不在）——保留
+        用户偏好、不执行。
 
         口径是**已知 id 才走这条**：这类段胶囊里连占位都不画（不是 ``--``，是
         "不存在"），只在卡片 B 区留一行「该指标不可用 + 原因」。未知 id 依旧降级成
@@ -3087,25 +2344,9 @@ class DynamicIsland(QWidget):
         known = self._metric_ids()   # 提在推导式外：表里每多一项就少读一次配置
         reasons = {key: str(value) for key, value in self._unavailable_reasons.items()
                    if key in known}
-        if island_segments.GPU in known:
-            reason = self._gpu_unavailable_reason()
-            if reason:
-                reasons[island_segments.GPU] = reason
-        if island_segments.FPS in known:
-            # 帧率的"没有这个能力"有两处来源（平台闸门 / 内置采集程序不在），都在
-            # ``island_fps`` 里判完给一句话——岛侧不重判，免得两处口径漂移。
-            reason = self._fps.unavailable_reason()
-            if reason:
-                reasons[island_segments.FPS] = reason
-        if island_segments.FPS in known:
-            reason = self._fps.unavailable_reason()
-            if reason:
-                reasons[island_segments.FPS] = reason
-        # 第三方组件**暂缺**（清单声明了、provider 文件不在）：保留用户偏好、不执行
-        # ——胶囊连占位都不画（它不是段列表成员），卡片写清"哪一份文件不在"。
         # 判据取岛自己缓存的那份清单（不在这里重新扫目录：本方法是绘制路径上的）。
         for metric_id in known:
-            if metric_id in island_segments.BUILTIN_SEGMENT_IDS or metric_id in reasons:
+            if metric_id in reasons:
                 continue
             declaration = self._ext_manifest.get(metric_id)
             if declaration is not None and not getattr(declaration, "provider_present", True):
@@ -3116,7 +2357,7 @@ class DynamicIsland(QWidget):
         """把"这一帧要画的信息"组合成段列表（数据，不是绘制串）。
 
         首段恒为主信息段（信息槽内容由 ``info_mode`` 决定），其后按
-        ``island_metrics`` 的列表序追加指标段。信息槽整体关掉时返回空列表——
+        ``island_metrics`` 的列表序追加第三方组件段。信息槽整体关掉时返回空列表——
         "没有段"与"首段不是 primary"是两件事。
 
         **已知但不可用的段（``_unavailable_segments``）不在这里**：它进不了段列表，
@@ -3133,18 +2374,9 @@ class DynamicIsland(QWidget):
         for metric_id in self._metric_ids():
             if metric_id in unavailable:
                 continue
-            if metric_id == island_segments.NETWORK:
-                segments.append(self._network_segment())
-            elif metric_id == island_segments.GPU:
-                segments.append(self._gpu_segment())
-            elif metric_id == island_segments.FPS:
-                segments.append(self._fps_segment())
-            elif metric_id in _DEVICE_LABELS:
-                segments.append(self._device_segment(metric_id))
-            elif self._extension_declaration(metric_id) is not None:
+            if self._extension_declaration(metric_id) is not None:
                 # 第三方段（声明清单里的组件，或本进程 ``register_segment`` 注册过的段）：
-                # 与内置段走同一条段列表/排版/折叠路径——"注册即可上岛"在**配置准入**
-                # 之后成立（准入由声明清单决定，见 config._clean_island_metrics）。
+                # "注册即可上岛"在**配置准入**之后成立（准入由声明清单决定）。
                 segments.append(self._extension_segment(metric_id))
             else:
                 segments.append(self._unknown_segment(metric_id))
@@ -3308,8 +2540,7 @@ class DynamicIsland(QWidget):
         度量用 13px 那一层（数值盒的字号，段盒的主体），与 ``SegmentDeclaration.width_px``
         的公式一致（label + 4 + max_text + 1 + unit）。
         """
-        extension_ids = [seg.seg_id for seg in tuple(segments)[1:]
-                         if seg.seg_id not in island_segments.BUILTIN_SEGMENT_IDS]
+        extension_ids = [seg.seg_id for seg in tuple(segments)[1:]]
         if not extension_ids:
             return ()
         value_fm = self._metrics_for("value")
@@ -3339,11 +2570,10 @@ class DynamicIsland(QWidget):
         segments = self._compose_info_segments()
         lead = _CONTENT_PAD_PX + ((_ICON_PX + _ICON_GAP_PX) if icon else 0.0)
         trail = _CONTENT_PAD_PX + ((_STATUS_GAP_PX + _STATUS_DOT_PX) if status else 0.0)
-        # 首批折叠候选 = 声明盒宽 >120px 的**第三方**段（登记在案的那几个）：
+        # 首批折叠候选 = 声明盒宽 >120px 的第三方段（登记在案的那几个）：
         # 判决走 ``island_segments.judge_oversize``（与 ``oversize_segment_ids``
         # 同一份实现 + 同一份"按字体只告警一次"的去重），所以超宽段先被折，哪怕它
-        # 不在列表尾部。内置段不在候选里——它们的盒宽是产品自己的模板，不受第三方
-        # 120px 规则约束（改了会连带改动内置段的既有折叠次序）。
+        # 不在列表尾部。
         fold_first = self._oversize_extension_ids(segments)
         return island_layout.plan_info_row(
             segments,
@@ -3441,27 +2671,23 @@ class DynamicIsland(QWidget):
     def _sync_fold_sampling(self, plan) -> None:
         """折叠态变化 → 采样订阅跟着走（被折进 +N 的段撤销订阅）。
 
-        性能契约而不是视觉细节：看不见的段不该继续烧 psutil/探测包（见设计稿
-        §3.2 的"采样联动"）。展开时按既有 ``_sync_*_slot`` 路径重新订阅——
-        网络段是整条采样器重建、设备槽按 id 重新订阅且首轮报 sampling（不拿折叠
-        前的读数假装"它一直在采"），两处都在 ``_sync_*_slot`` 里收口。
+        性能契约而不是视觉细节：看不见的段不该继续采样（见设计稿 §3.2 的"采样联动"）。
+        展开时按既有 ``_sync_extension_slot`` 路径重新订阅——首轮按四态报 ``--``，
+        不拿折叠前的读数假装"它一直在采"。
         """
         folded = frozenset(plan.folded)
         if folded == self._folded_metrics:
             return
         self._folded_metrics = folded
-        self._sync_network_slot()
-        self._sync_sys_slot()
         self._sync_extension_slot()
-        self._sync_fps_slot()
 
     def _sync_content_sampling(self) -> None:
         """停靠细条态变化 → 采样订阅跟着走（细条态内容全不画 = 全停采样）。
 
         P2 Slice E6（P1 D2 的越界发现转正）。退订口径与折叠态**完全一致**
-        （``_sync_*_slot`` 的收口分支：网络段整条 close、设备槽按 id unsubscribe，
-        0 订阅零 syscall）；出细条按同一条路径恢复订阅，首轮按四态报 ``--``——
-        细条期间的陈旧读数不许被端出来假装"它一直在采"。
+        （``_sync_extension_slot`` 的收口分支：0 订阅零 syscall）；出细条按同一条
+        路径恢复订阅，首轮按四态报 ``--``——细条期间的陈旧读数不许被端出来假装
+        "它一直在采"。
 
         调用点 = **所有会翻 ``_mode`` / ``_hover_peek`` 的地方**（两处标志一变，
         细条态就可能翻转）：``_apply_position``（构造与设置保存到停靠边）、
@@ -3475,10 +2701,7 @@ class DynamicIsland(QWidget):
         if hidden == self._strip_sampling_off:
             return
         self._strip_sampling_off = hidden
-        self._sync_network_slot()
-        self._sync_sys_slot()
         self._sync_extension_slot()
-        self._sync_fps_slot()
 
     def _rest_size(self) -> QSize:
         """静止尺寸：收起 = 胶囊自然宽；展开 = 卡片宽 × (胶囊高 + 卡片高)。
@@ -4411,12 +3634,9 @@ class DynamicIsland(QWidget):
         # 光标旗帜随隐藏复位（A1 第二票 R3）：隐藏期间光标真实位置不可知，
         # 不复位的话显示后 expand_card 会拿陈旧 True 误判「鼠标在岛内」不起 15s 表
         self._cursor_inside = False
-        # 网络槽/设备槽同样休眠：采样线程与读取定时器一起停（探测在途最多 1s，
-        # 不 join；订阅保留，显示后 _sync_*_slot 幂等恢复）
-        self._pause_network_slot()
-        self._pause_sys_slot()
+        # 第三方段同样休眠：采样线程与读取定时器一起停（订阅保留，显示后
+        # _sync_extension_slot 幂等恢复）
         self._pause_extension_slot()
-        self._pause_fps_slot()
 
     def changeEvent(self, event) -> None:  # noqa: N802
         """应用字体/DPI 变化：丢掉按字号层缓存的字体与度量（下次取值重建）。
@@ -4445,39 +3665,15 @@ class DynamicIsland(QWidget):
         self._content_cache_key = None
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        """窗口销毁：两条采样器主动收口（ops5.5 评审 M1）。
-
-        线程是 daemon、进程退时不阻塞，但 ``close()`` 是设计好的收口路径
-        （``sys_monitor.close`` 有界 join、``net_monitor.close`` 非阻塞停），
-        只在配置变更分支被调到的话，窗口销毁这条路就永远走不到——补上，
-        与 ``pet/window.py`` 退出收口径一致。幂等：两处都判 None。
-        注意 ``closeEvent`` 不发 ``stop()`` 只发 ``close()``：线程收到停止事件
-        后自行退出（实测 ~3ms），daemon 也不阻塞进程退出——这里兑现的是
-        「发出停止 + 订阅清理」，不是「返回前已 join」。
-        """
-        if self._net_monitor is not None:
-            self._net_monitor.close()
-            self._net_monitor = None
-        if self._sys_monitor is not None:
-            # 订阅账本先清零再收口：``close()`` 只负责停线程，退订是宿主的事——
-            # 窗口要没了，订阅不该留在底座上（设备槽与 GPU 两本账一起清）。
-            self._unsubscribe_sys()
-            self._sys_monitor.close()
-            self._sys_monitor = None
+        """窗口销毁：第三方段采样器主动收口（订���清零 + 停线程，不阻塞退出）。"""
         if self._ext_sampler is not None:
-            # 第三方段同样：订阅清零 + 收口（采样线程是 daemon，不阻塞进程退出）
             self._unsubscribe_extensions()
             self._ext_sampler.close()
             self._ext_sampler = None
-        # 第三方段的表也要停：窗口关了就没有"下一次读快照"，留着只是一条空转的定时器
-        # （``close()`` 只负责停线程与退订，停表是宿主的事，与 hideEvent 同口径）。
+        # 窗口关了就没有"下一次读快照"，留着只是一条空转的定时器。
         self._ext_timer.stop()
-        # 帧率段：停表 + 退订 + 丢这一岛对共享采集器的引用（**不 join**：收口的
-        # 有界等待在采集线程自己那边，GUI 线程上等它就是"关个岛卡三秒"）。还有别的
-        # 岛在看读数时，这一岛的销毁不会把采集链路带走（宿主按岛计数）。
         from .focus_mode import shared_focus_session
         shared_focus_session().remove_listener(self.refresh_focus)
-        self._release_fps_slot()
         super().closeEvent(event)
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -4498,10 +3694,7 @@ class DynamicIsland(QWidget):
         self._schedule_next_balance_tier_refresh()
         # 隐藏期间可能装/卸了组件：显示回来重扫一次清单再恢复采样
         self._refresh_extension_declarations()
-        self._sync_network_slot()
-        self._sync_sys_slot()
         self._sync_extension_slot()
-        self._sync_fps_slot()
         # 隐藏期间可能已经进入工作态（hideEvent 停了环）：显示回来按当刻判据重判
         # ——"工作中"就该有声纳，上升沿早过去了不构成不播的理由（见 _sync_sonar_ring）
         self._sync_sonar_ring()

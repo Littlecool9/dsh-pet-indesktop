@@ -45,7 +45,7 @@ TAB1_ADVANCED_ROWS = (
     "music_player_soda", "music_player_detect",
 )
 TAB2_ROWS = (
-    "playback_speed", "animation_gap", "idle_low_fps", "no_move",
+    "playback_speed", "animation_gap", "no_move",
     "drag_physics", "drop_gravity", "throw_strength", "slingshot_enabled",
     "lock_position", "shift_drag", "edge_probe",
     "spawn_inherit_size", "spawn_scale", "clear_spawned_pets",

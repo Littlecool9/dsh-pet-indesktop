@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Phase 2：动画预热门控测试（预热由省电模式联动，见 app._create_library）。"""
+"""Phase 2：动画预热门控测试（库级预热总开关）。"""
 from __future__ import annotations
 
 from PySide6.QtWidgets import QApplication

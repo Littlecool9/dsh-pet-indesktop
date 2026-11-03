@@ -108,13 +108,11 @@ def test_settings_window_with_every_dependent_row_visible_shows_no_free_row_wind
     def tune(config: Config) -> None:
         config.set("dynamic_island", dict(config.get("dynamic_island"),
                                           enabled=True, show_info=True))
-        config.set("island_metrics", ["cpu", "mem", "network", "gpu", "fps"])
         config.set("modern_chat_background", "C:/no/such/background.png")
 
     dialog, watcher = _dialog(tmp_path, monkeypatch, tune)
     try:
-        assert dialog.island_network_check.isChecked()
-        assert dialog.game_fps_target_mode_select is not None
+        assert dialog.network_info_menu_check is not None
         assert dialog.ai_page.background_select.currentData() == "custom"
         _assert_no_free_window(dialog, watcher)
     finally:

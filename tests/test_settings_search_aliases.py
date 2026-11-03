@@ -167,57 +167,7 @@ def test_collision_group_title_query_switches_to_the_owning_tab(tmp_path, monkey
         dialog.close()
 
 
-def test_group_title_query_hits_the_row_that_has_no_matching_text(tmp_path, monkeypatch):
-    """搜「网络延迟检测」（只在组名里出现）：命中探测间隔行，并给依赖说明。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        matches = _matches(dialog, "网络延迟检测")
-        assert _keys(matches) == ["settingRow_network_probe_interval"]
-        row = _current_match(dialog)
-        assert row.objectName() == "settingRow_network_probe_interval"
-        # 依赖（网络指标关着）不满足：只给说明，不替用户改配置（第一刀既有语义）
-        assert dialog.search_status.text() == "1/1 · 延迟探测间隔（需先开启「灵动岛指标 · 网络」）"
-        assert dialog.island_network_check.isChecked() is False
-    finally:
-        dialog.close()
-
-
 # ------------------------------------------------------------------- ② 口语别名
-def test_alias_wangsu_lands_on_the_island_network_row(tmp_path, monkeypatch):
-    """别名「网速」：命中灵动岛网络指标行（原本 0 命中）。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        matches = _matches(dialog, "网速")
-        assert _keys(matches) == ["settingRow_island_network"]
-        row = _current_match(dialog)
-        assert row.objectName() == "settingRow_island_network"
-        assert dialog.sidebar.currentItem().text() == "桌面组件"
-        assert dialog.search_status.text().startswith("1/1 · 灵动岛指标 · 网络")
-
-        # 依赖满足后同一查询给出可见的行（别名命中的是真实可操作的行，不是死链接）
-        dialog.island_enabled_check.setChecked(True)
-        dialog.island_info_check.setChecked(True)
-        app.processEvents()
-        row = _search(dialog, "网速")
-        assert row.isVisibleTo(_current_page(dialog))
-    finally:
-        dialog.close()
-
-
-def test_alias_matches_inside_a_sentence_and_up_down_stream_terms(tmp_path, monkeypatch):
-    """别名是查询的子串即命中（「怎么看网速」）；「上行 / 下行」指同一行。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        assert _keys(_matches(dialog, "怎么看网速")) == ["settingRow_island_network"]
-        for query in ("上行", "下行"):
-            matches = _matches(dialog, query)
-            assert _keys(matches) == ["settingRow_island_network"], (
-                f"「{query}」必须落在网络指标行且只算一次"
-            )
-    finally:
-        dialog.close()
-
-
 def test_old_title_information_slot_content_reaches_the_content_selector(tmp_path, monkeypatch):
     """旧标题「信息槽内容」必须命中**内容选择器**那一行，不能只落在显示开关上。
 
@@ -366,11 +316,8 @@ def test_new_aliases_keep_the_existing_first_hits(tmp_path, monkeypatch):
         "密钥": "settingRow_api_key",
         "跨屏": "settingRow_cross_screen",
         "显示器": "settingRow_cross_screen",
-        "网速": "settingRow_island_network",
-        "上行": "settingRow_island_network",
         "开机启动": "settingRow_autostart",
         "壁纸": "settingRow_chat_background_file",
-        "帧数": "settingRow_island_fps",
         "信息槽": "settingRow_dynamic_island_info",
     }
     dialog = _dialog(tmp_path, monkeypatch)
@@ -437,8 +384,7 @@ def test_no_chat_build_skips_aliases_whose_rows_are_absent(tmp_path, monkeypatch
         assert _matches(dialog, "密钥") == []
         assert _matches(dialog, "壁纸") == []
         assert dialog.search_status.text() == "未找到匹配的设置"
-        # 与 AI 页无关的别名和组标题照常命中
-        assert _keys(_matches(dialog, "网速")) == ["settingRow_island_network"]
+        # 与 AI 页无关的组标题照常命中
         assert _keys(_matches(dialog, "启动项")) == [
             "settingRow_harness_autostart",
             "settingRow_harness_launch_target",
@@ -449,20 +395,15 @@ def test_no_chat_build_skips_aliases_whose_rows_are_absent(tmp_path, monkeypatch
 
 # ------------------------------------------------------------------ ③ 去重与计数
 def test_candidates_from_all_sources_are_deduped(tmp_path, monkeypatch):
-    """组标题命中与关键词命中重叠时同一行只算一次（状态行计数与候选数一致）。"""
+    """组标题/关键词/别名重叠时同一行只算一次（状态行计数与候选数一致）。"""
     dialog = _dialog(tmp_path, monkeypatch)
     try:
-        # 「延迟检测」同时命中：探测间隔行（hint 里就写着延迟检测）+ 网络组名 +
-        # 岛网络指标行（hint 里也有「延迟检测每次约 0.16 KB」）
-        matches = _matches(dialog, "延迟检测")
+        # 「质量倍率」同时命中别名与 hint 里的「质量加权倍率」：同一行只能算一次
+        matches = _matches(dialog, "质量倍率")
         keys = _keys(matches)
         assert len(set(keys)) == len(keys), f"候选行重复了：{keys}"
-        assert keys.count("settingRow_network_probe_interval") == 1
-        assert set(keys) == {"settingRow_island_network", "settingRow_network_probe_interval"}
-        assert dialog.search_status.text().startswith(f"1/{len(keys)} · ")
-
-        # 组标题单独命中（关键词 0 命中）时也只给一行
-        assert _keys(_matches(dialog, "网络延迟检测")) == ["settingRow_network_probe_interval"]
+        assert keys == ["settingRow_collision_mass_scale"]
+        assert dialog.search_status.text().startswith("1/1 · ")
     finally:
         dialog.close()
 
@@ -470,16 +411,13 @@ def test_candidates_from_all_sources_are_deduped(tmp_path, monkeypatch):
 def test_alias_hit_is_not_counted_twice_when_the_row_also_matches_by_keyword(
     tmp_path, monkeypatch
 ):
-    """别名目标行同时被关键词命中时，计数不重复（「下行」既是 alias 又是 hint 子串）。"""
+    """别名目标行同时被关键词命中时，计数不重复。"""
     dialog = _dialog(tmp_path, monkeypatch)
     try:
-        for query in ("下行", "行速", "速"):
-            matches = _matches(dialog, query)
-            keys = _keys(matches)
-            assert len(set(keys)) == len(keys), f"「{query}」候选行重复：{keys}"
-            if query == "下行":
-                assert keys == ["settingRow_island_network"]
-                assert dialog.search_status.text().startswith("1/1 · ")
+        matches = _matches(dialog, "质量倍率")
+        keys = _keys(matches)
+        assert keys == ["settingRow_collision_mass_scale"]
+        assert dialog.search_status.text().startswith("1/1 · ")
     finally:
         dialog.close()
 
@@ -518,10 +456,6 @@ def test_existing_keyword_searches_still_reach_their_rows(tmp_path, monkeypatch)
             assert row.objectName() == "settingRow_foobar_title_format"
             assert _section_of(dialog, "foobar_title_format").toggle.isChecked() is True
             assert row.isVisibleTo(_current_page(dialog))
-
-        row = _search(dialog, "探测间隔")
-        assert row.objectName() == "settingRow_network_probe_interval"
-        assert dialog._search_matches == [row], "该查询不该被组标题/别名放大"
 
         matches = _matches(dialog, "提示音")
         assert len(matches) == 5

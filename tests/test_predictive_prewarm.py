@@ -36,7 +36,7 @@ def app():
 
 
 # ============================================================================
-# 窗口级假库 / 假 clip（与 test_idle_low_fps / test_window_pause 同类，无 ffmpeg）
+# 窗口级假库 / 假 clip（与 test_window_pause 同类，无 ffmpeg）
 # ============================================================================
 class FakeClip(QObject):
     """与 WebMClip 接口兼容的假播放器：可配帧数与 fps，记录预热/启停。"""
@@ -502,9 +502,6 @@ class TestWindowPredictivePrewarm:
 
     def test_e_divisor_lead_timing_window_path(self, app, tmp_path, monkeypatch):
         win = _make_window(tmp_path)
-        # 挡住窗口层的节流同步（否则该路径会把 divisor 复位到 1），直测公式读取
-        monkeypatch.setattr(win, "_sync_movie_throttle", lambda reduced: None)
-        monkeypatch.setattr(win, "_idle_reduction_active", lambda: False)
         _set_random(monkeypatch, 0.5)
         self._switch_act(win, "写代码")
         win.lib.movie("写代码").decode_throttle_divisor = 2  # 模拟闲置降帧 divisor=2

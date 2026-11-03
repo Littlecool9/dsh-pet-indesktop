@@ -1332,7 +1332,7 @@ class MovieLibrary(QObject):
 
         - 交互让路（_await_interaction_clear）：拖拽/点击动画/右键菜单期间等待；
         - 隐藏暂停（_warm_paused / 代次）：pause_warm 换代后作废，不复活；
-        - 总开关（_prewarm_enabled）：省电模式关闭预热时不启动；
+        - 总开关（_prewarm_enabled）：库级预热开关关闭时不启动；
         - warm_first_frame 幂等：已有缓存直接返回，不重复拉起 ffmpeg。
 
         预测预热只是消除首播卡顿的缓存；作废/未命中时最坏退化为今天的行为

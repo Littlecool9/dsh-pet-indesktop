@@ -159,7 +159,7 @@ def test_v1_required_wording_is_present_where_it_belongs():
     """定稿要求的语义句必须真的落在对的文件里（换个说法就等于没改）。"""
     required = {
         "pet/settings_music.py": ("媒体控制插件", "通常留空即可"),
-        "pet/settings_network.py": ("检测目标是固定的境内服务（阿里云）", "延迟检测间隔"),
+        "pet/settings_network.py": ("只在打开弹窗时取一次", "不轮询"),
         "pet/settings_reset_defaults.py": ("各服务商的 API Key", "每个自定义服务商只保留"),
     }
     missing = []
@@ -187,18 +187,6 @@ def test_v1_rewritten_rows_carry_the_final_wording(tmp_path, monkeypatch):
             assert fmt.hint_label.text().startswith("通常留空即可。")
             assert "类似 %artist% - %title% 这样的格式" in fmt.hint_label.text()
 
-        interval = _row(dialog, "network_probe_interval").hint_label.text()
-        assert interval.startswith("延迟检测间隔（0.5–60 秒）。间隔越短反应越快、流量越多：")
-        assert "当前约 " in interval and "MB/天（随设置实时更新）" in interval
-        assert "检测目标是固定的境内服务（阿里云），不是你的访问网站。" in interval
-
-        slot = _row(dialog, "island_network").hint_label.text()
-        assert "速率监测不产生额外流量，延迟检测每次约 0.16 KB。" in slot
-        # 合并岛段化后：网络是独立指标段，不再与信息栏内容互相挤占（旧架构那句
-        # 「关闭后信息槽恢复显示…」随旧耦合一起作废）。
-        assert "信息栏内容另有其行，不受本开关影响" in slot
-        assert "网卡字节计数器" not in slot and "UDP" not in slot
-
         drop = _row(dialog, "drop_gravity").hint_label.text()
         assert drop.startswith("松开鼠标时如果宠物几乎没移动，它不再停在半空，而是自然落下、落地静止；")
         assert "贴地松手不会弹起。与「拖动物理」无关：关掉拖动物理后甩出惯性依然不生效。" in drop
@@ -210,23 +198,6 @@ def test_v1_rewritten_rows_carry_the_final_wording(tmp_path, monkeypatch):
             assert "也可以显式选择打开 web 界面或桌面端。" in target
         else:
             assert "本平台暂不支持自动拉起桌面端" in target
-    finally:
-        dialog.close()
-
-
-def test_v1_interval_hint_follows_the_spin_value(tmp_path, monkeypatch):
-    """动态日流量必须跟着真实间隔走（定稿里的 X.X MB/天不是写死的）。"""
-    dialog, _cfg = _dialog(tmp_path, monkeypatch)
-    try:
-        row = _row(dialog, "network_probe_interval")
-
-        def per_day():
-            return float(row.hint_label.text().split("当前约 ")[1].split(" MB/天")[0])
-
-        dialog.network_probe_interval_spin.setValue(1.0)
-        fast = per_day()
-        dialog.network_probe_interval_spin.setValue(30.0)
-        assert fast > per_day() > 0
     finally:
         dialog.close()
 
@@ -259,7 +230,6 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
             "music_player_kugou": music_title,
             "music_player_soda": music_title,
             "music_player_detect": music_title,
-            "network_probe_interval": "网络延迟检测（高级）",
         }
         for key, title in expected.items():
             section = _section_of(dialog, key)
@@ -280,7 +250,7 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
         # 常用开关一律留在主视线（未被误藏）。浏览器媒体会话开关只在 Windows 建行
         # （SMTC 是 Windows 专属能力），非 Windows 上没这一行可查。
         common = ["autostart", "music_sing", "music_lyric",
-                  "drag_physics", "collision_enabled", "island_network",
+                  "drag_physics", "collision_enabled",
                   "agent_sound_enabled"]
         if settings_music.browser_media_supported():
             common.append("music_browser_media")
@@ -366,40 +336,19 @@ def test_v2_general_domain_keeps_only_autostart_on_the_first_screen(tmp_path, mo
         dialog.close()
 
 
-def test_v2_network_interval_is_split_out_in_the_final_domain(tmp_path, monkeypatch):
-    """探测间隔在最终域单独成组，其余岛行不动；依赖未满足时不留空组/误导标题。"""
-    dialog, _cfg = _dialog(tmp_path, monkeypatch)
-    try:
-        interval_section = _section_of(dialog, "network_probe_interval")
-        assert _section_title(interval_section) == "网络延迟检测（高级）"
-        assert interval_section.advanced is True
-        assert [row.objectName() for row in interval_section.rows] == [
-            "settingRow_network_probe_interval"]
-        # 其余岛行仍在原来的「桌面胶囊（灵动岛）」卡里
-        assert _section_title(_section_of(dialog, "island_network")) == "桌面胶囊（灵动岛）"
-        assert _section_title(_section_of(dialog, "dynamic_island_enabled")) == "桌面胶囊（灵动岛）"
-        # 网络槽默认关着 → 间隔行被依赖隐藏，整组不该以空壳形式留在页面上
-        assert _row(dialog, "network_probe_interval").isHidden()
-        assert interval_section.isHidden(), "全行被依赖隐藏的高级组必须整组收起"
-    finally:
-        dialog.close()
-
-
 def test_v2_new_advanced_groups_fit_the_compact_content_width(tmp_path, monkeypatch):
-    """三个新高级组展开后在最小窗口（720×500 量级）里不越界、不裁切（GATES §3）。
+    """新高级组展开后在最小窗口（720×500 量级）里不越界、不裁切（GATES §3）。
 
     与既有 test_compact_agent_sound_controls_reflow_inside_their_setting_row 同法：
     量行在真实 scroll viewport 里的左右边界。
     """
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        dialog.island_network_check.setChecked(True)  # 网络组依赖满足才会显示
         dialog.resize(dialog.minimumSize())
         dialog.show()
         groups = {}
         for key, domain in (("harness_autostart", "常规"),
-                            ("music_player_detect", "桌宠"),
-                            ("network_probe_interval", "桌面组件")):
+                            ("music_player_detect", "桌宠")):
             section = _section_of(dialog, key)
             section.toggle.setChecked(True)
             groups[key] = _page(dialog, domain)[1]
@@ -437,10 +386,9 @@ def test_v1_long_hints_fit_their_labels_at_compact_width(tmp_path, monkeypatch):
     """
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        dialog.island_network_check.setChecked(True)  # 网络组的行依赖满足才参与布局
         dialog.resize(dialog.minimumSize())
         dialog.show()
-        keys = ["drop_gravity", "network_probe_interval", "harness_autostart", "harness_launch_target"]
+        keys = ["drop_gravity", "harness_autostart", "harness_launch_target"]
         if sys.platform == "win32":
             keys += ["foobar_lyrics", "foobar_title_format"]
         for key in keys:  # 折叠组先展开，否则子行的几何是陈旧值（量不出裁切）
@@ -555,32 +503,5 @@ def test_v4_search_expands_the_agent_box_multi_match(tmp_path, monkeypatch):
         second = _current_match(dialog)
         assert dialog.search_status.text().startswith("2/")
         assert dialog.agent_link_box.isAncestorOf(second)
-    finally:
-        dialog.close()
-
-
-def test_v4_search_reports_the_hidden_dependency_without_changing_config(tmp_path, monkeypatch):
-    """依赖不满足：不改配置、给可见的依赖说明；前置开关打开后同一查询能找到并展开。"""
-    dialog, cfg = _cfg_dialog(tmp_path, monkeypatch)
-    try:
-        assert cfg.get("island_network_enabled") is False
-        row = _search(dialog, "探测间隔")
-        assert row.objectName() == "settingRow_network_probe_interval"
-        page = _current_page(dialog)
-        assert dialog.sidebar.currentItem().text() == "桌面组件"
-        assert row.isVisibleTo(page) is False, "网络槽没开时这一行本就该隐藏"
-        assert dialog.search_status.text() == "1/1 · 延迟探测间隔（需先开启「灵动岛指标 · 网络」）"
-        # 依赖不满足绝不替用户改配置
-        assert cfg.get("island_network_enabled") is False
-        assert dialog.island_network_check.isChecked() is False
-        assert dialog._search_matches == [row]
-
-        dialog.island_network_check.setChecked(True)
-        app.processEvents()
-        row = _search(dialog, "探测间隔")
-        section = _section_of(dialog, "network_probe_interval")
-        assert section.isHidden() is False, "依赖满足后该组应重新出现"
-        assert section.toggle.isChecked() is True, "命中后必须自动展开"
-        assert row.isVisibleTo(page)
     finally:
         dialog.close()

@@ -115,7 +115,7 @@ def test_main_exit_codes_and_json(verifier, tmp_path, capsys):
 # ---------------------------------------------------------------- 构建接线
 #
 # 行为测试看不到"有没有接上"：门写得再对，没被构建脚本调用就什么也拦不住。
-# 这一组按源码文本断言三个平台脚本的接线与顺序（同 tests/test_presentmon_packaging.py
+# 这一组按源码文本断言三个平台脚本的接线与顺序
 # 的「构建接线」口径），以及文档面（打包文档 + 许可登记）。
 
 PS1 = REPO / "scripts" / "build_onedir.ps1"

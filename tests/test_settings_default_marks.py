@@ -60,8 +60,6 @@ NO_DEFAULT_ROWS = frozenset({
     "thinking_mode", "reasoning_effort",
     # 搜索 API Key 是凭据字段（优先系统钥匙串），没有可比默认值
     "web_search_key",
-    # 岛指标行是 island_metrics **列表**的成员，不是标量键
-    "island_network", "island_cpu", "island_mem", "island_gpu", "island_fps",
     # 台词编辑器的「上次打开的层」是 UI 记忆，不是偏好
     "dialogue_scope",
 })
@@ -406,12 +404,6 @@ def test_rows_without_config_default_show_no_mark_and_no_error(env):
     dialog, _cfg, _tmp = env
     registered = {_row_key(row) for row, _c, _d in dialog._default_mark_rows}
     assert registered & NO_DEFAULT_ROWS == frozenset()
-
-    # 列表成员行：勾上（island_metrics 默认是空列表）也不出标记
-    island = _row(dialog, "island_cpu")
-    island.control.setChecked(True)
-    app.processEvents()
-    assert island.modified_mark.isHidden()
 
     # 四类之外的控件（QDoubleSpinBox）同样不参与：改值不出标记、不抛异常
     opacity = _row(dialog, "dynamic_island_opacity")

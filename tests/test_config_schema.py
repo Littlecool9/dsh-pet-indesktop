@@ -27,7 +27,6 @@ import pytest
 
 from pet import config as config_mod
 from pet.config import Config
-from pet.island_segments import CPU, NETWORK
 
 # reload() 白名单键集合现状快照（与 pet/config.py reload() 的
 # "for key in (...)" 元组一致；任何增删必须同步更新本快照）。
@@ -79,8 +78,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "ffmpeg_recycle_minutes",
         "first_frame_cache_max_mb",
         "focus_mode",
-        "game_fps_process",
-        "game_fps_target_mode",
         "golden_spin_direct",
         "golden_spin_on_click",
         # 全局快捷键（进程级；空串 = 不绑）
@@ -89,10 +86,7 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "hotkey_screen_capture",
         "harness_autostart",
         "harness_launch_target",
-        "idle_low_fps_enabled",
-        "idle_low_fps_threshold",
         "island_metrics",
-        "island_network_enabled",
         "lock_position",
         "media_prewarm",
         "modern_chat_background",
@@ -110,7 +104,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "music_sing_enabled",
         "music_sing_grace_seconds",
         "network_info_menu_enabled",
-        "network_probe_interval_seconds",
         "no_move",
         "on_top",
         "pet_opacity",
@@ -183,14 +176,11 @@ SPECIAL_CASED_KEYS = frozenset({"version", "proactive_screen", "agent_link", "ch
 # 2026-09-22 加入点击台词朗读 / 台词本地语音预缓存 / 自言自语配图概率 3 键
 # （self_talk_speak_enabled、self_talk_voice_precache_enabled、self_talk_image_chance）。
 # 2026-10-07 加入音乐播放器来源 2 键（foobar_lyrics_enabled / foobar_title_format）。
-# 2026-10-07 深夜批次再加：网络 3
-# （island_network_enabled/network_probe_interval_seconds/network_info_menu_enabled）、
+# 2026-10-07 深夜批次再加：网络信息菜单 1（network_info_menu_enabled）、
 # 免打扰 2（quiet_minutes_default/quiet_also_on_fullscreen）、动画菜单 1
 # （anim_menu_stay_open）。
 # 后实测（2026-10-07 夜间整合后复测）：白名单字面量 139 + 特例 5 = 144。
 # 2026-10-07 P1 Slice C 加灵动岛指标 1（island_metrics，列表序=优先级），白名单 140。
-# 2026-10-11 加游戏帧率 2（game_fps_target_mode 枚举 / game_fps_process 纯 exe 名，
-# 都是**全局**键：岛与采集链路读主配置），白名单 142。
 # 2026-10-13 加语音报时合成后端 9 键（tts_backend / tts_fallback / mimo_model /
 # mimo_voice / mimo_style / sapi_voice / sapi_rate / doubao_speaker / doubao_pitch，
 # 随 provider 注册表一起进来），白名单 151。
@@ -329,112 +319,19 @@ def test_anim_menu_stay_open_defaults_to_closing_after_action(tmp_path):
     assert Config(base=tmp_path).data["anim_menu_stay_open"] is False
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("false", False), ("no", False), ("off", False),
-    ("true", True), ("yes", True), ("on", True),
-    # 非字符串布尔不参与解析（同族布尔键同规）：回落默认 False
-    (1, False), (0, False), (None, False), ("随便", False),
-])
-def test_dirty_anim_menu_stay_open_is_not_truthy_by_string(tmp_path, raw, expected):
-    """bool("false") is True——字符串布尔必须按字面语义归一。"""
-    cfg = _anim_menu_config(tmp_path / f"raw-{raw}", raw)
-    assert cfg.data["anim_menu_stay_open"] is expected
-
-
-def test_set_and_reload_keep_anim_menu_stay_open(tmp_path):
-    """set() 路径归一，且落盘 → 重启加载不被默认值冲掉。"""
-    cfg = Config(base=tmp_path)
-    cfg.set("anim_menu_stay_open", "on")
-    assert cfg.data["anim_menu_stay_open"] is True
-    assert cfg.save() is True
-    assert Config(base=tmp_path).data["anim_menu_stay_open"] is True
-
-
-
-# ------------------------------------------- 网络信息 / 灵动岛指标（#172 + Slice C）
-def _dirty_network_config(tmp_path, raw: dict) -> Config:
-    """把网络信息诸键写成脏值落盘，再走真实加载路径（reload + 归一化）。"""
-    cfg_dir = tmp_path / config_mod.APP_DIR_NAME
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"version": 4}
-    payload.update(raw)
-    (cfg_dir / "config.json").write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return Config(base=tmp_path)
-
-
-def test_network_keys_defaults_are_off_probe_and_on_menu(tmp_path):
-    """默认值即产品契约：延迟探测默认关（要发包）、菜单入口默认开。
-
-    指标列表（``island_metrics``，P1 Slice C）默认空：附加指标一个都不加。
-    """
-    cfg = Config(base=tmp_path)
-    assert cfg.data["island_metrics"] == []
-    assert cfg.data["island_network_enabled"] is False
-    assert cfg.data["network_probe_interval_seconds"] == 1.0
-    assert cfg.data["network_info_menu_enabled"] is True
-
-
-@pytest.mark.parametrize("raw,expected_network,expected_menu", [
-    ("false", False, False),
-    ("no", False, False),
-    ("true", True, True),
-    ("on", True, True),
-    # 整数不参与布尔解析（同族布尔键同规）：回落到各自默认值
-    (0, False, True),
-    (1, False, True),
-])
-def test_dirty_network_boolean_keys_are_not_truthy_by_string(
-        tmp_path, raw, expected_network, expected_menu):
-    """bool("false") is True —— 字符串布尔必须按字面语义归一（同族键同规）。
-
-    旧键 ``island_network_enabled`` 自 P1 Slice C 起只做**单向迁移**，所以这里
-    断言迁移后的真值落点：判真 → ``island_metrics`` 含 network；判假 → 列表不动；
-    无论哪种，旧键归一化后恒为 False（不再是第二写入来源）。
-    """
-    cfg = _dirty_network_config(tmp_path / f"island-{raw}", {"island_network_enabled": raw})
-    assert cfg.data["island_network_enabled"] is False
-    assert (NETWORK in cfg.data["island_metrics"]) is expected_network
-    cfg2 = _dirty_network_config(tmp_path / f"menu-{raw}", {"network_info_menu_enabled": raw})
-    assert cfg2.data["network_info_menu_enabled"] is expected_menu
-
-
-@pytest.mark.parametrize("raw,expected", [
-    ("abc", 1.0),
-    (None, 1.0),
-    (0.01, 0.5),
-    (0.5, 0.5),
-    (2.5, 2.5),
-    (9999, 60.0),
-])
-def test_dirty_probe_interval_is_clamped(tmp_path, raw, expected):
-    """探测间隔夹到 [0.5, 60]：脏值不得让采样线程以 0.01 秒的节奏发包。"""
-    cfg = _dirty_network_config(tmp_path / str(raw), {"network_probe_interval_seconds": raw})
-    assert cfg.data["network_probe_interval_seconds"] == pytest.approx(expected)
-
-
 def test_set_normalizes_network_keys(tmp_path):
-    """set() 路径同样归一（设置页写回的值不得绕过钳制）。"""
+    """set() 路径同样归一（设置页写回的值不得绕过布尔归一）。"""
     cfg = Config(base=tmp_path)
-    cfg.set("island_network_enabled", "false")
-    assert cfg.data["island_network_enabled"] is False
-    assert cfg.data["island_metrics"] == []
-    cfg.set("network_probe_interval_seconds", 0.01)
-    assert cfg.data["network_probe_interval_seconds"] == pytest.approx(0.5)
     cfg.set("network_info_menu_enabled", "off")
     assert cfg.data["network_info_menu_enabled"] is False
 
 
-def test_network_keys_survive_reload_round_trip(tmp_path):
-    """落盘 → 重启加载：指标列表与另两键都是普通白名单键，不得被默认值冲掉。"""
+def test_network_info_menu_key_survives_reload_round_trip(tmp_path):
+    """落盘 → 重启加载：网络信息菜单键是普通白名单键，不得被默认值冲掉。"""
     cfg = Config(base=tmp_path)
-    cfg.set("island_metrics", [NETWORK, CPU])
-    cfg.set("network_probe_interval_seconds", 3.0)
     cfg.set("network_info_menu_enabled", False)
     assert cfg.save() is True
     restored = Config(base=tmp_path)
-    assert restored.data["island_metrics"] == [NETWORK, CPU]
-    assert restored.data["network_probe_interval_seconds"] == pytest.approx(3.0)
     assert restored.data["network_info_menu_enabled"] is False
 
 

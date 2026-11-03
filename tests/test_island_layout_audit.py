@@ -23,7 +23,6 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import tempfile
 
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QPainter, qAlpha
@@ -31,7 +30,6 @@ from PySide6.QtWidgets import QApplication
 
 import pet.dynamic_island as island_mod
 from pet import island_layout as layout
-from pet.config import Config
 from pet.dynamic_island import _CAPSULE_INSET, DynamicIsland
 
 app = QApplication.instance() or QApplication([])
@@ -48,51 +46,35 @@ class _FakeScreen:
         return self._rect
 
 
-class _StubMonitor:
-    """审计测试用的空采样器：有生命周期接口，永不出样本（段走四态兜底）。"""
+class _StubConfig:
+    """最小配置替身：允许把未实现/未声明的 id 塞进 ``island_metrics``。"""
 
-    def __init__(self, interval):
-        self.interval = interval
-        self.sample = None
-        self.subs = set()
+    def __init__(self, **data):
+        self._data = {"dynamic_island": {}}
+        self._data.update(data)
 
-    def subscribe(self, key):
-        self.subs.add(key)
+    def get(self, key, default=None):
+        return self._data.get(key, default)
 
-    def unsubscribe(self, key):
-        self.subs.discard(key)
+    def set(self, key, value) -> None:
+        self._data[key] = value
 
-    def set_interval(self, interval):
-        self.interval = interval
+    def save(self) -> bool:
+        return True
 
-    def snapshot(self):
-        return self.sample
-
-    def start(self):
-        pass
-
-    def stop(self, wait=False):
-        pass
-
-    def close(self):
-        pass
+    def character_alias(self, character_id: str) -> str:
+        return ""
 
 
 def _make_island(monkeypatch, *, metrics=(), screen_width=1200, **overrides):
-    def factory(_self, interval):
-        return _StubMonitor(interval)
-
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor", factory)
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor", factory)
     screen = _FakeScreen(screen_width)
     monkeypatch.setattr(island_mod.DynamicIsland, "_current_screen", lambda self: screen)
-    cfg = Config(base=tempfile.mkdtemp())
+    cfg = _StubConfig(island_metrics=list(metrics))
     data = {"enabled": True, "show_icon": True, "show_name": True, "show_info": True,
             "info_mode": "time", "custom_text": "", "show_status": True,
             "style": "dark", "x": 400, "y": 300}
     data.update(overrides)
     cfg.set("dynamic_island", data)
-    cfg.set("island_metrics", list(metrics))
     return DynamicIsland(cfg), screen
 
 
@@ -344,21 +326,9 @@ def test_chip_text_optically_centered_in_box(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------- 7. 统一基线
 def test_all_text_layers_share_one_baseline(monkeypatch, tmp_path):
-    """主信息/数值/单位共用一条基线：墨底行差 ≤1px（E7 复核 E4 后仍成立）。
-
-    喂 ok 快照让单位盒真正画出（6.1sol 建议 6：修复前设备段停在 sampling，
-    单位根本不上墨，用例名不副实），并单独探测单位盒墨底。
-    """
-    import time as _time
-
-    from pet import sys_monitor as sm
-
-    island, _screen = _make_island(monkeypatch, metrics=["cpu", "mem"])
+    """主信息/数值段共用一条基线：墨底行差 ≤1px（E7 复核 E4 后仍成立）。"""
+    island, _screen = _make_island(monkeypatch, metrics=["foo", "bar"])
     try:
-        island._sys_pending = set()
-        island._sys_monitor.sample = sm.SysSample(
-            cpu_percent=42.0, mem_percent=61.0, sampled_at=_time.monotonic())
-        island._tick_sys()
         img = _fresh_content(island)
         segs = island._compose_info_segments()
         pl = layout.place_info_segments(
@@ -367,25 +337,15 @@ def test_all_text_layers_share_one_baseline(monkeypatch, tmp_path):
             value_fm=island._metrics_for("value"),
             label_fm=island._metrics_for("label"))
         bottoms = []
-        unit_bottoms = []
         for p in pl:
             if p.seg.kind == layout.KIND_CHIP:
                 continue
             bounds = _ink_bounds(img, int(p.box_x), int(p.box_x + p.box_w))
             if bounds is not None:
                 bottoms.append(bounds[3])
-            if p.unit_text:
-                ub = _ink_bounds(img, int(p.unit_x), int(p.unit_x + p.unit_w))
-                assert ub is not None, f"{p.seg.seg_id} 声明了单位但单位盒无墨"
-                unit_bottoms.append(ub[3])
         assert len(bottoms) >= 2, f"至少主信息 + 一个指标段可比（{bottoms}）"
         assert max(bottoms) - min(bottoms) <= 1, (
             f"各层基线不一致：墨底行 {bottoms}")
-        assert unit_bottoms, "ok 快照下 cpu/mem 的单位盒必须有墨"
-        assert max(unit_bottoms) - min(unit_bottoms) <= 1, (
-            f"单位盒基线不一致：墨底行 {unit_bottoms}")
-        assert max(abs(u - b) for u in unit_bottoms for b in bottoms) <= 1, (
-            f"单位盒与数值盒不共底：单位 {unit_bottoms} vs 数值 {bottoms}")
     finally:
         island.close()
 
