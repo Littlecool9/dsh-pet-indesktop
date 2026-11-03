@@ -50,14 +50,13 @@ def test_save_redacts_api_keys_from_disk(tmp_path):
     assert config.chat_settings().active_config.vision_api_key == "vk-plaintext"
 
 
-def test_balance_tier_and_music_settings_persist_through_reload(tmp_path):
-    """新增设置项必须能从磁盘重载，否则重启后峰谷文案/颜色/音乐开关会丢。"""
+def test_balance_tier_settings_persist_through_reload(tmp_path):
+    """新增设置项必须能从磁盘重载，否则重启后峰谷文案/颜色会丢。"""
     config = Config(base=tmp_path)
     config.set("balance_tier_labels_mode", "liangwen")
     config.set("balance_tier_label_peak", "梁文峰")
     config.set("balance_tier_label_idle", "梁文谷")
     config.set("balance_tier_color_enabled", False)
-    config.set("music_sing_enabled", True)
     config.save()
 
     reloaded = Config(base=tmp_path)
@@ -65,7 +64,6 @@ def test_balance_tier_and_music_settings_persist_through_reload(tmp_path):
     assert reloaded.get("balance_tier_label_peak") == "梁文峰"
     assert reloaded.get("balance_tier_label_idle") == "梁文谷"
     assert reloaded.get("balance_tier_color_enabled") is False
-    assert reloaded.get("music_sing_enabled") is True
 
 
 def test_save_returns_false_on_write_failure(tmp_path):
@@ -151,18 +149,18 @@ def test_save_retries_transient_share_conflict(tmp_path, monkeypatch):
     瞬时共享冲突（MSVCRT ``_wopen`` 共享模式不含 FILE_SHARE_DELETE）必须退避
     重试后成功，而不是让「保存并退出」弹"配置未能写入磁盘"。
 
-    用**全局**键（歌词提前量）当载荷：``rx`` 这类每宠键／位置键的真值在
+    用**全局**键（消费统计开关）当载荷：``rx`` 这类每宠键／位置键的真值在
     ``config-slot-0.json``，全局整表写会按归属表把它过滤掉，这里断的就是
     ``Config.save`` 自己的写盘重试。
     """
     config = Config(base=tmp_path)
-    config.set("music_lyric_lead_seconds", 0.25)
+    config.set("agent_cost_enabled", True)
     fake, seen = _flaky_replace(config.path, 2)
     monkeypatch.setattr(os, "replace", fake)
 
     assert config.save() is True
     assert seen["n"] == 2                     # 前两次冲突都重试掉了
-    assert json.loads(config.path.read_text(encoding="utf-8"))["music_lyric_lead_seconds"] == 0.25
+    assert json.loads(config.path.read_text(encoding="utf-8"))["agent_cost_enabled"] is True
     assert list(config.dir.glob("*.tmp")) == []
 
 

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import catalog, music_players
+from . import catalog
 from .focus_mode import normalize_focus_config
 
 
@@ -509,28 +509,6 @@ def _bool_or_default(value, default):
     return bool(default)
 
 
-def _clean_music_player_paths(value) -> dict:
-    """手动指定的播放器可执行文件路径 {播放器键: 路径}。
-
-    键只认 music_players 的注册表 ``PLAYERS``（网易云/QQ音乐/酷狗/汽水；其余键
-    丢弃，避免手改配置塞进任何多余东西），键集与右键菜单、设置页同源——新增播放器
-    只改注册表一处，这里不再抄一份固定键表。值必须是字符串路径，空串/非字符串一律
-    丢弃。限长与其它路径键同规（500 字符），只做配置面清洗，不碰文件系统——路径
-    是否存在由消费方判定。
-    """
-    if not isinstance(value, dict):
-        return {}
-    cleaned = {}
-    for key in music_players.PLAYERS:
-        raw = value.get(key)
-        if not isinstance(raw, str):
-            continue
-        path = raw.strip()
-        if path:
-            cleaned[key] = path[:500]
-    return cleaned
-
-
 def _clean_self_talk_texts(value):
     if not isinstance(value, list):
         return list(DEFAULT_SELF_TALK_TEXTS)
@@ -961,28 +939,6 @@ class Config:
             "balance_tier_label_peak": "",  # 自定义“高峰”文本（custom 模式）
             "balance_tier_label_idle": "",  # 自定义“空闲”文本（custom 模式）
             "balance_tier_color_enabled": True,  # 峰谷提示颜色：高峰红/低谷绿
-            "music_sing_enabled": False,  # 检测到后台播放音乐时自动播放唱歌动画
-            "music_sing_grace_seconds": 6.0,  # 持续静音多久才判定音乐停止（避开间奏）
-            "music_lyric_enabled": False,  # 在气泡里显示当前播放歌曲的歌词（Windows SMTC）
-            "music_lyric_lead_seconds": 1.0,  # 歌词提前量（秒）：正值=歌词抢先于音频
-            "music_lyric_cache_limit": 2000,  # 歌词缓存条数上限，超出按最旧淘汰
-            # 浏览器媒体会话参与歌词/唱歌：默认关——浏览器把网页视频也上报成
-            # 音乐类型（2026-10 实测 Edge/Chromium 播 B 站视频恒为 MUSIC），
-            # 不否决就会对着视频显示「我在唱《视频标题》」。网页版音乐平台
-            # 需要用户显式打开。
-            "music_browser_media_enabled": False,
-            # foobar2000 歌词（issue #228）：foobar 默认不注册 SMTC，这里改用它的
-            # 主窗口标题当补充源。**默认关**：窗口标题分辨不出播放状态（foobar
-            # 开着没在播时可能读到上一首），且只在 SMTC 没有在播会话时才生效。
-            "foobar_lyrics_enabled": False,
-            # foobar 窗口标题的 titleformat 串（「显示 → 默认用户界面 → 窗口标题」）。
-            # 空 = 自动：不猜歌名/歌手顺序（见 pet/music_title.py）。出厂默认值随
-            # 版本与主题变化，没有稳定契约，所以做成可配置而不是硬编码一份。
-            "foobar_title_format": "",
-            # 手动指定播放器路径 {播放器键（网易云/QQ音乐/酷狗/汽水）: exe 路径}：自动搜索找不到时的
-            # 逃生口，也能在「设置 → 桌宠 → 播放器路径（高级）」里改（
-            # settings_music.build_music_player_rows），空 = 走自动搜索。
-            "music_player_paths": {},
             "agent_cost_enabled": False,  # Agent 本轮结束时显示消费金额（用余额差值估算）
             "golden_spin_on_click": False,  # 点击回应动画结束后自动接一段黄金回旋
             "golden_spin_direct": False,  # 点击触发黄金回旋时跳过点击动画，直接回旋并逐圈加速
@@ -1211,15 +1167,6 @@ class Config:
             "stream_capture_mode",
             "allow_cross_screen",
             "pnpm_bin",
-            "music_sing_enabled",
-            "music_sing_grace_seconds",
-            "music_lyric_enabled",
-            "music_lyric_cache_limit",
-            "music_lyric_lead_seconds",
-            "music_browser_media_enabled",
-            "foobar_lyrics_enabled",
-            "foobar_title_format",
-            "music_player_paths",
             "agent_cost_enabled",
             "golden_spin_on_click",
             "golden_spin_direct",
@@ -1626,62 +1573,9 @@ class Config:
         self.data["golden_spin_direct"] = _bool_or_default(self.data.get("golden_spin_direct"), False)
         self.data["edge_probe_enabled"] = _bool_or_default(self.data.get("edge_probe_enabled"), False)
         self.data["agent_link"] = _clean_agent_link_data(self.data.get("agent_link"))
-        # 音乐关联 / 消费统计（#129 新增的 5 键）：此前只在默认值与 reload 白名单
-        # 里登记、没进归一化——手改成脏值后数值键会让设置页构造直接抛
-        # ValueError（float('abc') 打死整个设置页），字符串布尔键被 bool() 误开
-        # （bool('false') is True，歌词功能自己打开）。布尔走 _bool_or_default、
-        # 数值夹回消费端可用区间，与其它键同规。
-        self.data["music_lyric_enabled"] = _bool_or_default(self.data.get("music_lyric_enabled"), False)
+        # 消费统计开关：布尔走 _bool_or_default，字符串 "yes"/"false" 不得被
+        # bool() 误判。
         self.data["agent_cost_enabled"] = _bool_or_default(self.data.get("agent_cost_enabled"), False)
-        # 唱歌动画检测开关：同族漏网的第六个键（交付前审查 P2-b）——字符串
-        # "false" 被 bool() 判真，用户明确关掉的开关会自己打开，与上面两键同规。
-        self.data["music_sing_enabled"] = _bool_or_default(self.data.get("music_sing_enabled"), False)
-        # 浏览器媒体会话开关：同族第七个键，同样走 _bool_or_default——
-        # 字符串 "false" 被 bool() 判真会让用户明确关掉的否决自己失效。
-        self.data["music_browser_media_enabled"] = _bool_or_default(
-            self.data.get("music_browser_media_enabled"), False
-        )
-        # foobar2000 歌词（#228）两个键：布尔同规走 _bool_or_default；格式串非
-        # 字符串一律回落"自动"，并截到 music_title 的长度上限——手改配置写进超长
-        # 串会让每次窗口标题匹配都跑一遍长正则（采样是 1s 一拍）。
-        self.data["foobar_lyrics_enabled"] = _bool_or_default(
-            self.data.get("foobar_lyrics_enabled"), False
-        )
-        from .music_title import FOOBAR_FORMAT_MAX_CHARS
-
-        raw_format = self.data.get("foobar_title_format")
-        self.data["foobar_title_format"] = (
-            raw_format.strip()[:FOOBAR_FORMAT_MAX_CHARS]
-            if isinstance(raw_format, str)
-            else ""
-        )
-        # 持续静音判定时长：下限 1s（低于它就退回"瞬时静音即退出"的老问题），
-        # 上限必须有——否则手改 1e9 会让唱歌状态永不退出。
-        self.data["music_sing_grace_seconds"] = _float_or_default(
-            self.data.get("music_sing_grace_seconds"), 6.0, 1.0, 3600.0
-        )
-        # 歌词提前量的区间与设置页滑块**同源**（music_lyric_controller 的常量），
-        # 不再抄一份边界。惰性导入：config.py 顶层不引 Qt。
-        from .music_lyric_controller import (
-            LEAD_MAX_SECONDS,
-            LEAD_MIN_SECONDS,
-            LYRIC_LEAD_SECONDS,
-        )
-        self.data["music_lyric_lead_seconds"] = _float_or_default(
-            self.data.get("music_lyric_lead_seconds"),
-            LYRIC_LEAD_SECONDS,
-            LEAD_MIN_SECONDS,
-            LEAD_MAX_SECONDS,
-        )
-        # 歌词缓存条数上限：非数值回落默认（music_lyric.CACHE_LIMIT），
-        # 负数/0 无意义，夹到至少 1 条。消费方是 music_lyric_controller 的取词
-        # 线程（fetch_lyrics(cache_limit=...) → _prune_cache），不是摆设。
-        self.data["music_lyric_cache_limit"] = int(
-            _float_or_default(self.data.get("music_lyric_cache_limit"), 2000.0, 1.0, 100000.0)
-        )
-        # 手动播放器路径：此前只有消费方读、没有 schema 登记，手改 config.json 会
-        # 被 reload() 静默丢弃（交付前审查 P1-3）。清洗成 {注册表里的播放器键: 路径}。
-        self.data["music_player_paths"] = _clean_music_player_paths(self.data.get("music_player_paths"))
         prewarm = str(self.data.get("media_prewarm", "balanced") or "balanced").strip().lower()
         self.data["media_prewarm"] = prewarm if prewarm in {"full", "balanced", "minimal"} else "balanced"
         # 批10-A3：默认 32→8（预测式预热使能）；32 是批9 引入仅一天的旧默认，
@@ -1768,16 +1662,7 @@ class Config:
             "focus_mode",
             "quiet_minutes_default",
             "quiet_also_on_fullscreen",
-            "music_sing_enabled",
-            "music_sing_grace_seconds",
-            "music_lyric_enabled",
-            "music_lyric_lead_seconds",
-            "music_lyric_cache_limit",
-            "music_browser_media_enabled",
-            "foobar_lyrics_enabled",
-            "foobar_title_format",
             "agent_cost_enabled",
-            "music_player_paths",
             "chat_always_on_top",
             "dynamic_island",
             "island_metrics",

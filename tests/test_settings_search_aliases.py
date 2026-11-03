@@ -440,21 +440,9 @@ def test_unknown_query_still_reports_no_match(tmp_path, monkeypatch):
 
 # ------------------------------------------------------------------ ⑤ 既有搜索回归
 def test_existing_keyword_searches_still_reach_their_rows(tmp_path, monkeypatch):
-    """第一刀的既有查询照旧（标题格式 / 探测间隔 / 提示音 回车遍历）。"""
+    """第一刀的既有查询照旧（探测间隔 / 提示音 回车遍历）。"""
     dialog = _dialog(tmp_path, monkeypatch)
     try:
-        if sys.platform == "win32":
-            matches = _matches(dialog, "标题格式")
-            keys = _keys(matches)
-            # 关键词命中的标题格式行排在第一位（既有首次命中不变），且组内行一并入候选
-            assert keys[0] == "settingRow_foobar_title_format"
-            assert len(set(keys)) == len(keys)
-            assert "settingRow_music_player_detect" in keys
-            row = _search(dialog, "标题格式")
-            assert row.objectName() == "settingRow_foobar_title_format"
-            assert _section_of(dialog, "foobar_title_format").toggle.isChecked() is True
-            assert row.isVisibleTo(_current_page(dialog))
-
         matches = _matches(dialog, "提示音")
         assert len(matches) == 5
         assert all(dialog.agent_link_box.isAncestorOf(item) for item in matches)

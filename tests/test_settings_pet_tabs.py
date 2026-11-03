@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""「桌宠」域页内标签（显示与音乐 / 动作与碰撞）的聚焦回归（第二刀，2026-10-08）。
+"""「桌宠」域页内标签（显示 / 动作与碰撞）的聚焦回归（第二刀，2026-10-08）。
 
 口径来源：``.scratch/SETTINGS-UI-DESIGN-K3-20261007.md`` §二（页内标签的判定规则）
-与第二刀裁决——桌宠域是**两个互斥任务**：「它长什么样 / 唱不唱歌」（显示与音乐）
-与「它怎么动 / 怎么撞」（动作与碰撞）；高级组永远垫底其所属标签页；侧栏 10 域、
+与第二刀裁决——桌宠域是**两个互斥任务**：「它长什么样」（显示）与
+「它怎么动 / 怎么撞」（动作与碰撞）；高级组永远垫底其所属标签页；侧栏 10 域、
 深链与搜索跳域语义不变。
 
 本文件钉住五件事：
@@ -12,13 +12,11 @@
 2. 标签内组序：主视线组在前、高级组垫底；每行的 ``SettingsSection`` 归属唯一；
 3. 每一行都能由标签键路由到，切到所属标签后可见（分页没丢功能）；
 4. 搜索命中另一标签的行时自动切标签 + 展开高级组，命中行**实际可见**
-   （标签 1：标题格式 / 自动检测播放器；标签 2：碰撞开关 / 碰撞音量）；
+   （标签 1：桌宠大小；标签 2：碰撞开关 / 碰撞音量）；
 5. 保存 round trip 不变——分页是纯呈现层改动，不碰配置键、默认值与保存链。
 """
 
 from __future__ import annotations
-
-import sys
 
 import pytest
 
@@ -28,22 +26,17 @@ EXPECTED_SIDEBAR = [
     "常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动",
 ]
 #: 标签键给代码（稳定），标签名给用户（可读）；顺序 = 使用顺序。
-EXPECTED_TABS = (("display_music", "显示与音乐"), ("motion_collision", "动作与碰撞"))
+EXPECTED_TABS = (("display", "显示"), ("motion_collision", "动作与碰撞"))
 
-#: 标签 1 的主视线组序；高级组标题按平台上有没有「标题格式」行动态取
-#: （``settings_music.advanced_group_title``），用例里拼。
-TAB1_PRIMARY = ("显示", "音乐关联")
+#: 标签 1 的主视线组序。
+TAB1_PRIMARY = ("显示",)
 #: 标签 2 的组序：主视线 5 组 + 垫底的「碰撞参数（高级）」。
 TAB2_SECTIONS = ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼", "多开碰撞", "碰撞参数（高级）")
 
 TAB1_ROWS = (
     "scale", "bubble_text_scale", "pet_opacity",
-    "music_sing", "music_lyric", "music_lyric_lead",
 )
-TAB1_ADVANCED_ROWS = (
-    "music_player_netease", "music_player_qqmusic", "music_player_kugou",
-    "music_player_soda", "music_player_detect",
-)
+TAB1_ADVANCED_ROWS = ()
 TAB2_ROWS = (
     "playback_speed", "animation_gap", "no_move",
     "drag_physics", "drop_gravity", "throw_strength", "slingshot_enabled",
@@ -55,13 +48,6 @@ TAB2_ADVANCED_ROWS = (
     "collision_restitution", "collision_friction", "collision_mass_scale",
     "collision_impulse_cap", "collision_sound_volume",
 )
-#: 浏览器媒体会话开关与 foobar 两行同样只在 Windows 建（SMTC / 窗口标题源是
-#: Windows 专属能力，非 Windows 建行也没效果）——平台闸门，不是被整理掉了。
-if sys.platform == "win32":
-    TAB1_ROWS = TAB1_ROWS + ("music_browser_media", "foobar_lyrics")
-    TAB1_ADVANCED_ROWS = ("foobar_title_format",) + TAB1_ADVANCED_ROWS
-
-
 def _qapp():
     from PySide6.QtWidgets import QApplication
 
@@ -159,18 +145,19 @@ def test_pet_domain_uses_in_page_tabs_without_changing_sidebar(dialog):
 
 def test_group_order_inside_each_tab_puts_the_advanced_group_last(dialog):
     """标签内组序：主视线组在前、高级组垫底；每行的 SettingsSection 归属唯一。"""
-    from pet import settings_music
-
     tabs = _pet_tabs(dialog)
     expected = {
-        "display_music": TAB1_PRIMARY + (settings_music.advanced_group_title(dialog),),
+        "display": TAB1_PRIMARY,
         "motion_collision": TAB2_SECTIONS,
     }
     for tab_key, titles in expected.items():
         sections = _sections_of_tab(tabs, tab_key)
         assert [_section_title(section) for section in sections] == list(titles)
-        assert all(section.advanced is False for section in sections[:-1])
-        assert sections[-1].advanced is True, "高级组必须垫底其所属标签页"
+        if tab_key == "motion_collision":
+            assert all(section.advanced is False for section in sections[:-1])
+            assert sections[-1].advanced is True, "高级组必须垫底其所属标签页"
+        else:
+            assert all(section.advanced is False for section in sections)
 
     # 归属唯一：每个桌宠行的 SettingsSection 祖先有且只有一个（不会一组挂两处）。
     from pet.modern_settings_dialog import SettingsSection
@@ -193,14 +180,14 @@ def test_every_pet_row_routes_to_its_tab_and_is_reachable(dialog):
     _qapp().processEvents()
 
     routing = {}
-    routing.update({key: "display_music" for key in TAB1_ROWS})
-    routing.update({key: "display_music" for key in TAB1_ADVANCED_ROWS})
+    routing.update({key: "display" for key in TAB1_ROWS})
+    routing.update({key: "display" for key in TAB1_ADVANCED_ROWS})
     routing.update({key: "motion_collision" for key in TAB2_ROWS})
     routing.update({key: "motion_collision" for key in TAB2_ADVANCED_ROWS})
 
     page = _pet_page(dialog)
     for tab_key, keys in (
-        ("display_music", TAB1_ROWS + TAB1_ADVANCED_ROWS),
+        ("display", TAB1_ROWS + TAB1_ADVANCED_ROWS),
         ("motion_collision", TAB2_ROWS + TAB2_ADVANCED_ROWS),
     ):
         tabs.setCurrentKey(tab_key)
@@ -219,7 +206,7 @@ def test_every_pet_row_routes_to_its_tab_and_is_reachable(dialog):
 def test_rows_of_the_other_tab_are_out_of_view_but_not_destroyed(dialog):
     """另一标签的行只是不可见，对象与控件都还在——整理没有删功能/没有动保存链。"""
     tabs = _pet_tabs(dialog)
-    tabs.setCurrentKey("display_music")
+    tabs.setCurrentKey("display")
     hidden_row = _row(dialog, "collision_enabled")
     assert hidden_row.isVisibleTo(tabs) is False
     assert hidden_row.isHidden() is False, "行只是不在当前标签页，不是被隐藏/删除"
@@ -244,7 +231,7 @@ def _search(dialog, query: str):
 def test_search_jumps_to_the_tab_that_owns_the_hit(dialog):
     """搜「碰撞开关」（标签 2 的行）→ 自动切到动作与碰撞标签，命中行可见。"""
     tabs = _pet_tabs(dialog)
-    assert tabs.currentKey() == "display_music"
+    assert tabs.currentKey() == "display"
 
     row = _search(dialog, "碰撞开关")
     assert _row_key(row) == "collision_enabled"
@@ -255,29 +242,17 @@ def test_search_jumps_to_the_tab_that_owns_the_hit(dialog):
 
 def test_search_on_tab_one_hits_stay_on_tab_one(dialog):
     """标签 1 的行（含默认标签）命中后仍停在标签 1、行可见——回归，不是只测切过去。"""
-    from pet import settings_music
-
     tabs = _pet_tabs(dialog)
     queries = [
-        ("音乐自动唱歌", "music_sing"),
-        # 标签 1 高级组里的行：命中后必须展开高级组，否则"搜到了但看不见"。
-        ("自动检测播放器", "music_player_detect"),
+        ("桌宠大小", "scale"),
+        ("气泡文字大小", "bubble_text_scale"),
     ]
-    if sys.platform == "win32":
-        queries.append(("标题格式", "foobar_title_format"))
-    else:
-        assert "标题格式" not in settings_music.advanced_group_title(dialog)
 
     for query, key in queries:
         tabs.setCurrentKey("motion_collision")  # 先离开标签 1，验证真的切回来
         row = _search(dialog, query)
         assert _row_key(row) == key, f"「{query}」应命中 {key}"
-        assert tabs.currentKey() == "display_music", f"「{query}」命中标签 1 的行必须切回标签 1"
-        section = _section_of(row)
-        if section.advanced:
-            assert section.toggle.isChecked() is True, f"「{query}」必须自动展开高级组"
-            assert not section.card.isHidden()
-            assert _section_title(section) == settings_music.advanced_group_title(dialog)
+        assert tabs.currentKey() == "display", f"「{query}」命中标签 1 的行必须切回标签 1"
         assert row.isVisibleTo(_pet_page(dialog)) is True, f"「{query}」命中的行必须实际可见"
 
 
@@ -300,17 +275,13 @@ def test_pet_settings_save_round_trip_is_unchanged(dialog, tmp_path):
 
     _row(dialog, "collision_enabled").control.setChecked(False)
     _row(dialog, "drag_physics").control.setChecked(True)
-    row = _row(dialog, "music_lyric_lead")
-    lead = 2.5 if abs(float(row.control.value()) - 2.5) > 1e-6 else 1.5
-    row.control.setValue(lead)
 
     dialog._save()
     _qapp().processEvents()
 
-    # 每宠键（碰撞/拖拽）真值在 slot0 档案；全局键（歌词提前量）在主配置
+    # 每宠键（碰撞/拖拽）真值在 slot0 档案。
     from pet.settings_slot_config import route_settings_config
 
     saved = route_settings_config(Config(base=tmp_path, instance_id="slot-0"))
     assert saved.get("collision_enabled") is False
     assert saved.get("drag_physics") is True
-    assert float(saved.get("music_lyric_lead_seconds")) == pytest.approx(lead)

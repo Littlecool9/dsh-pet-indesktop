@@ -23,12 +23,6 @@ from PySide6.QtWidgets import (
 from . import autostart as autostart_mod
 from . import catalog
 from .agent_link import AgentLinkManager
-from .music_lyric_controller import (
-    LEAD_MAX_SECONDS,
-    LEAD_MIN_SECONDS,
-    LYRIC_LEAD_SECONDS,
-)
-from .music_title import FOOBAR_FORMAT_MAX_CHARS
 from .config import (
     DEFAULT_CONTEXT_MENU_APPEARANCE,
     DEFAULT_SELF_TALK_BUBBLE_STYLE,
@@ -53,7 +47,6 @@ from .settings_widgets import (
     ResponsiveToggleActionRow,
     SettingRow,
     ToggleSwitch,
-    _line_edit,
 )
 from .speech_bubble import BUBBLE_STYLE_PRESETS
 
@@ -392,44 +385,8 @@ def build_pet_controls(host) -> None:
     if host.include_ai:
         host.click_balance_check = ToggleSwitch(host)
         host.click_balance_check.setChecked(bool(host.config.get("click_show_balance", False)))
-    host.music_sing_check = ToggleSwitch(host)
-    host.music_sing_check.setChecked(bool(host.config.get("music_sing_enabled", False)))
-    host.music_lyric_check = ToggleSwitch(host)
-    host.music_lyric_check.setChecked(bool(host.config.get("music_lyric_enabled", False)))
-    # 浏览器媒体会话开关只在 Windows 创建：SMTC 是 Windows 专属能力，非 Windows
-    # 建了也没效果（违反 settings 门禁「永久不支持的能力不创建控件」）。与
-    # cursor_hidden_passthrough_check 同一处置——控件与设置行一起条件创建。
-    host.music_browser_media_check = None
-    if sys.platform == "win32":
-        host.music_browser_media_check = ToggleSwitch(host)
-        host.music_browser_media_check.setChecked(
-            bool(host.config.get("music_browser_media_enabled", False))
-        )
-    # foobar2000 歌词（#228）同样只在 Windows 建控件：窗口标题源走 Win32 枚举，
-    # 其它平台建了也没效果。格式串输入框是**高级**项——自动模式已经能工作，只有
-    # 用户在 foobar 里改过「窗口标题」时才需要它把歌名/歌手切准。
-    host.foobar_lyrics_check = None
-    host.foobar_title_format_edit = None
-    if sys.platform == "win32":
-        host.foobar_lyrics_check = ToggleSwitch(host)
-        host.foobar_lyrics_check.setChecked(
-            bool(host.config.get("foobar_lyrics_enabled", False))
-        )
-        host.foobar_title_format_edit = _line_edit(
-            str(host.config.get("foobar_title_format", "") or "")
-        )
-        host.foobar_title_format_edit.setMaxLength(FOOBAR_FORMAT_MAX_CHARS)
-        host.foobar_title_format_edit.setPlaceholderText("留空 = 自动")
     host.agent_cost_check = ToggleSwitch(host)
     host.agent_cost_check.setChecked(bool(host.config.get("agent_cost_enabled", False)))
-    host.music_lyric_lead_spin = BrowserDoubleSpinBox(host)
-    host.music_lyric_lead_spin.setRange(LEAD_MIN_SECONDS, LEAD_MAX_SECONDS)
-    host.music_lyric_lead_spin.setSingleStep(0.1)
-    host.music_lyric_lead_spin.setDecimals(1)
-    host.music_lyric_lead_spin.setSuffix(" 秒")
-    host.music_lyric_lead_spin.setValue(
-        float(host.config.get("music_lyric_lead_seconds", LYRIC_LEAD_SECONDS))
-    )
     host.golden_spin_click_check = ToggleSwitch(host)
     host.golden_spin_click_check.setChecked(bool(host.config.get("golden_spin_on_click", False)))
     host.golden_spin_direct_check = ToggleSwitch(host)

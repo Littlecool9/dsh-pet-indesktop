@@ -8,7 +8,7 @@
 2. 它在上面的域级/行级白名单里——每条都写明「为什么对用户是合法说法」。
 
 为什么要有这条 lint：文案审查是人对人、会漏会疲劳；lint 是机制——新增设置的人写文案时
-就被 CI 拦下，「foobar 黑话」这类问题在源头不再发生（GATES 准入记录里
+就被 CI 拦下，内部黑话在源头不再发生（GATES 准入记录里
 ``disclosure_level: primary|advanced`` 的自动化执行）。
 
 **白名单不是垃圾桶**：加词必须改测试、留评审痕迹，且下面有一条防腐烂用例盯着
@@ -66,8 +66,6 @@ _ROW_WHITELIST: dict[str, frozenset[str]] = {
     "menu_font_size": frozenset({"UI"}),
     # 菜单实际显示「公网 IP / IP 属地」，只说菜单里能看到的内容；KB 是取一次的量级。
     "network_info_menu": frozenset({"IP", "KB"}),
-    # 推荐用户去装的第三方插件名（定稿明文保留，要能照着搜）。
-    "foobar_lyrics": frozenset({"foo_mediacontrol"}),
     # 键盘按键名：用户要按的就是它。
     "shift_drag": frozenset({"SHIFT"}),
     # 直播软件名（用户自己的工具）。
@@ -160,7 +158,7 @@ def test_whitelist_has_no_stale_entries(tmp_path, monkeypatch):
         for key, allowed in _ROW_WHITELIST.items():
             row = rows.get(key)
             if row is None:
-                # 平台闸门（如 foobar / 直播捕获只在 Windows 建行）不算腐烂。
+                # 平台闸门（如直播捕获只在 Windows 建行）不算腐烂。
                 continue
             hits = _tokens(f"{row.label.text()}\n{row.hint_label.text()}")
             unused = sorted(token for token in allowed if token not in hits)

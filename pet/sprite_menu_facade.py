@@ -20,7 +20,6 @@
     toggle_agent_link                                         → agent_link_manager（共享 manager）
     toggle_proactive_enabled / set_proactive_option           → proactive_watcher（共享监视器）
     trigger_golden_spin / look_at_screen / rename_character   → 壳的 sprite 等价实现（作用被点 sprite）
-    install_music_lyric / _music_lyric                        → 壳的音乐（歌词）宿主
     set_edge_probe_enabled                                    → config（探头世界每 tick 热读）
 
 4.2c D13：菜单作用对象 = 右键命中的那一只（``sprite`` 参数）。设置入口按它
@@ -176,9 +175,9 @@ class SpriteMenuFacade:
             log.debug("overlay: facade 气泡展示失败", exc_info=True)
             return False
 
-    # 共享建造器（harness_launcher / 音乐启动桥）会把本对象当「pet 宿主」用
+    # 共享建造器（harness_launcher）会把本对象当「pet 宿主」用
     def show_bubble(self, text: str, duration_ms: int = 3200, **_ignored) -> bool:
-        """宿主形气泡面（``launch_harness_gui`` / ``_MusicLaunchBridge`` 读它）。
+        """宿主形气泡面（``launch_harness_gui`` 读它）。
 
         返回是否真上了屏：免打扰结束的汇报按它确认交付（见
         ``window_alerts.report_quiet_summary``），丢弃却报成功会把暂存排空。
@@ -660,34 +659,6 @@ class SpriteMenuFacade:
             self._bubble(f"已开启 {agent_key.upper()} 状态联动监听～", 4000)
 
 
-    # ---------------------------------------------------------------- 音乐（歌词）宿主
-    def _music_host(self):
-        """音乐服务宿主：AppShell → PetInstance → 本壳（首个持有宿主面的）。"""
-        for host in self._hosts():
-            if host is None:
-                continue
-            if callable(getattr(host, "install_music_lyric", None)):
-                return host
-            if getattr(host, "_music_lyric", None) is not None:
-                return host
-        return None
-
-    @property
-    def music_service_available(self) -> bool:
-        """音乐服务是否可达（不可达 → 整组「音乐」子菜单不注入）。"""
-        return self._music_host() is not None
-
-    @property
-    def _music_lyric(self):
-        host = self._music_host()
-        return getattr(host, "_music_lyric", None) if host is not None else None
-
-    def install_music_lyric(self):
-        """``shared.set_music_mode`` 的安装面（幂等；无宿主 → None 静默降级）。"""
-        host = self._music_host()
-        installer = getattr(host, "install_music_lyric", None)
-        return installer() if callable(installer) else None
-
     # ---------------------------------------------------------------- 菜单原位重开
     def reopen_context_menu(self, menu) -> None:
         """按原位立即重开右键菜单（window.py ``reopen_context_menu`` 的 overlay
@@ -697,33 +668,6 @@ class SpriteMenuFacade:
         reopen = getattr(window, "reopen_context_menu", None)
         if callable(reopen) and menu is not None:
             reopen(menu)
-
-
-def _is_music_group(submenu: QMenu) -> bool:
-    """「音乐」子菜单判定：标题或内容任一命中。
-
-    用户编排（``context_menu_layout``）允许给子菜单改别名，只按标题匹配会漏；
-    两个模板的播放器条目文案都是「打开…给主人放歌」（``shared._music_player_builder``），
-    故内容兜底是稳定的。
-    """
-    if submenu.title() == "音乐":
-        return True
-    for action in submenu.actions():
-        text = action.text()
-        if text.startswith("打开") and text.endswith("给主人放歌"):
-            return True
-    return False
-
-
-def _drop_music_group(menu: QMenu) -> None:
-    """摘掉「音乐」子菜单（服务不可达时的整组隐藏）。"""
-    for action in list(menu.actions()):
-        submenu = action.menu()
-        if submenu is None or not _is_music_group(submenu):
-            continue
-        menu.removeAction(action)
-        submenu.deleteLater()
-        return
 
 
 def _move_before_quit(menu: QMenu, action) -> None:
@@ -743,7 +687,7 @@ def build_sprite_full_menu(shell, sprite=None) -> QMenu:
     ``sprite`` = 被点中的那一条（4.2c D13 由 ``ShellOverlayWindow.contextMenuEvent``
     透传）；动作面里作用于"某一只"的入口（桌宠设置 / 退出这只）按它路由。
 
-    条件显示与窗口侧逐点一致（聊天门 / win32+聊天门 / 音乐服务门），
+    条件显示与窗口侧逐点一致（聊天门 / win32+聊天门），
     ``tests/test_sprite_menu_parity.py`` 用真实 PetWindow 的同条件菜单树锁死。
     「隐藏桌宠」不再由本函数补位：它随注册表的 ``hide_pet`` 落在「桌宠控制」
     子菜单里，与窗口侧同一棵树（补位会变成同名重项）。
@@ -757,9 +701,6 @@ def build_sprite_full_menu(shell, sprite=None) -> QMenu:
     install_modern_check_indicators(menu)
     install_responsive_menu_style(menu)
     install_stay_open_interaction(menu)
-    if not facade.music_service_available:
-        # 音乐服务宿主不可达 → 整组隐藏（注册表不按宿主能力过滤，在这里收口）
-        _drop_music_group(menu)
     # 「退出这只」只在多宠时出现（窗口侧单窗不注入该入口，只有 app.quit 语义的
     # 「退出」）——没有子肥鱼时它等价于「退出」，不重复列出
     if getattr(shell, "_spawned", None):

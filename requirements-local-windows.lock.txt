@@ -30,7 +30,6 @@ pluggy==1.6.0
 propcache==0.5.4
 protobuf==7.36.2
 psutil==7.2.2
-pycaw==20260927
 pyclipper==1.4.0
 Pygments==2.21.0
 PySide6==6.12.0
@@ -52,10 +51,4 @@ tqdm==4.70.1
 typing_extensions==4.16.0
 tzdata==2026.5
 urllib3==2.8.0
-winrt-runtime==3.2.1
-winrt-Windows.Foundation==3.2.1
-winrt-Windows.Foundation.Collections==3.2.1
-winrt-Windows.Media==3.2.1
-winrt-Windows.Media.Control==3.2.1
-winrt-Windows.Storage.Streams==3.2.1
 yarl==1.25.1

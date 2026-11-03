@@ -13,17 +13,10 @@ from __future__ import annotations
 
 import logging
 import random
-import time
 from collections import deque
-
-from PySide6.QtCore import QTimer
 
 from . import quiet_mode
 from . import window_placement
-
-# 确认"音乐真的停了"所需的持续静音时长（秒）。歌曲的前奏/间奏/轻声段会让
-# 音频峰值瞬时跌到阈值下，太小会导致唱歌状态反复退出。
-MUSIC_SING_GRACE_SECONDS = 6.0
 
 _log = logging.getLogger("dsh-pet-standalone")
 
@@ -745,99 +738,3 @@ def on_self_talk_timeout(host) -> None:
     host._schedule_self_talk(after_display=displayed)
 
 
-def start_music_sing_polling(host) -> None:
-    """启动音乐检测并尽量立即检查一次，避免等一个轮询周期才唱歌。"""
-    if not host._music_sing_enabled:
-        return
-    host._music_sing_timer.start()
-    if host.isVisible():
-        QTimer.singleShot(0, host, host._check_music_sing)
-
-
-def _push_browser_media_setting(host, music_detect) -> None:
-    """把「浏览器媒体会话参与歌词」开关推给 ``music_detect``。
-
-    宿主（PetWindow / OverlayShell）是唯一持有 cfg 的一层，music_detect 不引
-    配置模块；每拍读一次而不是初始化一次，避免多一份会过期的副本。没有 cfg
-    的最小宿主保持 music_detect 当前值（默认关）。
-    """
-    getter = getattr(getattr(host, "cfg", None), "get", None)
-    if not callable(getter):
-        return
-    try:
-        music_detect.set_browser_media_enabled(
-            bool(getter("music_browser_media_enabled", False))
-        )
-    except Exception:
-        # 坏配置（自定义 cfg 替身）不能把唱歌检测整个打死。
-        pass
-
-
-def check_music_sing(host) -> None:
-    """检测后台音乐并自动播放唱歌动画（可配置开关）。
-
-    音乐播放期间唱歌动画会持续循环；音乐停止或开关关闭后恢复普通动画链。
-    不打断正在播放的一次性动作/点击/拖拽。
-
-    退出唱歌要经过一段宽限期，而不是一检测到静音就退：``is_music_playing``
-    看的是音频峰值，歌曲的前奏/间奏/轻声段会让峰值瞬时跌到阈值以下，立刻退出
-    会表现为"唱着唱着主动退出、然后静默不唱"。
-
-    当前会话被否决（明确的视频、或关掉"浏览器媒体会话参与歌词"后的浏览器会话）
-    时 ``is_music_playing`` 直接为 False，于是走上面这段宽限期退出——**刻意不
-    在这里另加一条立即退出的分支**：那会让"只桩 is_music_playing 的既有测试"
-    绕过桩直接读到真实 SMTC（本机开着浏览器视频时用例就红），也把否决规则拆成
-    两处。规则只留在 ``music_detect`` 一处。
-    """
-    from .window import SING_ANIM
-    if not host.isVisible():
-        return
-    if not host._music_sing_enabled:
-        host._music_sing_active = False
-        host._music_sing_silent_since = None
-        return
-    # 当前是纯音乐（配乐/OST/演奏曲）：没有可唱的句子，不唱歌。
-    # 标志由歌词控制器维护；没启用歌词功能时该标志恒为 False，不受影响。
-    if getattr(host, "_instrumental_playing", False):
-        host._music_sing_active = False
-        host._music_sing_silent_since = None
-        return
-    from . import music_detect
-    _push_browser_media_setting(host, music_detect)
-    playing = music_detect.is_music_playing()
-    if host._music_sing_active:
-        # 静音起点用 getattr 兜底读取：window.py 的行数预算已满，不新增字段。
-        silent_since = getattr(host, "_music_sing_silent_since", None)
-        if playing:
-            # 还有声音：刷新静音计时，保持唱歌。
-            host._music_sing_silent_since = None
-        elif silent_since is None:
-            # 刚转为静音：起算宽限期，先不退出。
-            host._music_sing_silent_since = time.monotonic()
-        elif (
-            time.monotonic() - silent_since >= music_sing_grace_seconds(host)
-        ):
-            host._music_sing_active = False
-            host._music_sing_silent_since = None
-        # 宽限期内：保持 _music_sing_active，动画继续循环。
-        return
-    if host._dragging or host._is_one_shot_playing():
-        return
-    if playing:
-        host._music_sing_active = True
-        host._music_sing_silent_since = None
-        host._switch(SING_ANIM)
-
-
-def music_sing_grace_seconds(host) -> float:
-    """确认"音乐真的停了"所需的持续静音时长（秒）。"""
-    raw = getattr(getattr(host, "cfg", None), "get", None)
-    value = None
-    if callable(raw):
-        value = raw("music_sing_grace_seconds", None)
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        seconds = MUSIC_SING_GRACE_SECONDS
-    # 下限 1 秒：低于这个值就退化回"瞬时静音即退出"的老问题。
-    return max(1.0, seconds)

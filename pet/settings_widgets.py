@@ -525,7 +525,7 @@ class ResourcePathPicker(QWidget):
         self.directory = bool(directory)
         self.name_filter = name_filter
         # 选择对话框标题：默认沿用图片语义（既有调用方不变），非图片用途可覆盖
-        # （例如「音乐播放器程序」选 .exe 时不该写「选择图片」）。
+        # （例如选择程序 .exe 时不该写「选择图片」）。
         self.dialog_title = str(
             dialog_title or ("选择图片目录" if self.directory else "选择图片")
         )

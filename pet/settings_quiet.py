@@ -2,7 +2,7 @@
 """设置页「免打扰」：控件创建 / 行装配 / 保存。
 
 **为什么单独一个模块**：``modern_settings_dialog.py`` 的行数预算已无余量，
-本组控件与行全部在此构建（与 ``settings_music`` 同口径）。
+本组控件与行全部在此构建（与 ``settings_network`` 同口径）。
 
 **为什么这两项进设置页**（``docs/SETTINGS-CHANGE-GATES.md`` 准入 1~6 全中）：
 它们是**偏好**（"以后默认开多久""全屏时要不要一起静音"），不是一次性命令；
@@ -62,7 +62,7 @@ def create_quiet_controls(dialog) -> None:
 def build_quiet_rows(dialog) -> list[SettingRow]:
     """「免打扰」小节的两行（由「自动化与联动」域直接取用，不走 claim）。
 
-    与 ``settings_music.build_music_player_rows`` 同口径：本模块自己建控件与行，
+    与 ``settings_network`` 同口径：本模块自己建控件与行，
     ``modern_settings_dialog`` 只接线，行不进该文件的 ``all_rows`` 快照。
     """
     create_quiet_controls(dialog)

@@ -12,7 +12,6 @@ from ..focus_ui import build_focus_menu
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
 from .shared import (
-    MUSIC_ALIGN_DISABLED_REASON,
     NETWORK_INFO_DISABLED_REASON,
     add_action,
     add_agent_link_menu,
@@ -26,15 +25,6 @@ from .shared import (
     add_hide_pet,
     add_look_screen,
     add_agent_cost,
-    add_music_lyric_align,
-    add_music_next,
-    add_music_open_kugou,
-    add_music_open_netease,
-    add_music_open_qqmusic,
-    add_music_open_soda,
-    add_music_pause,
-    add_music_prev,
-    add_music_quit,
     add_no_move,
     add_on_top,
     add_proactive_menu,
@@ -62,13 +52,6 @@ ACTION_LABELS = {
     "return_corner": "回到右下角", "hide_pet": "隐藏桌宠",
     "spawn_pet": "生小肥鱼", "clear_spawned_pets": "退出子肥鱼",
     "golden_spin": "黄金回旋", "edge_probe": "边缘探头",
-    "music": "音乐", "music_pause": "暂停 / 播放", "music_next": "切歌",
-    "music_prev": "上一首",
-    "music_quit": "退出音乐模式", "music_open_netease": "打开网易云并播放",
-    "music_open_qqmusic": "打开QQ音乐并播放",
-    "music_open_kugou": "打开酷狗音乐并播放",
-    "music_open_soda": "打开汽水音乐并播放",
-    "music_lyric_align": "歌词对齐",
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
     "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
@@ -92,10 +75,7 @@ ACTION_ICONS = {
     "return_corner": "corner", "hide_pet": "hide",
     "spawn_pet": "spawn", "clear_spawned_pets": "clear",
     "golden_spin": "play", "edge_probe": "corner",
-    "music_next": "play", "music_prev": "play", "music_quit": "stop", "agent_cost": "balance",
-    "music": "play", "music_pause": "pause", "music_open_netease": "play",
-    "music_open_qqmusic": "play", "music_open_kugou": "play",
-    "music_open_soda": "play", "music_lyric_align": "play",
+    "agent_cost": "balance",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
     "proactive_screen": "screen", "todo_panel": "todo",
     "quiet_mode": "pause", "focus_mode": "pause",
@@ -124,26 +104,6 @@ class MenuActionSpec:
 
 def _callback_available(name: str) -> Availability:
     return lambda pet: callable(getattr(pet, name, None))
-
-
-def _music_lyric_configured(pet) -> bool:
-    """音乐相关菜单项是否出现：只看设置里有没有开启歌词功能。
-
-    刻意**不**依赖实时播放状态——否则菜单结构会随"此刻有没有在放歌"变来变去
-    （测试也会因此依赖机器状态）。没在播时改为置灰（见 enabled）。
-    """
-    return bool(pet.cfg.get("music_lyric_enabled", False))
-
-
-def _music_align_ready(pet) -> bool:
-    """「歌词对齐」判据的转发（实现与原因文案在 ``shared.music_align_ready``）。
-
-    门收在共享建造器里（本函数转发的 ``shared.music_align_ready``）：
-    "能对齐"的判定与置灰必须同源，否则会出现"入口在、点了没反应"的死项。
-    """
-    from .shared import music_align_ready
-
-    return music_align_ready(pet)
 
 
 def _build_chat(menu, pet):
@@ -201,25 +161,8 @@ class MenuActionRegistry:
                 add_clear_spawned_pets,
                 _callback_available("on_clear_spawned_pets"),
             ),
-            # 始终可用：消费统计与歌词无关，不该被歌词开关卡住。
+            # 始终可用：消费统计与其它开关无关。
             "agent_cost": MenuActionSpec(add_agent_cost),
-            "music_pause": MenuActionSpec(add_music_pause, _music_lyric_configured),
-            "music_next": MenuActionSpec(add_music_next, _music_lyric_configured),
-            "music_prev": MenuActionSpec(add_music_prev, _music_lyric_configured),
-            "music_quit": MenuActionSpec(add_music_quit, _music_lyric_configured),
-            "music_lyric_align": MenuActionSpec(
-                add_music_lyric_align,
-                _music_lyric_configured,
-                enabled=_music_align_ready,
-                disabled_reason=MUSIC_ALIGN_DISABLED_REASON,
-            ),
-            "music_open_netease": MenuActionSpec(add_music_open_netease),
-            "music_open_qqmusic": MenuActionSpec(add_music_open_qqmusic),
-            # 酷狗 / 汽水与上面两条同源：同一个建造器 + 同一个启动 worker，只有
-            # player_key 不同。可用性一律 True（入口位置由布局树保留），装没装由
-            # 运行时启用态表达（CONTEXT.md：Runtime Disabled 保留位置 + 解释原因）。
-            "music_open_kugou": MenuActionSpec(add_music_open_kugou),
-            "music_open_soda": MenuActionSpec(add_music_open_soda),
             "golden_spin": MenuActionSpec(
                 add_golden_spin,
                 _callback_available("trigger_golden_spin"),

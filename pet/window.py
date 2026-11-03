@@ -108,9 +108,6 @@ from .platform_win import (
     _fg_fullscreen_win32 as _fg_fullscreen_win32,
 )
 
-# 后台播放音乐时自动播放的唱歌/哼歌动画
-SING_ANIM = '悠闲哼歌'
-
 # 动画启动被拒（movie.start() 返回 False，如 imageio_ffmpeg 被杀毒软件隔离/clip 已 cleanup）时的降级策略：
 # 回退到上一个可播放动画/待机，并安排稍后重试被拒动画（B7 审查 P1-1）。
 # 重试有次数上限：病态 reader 永不退出时不再无限重试，避免 GUI 反复同步解码。
@@ -458,13 +455,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self._self_talk_timer = QTimer(self)
         self._self_talk_timer.setSingleShot(True)
         self._self_talk_timer.timeout.connect(self._on_self_talk_timeout)
-        # 后台音乐检测：默认关闭，开启后检测到系统正在输出音频就播放唱歌动画
-        self._music_sing_enabled = bool(config.get('music_sing_enabled', False))
-        self._music_sing_active = False
-        self._music_sing_timer = QTimer(self)
-        # 1s 轮询：兼顾 COM 开销与“识别到音频后尽快触发”的体验。
-        self._music_sing_timer.setInterval(1000)
-        self._music_sing_timer.timeout.connect(self._check_music_sing)
         # 重要气泡（主动识屏先兆/答复、Agent 联动提醒等）占用期间，自言自语让路，
         # 避免"让我看看……"刚出来就被自言自语顶掉、答复又顶掉自言自语的连环抢占。
         self._bubble_busy_until = 0.0
@@ -715,8 +705,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
 
         self._restore_position()
         self._switch(self.idle)
-        if self._music_sing_enabled:
-            self._start_music_sing_polling()
         self._schedule_self_talk()
         if self._watch_required():
             self._start_fs_watch()
@@ -991,9 +979,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             self._hidden_paused = False
             self._phys_vel[:] = [0.0, 0.0]
             self._resume_activity()
-        music_timer = getattr(self, "_music_sing_timer", None)
-        if getattr(self, "_music_sing_enabled", False) and music_timer is not None and music_timer.isActive():
-            QTimer.singleShot(0, self, self._check_music_sing)
         self._effects_on_shown()
 
     def hide(self, *, notify: bool = True) -> None:
@@ -1018,7 +1003,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         """停止全部活动定时器并清空关联状态（隐藏/关闭共用的收口）。
 
         closeEvent 与 _pause_activity 此前各自收口、已出现分叉：closeEvent
-        漏停 _move_timer/_squash_timer/_physics_timer/_music_sing_timer。这些
+        漏停 _move_timer/_squash_timer/_physics_timer。这些
         QTimer(self) 子对象虽随窗口 C++ 销毁而销毁，但 win.close() 只隐藏不
         销毁窗口，Python 包装存活期内残留的单次 timeout 仍可对已停播/半销毁
         窗口触发（全量套件崩溃点漂移、Linux exit 139 的来源之一）。统一在此
@@ -1029,7 +1014,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self._clear_drag_move()
         self._cancel_move()
         self._self_talk_timer.stop()
-        self._music_sing_timer.stop()
         self._squash_timer.stop()
         self._squash_active = False
         self._physics_timer.stop()
@@ -1086,8 +1070,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         if self._watch_required():
             self._start_fs_watch()
         self._schedule_self_talk()
-        if self._music_sing_enabled:
-            self._start_music_sing_polling()
         if hasattr(self, 'proactive_watcher') and self.proactive_watcher is not None:
             self.proactive_watcher.resume()
         if hasattr(self, 'agent_link_manager') and self.agent_link_manager is not None:
@@ -1329,7 +1311,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             name = filter_switch(name)
         if name not in self.lib.names():
             # DLC/同路径换角色守卫：目标动画名不在当前素材库（写死名直传路径
-            # 的兜底，如余额档位/唱歌动画）。判失败返回，绝不让 lib.movie(name)
+            # 的兜底，如余额档位）。判失败返回，绝不让 lib.movie(name)
             # 的 KeyError 崩进 GUI 线程；池化消费路径本就预过滤，不受影响。
             logger.warning("动画 %r 不在当前角色素材库，跳过本次切换", name)
             return False
@@ -2269,14 +2251,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
 
     # ================================================================ 动画链
     def _on_anim_ended(self, name: str) -> None:
-        if name == SING_ANIM:
-            # 音乐自动唱歌开启且当前仍处于“唱歌中”时，直接无缝续播；
-            # 不再每次播完都查一次音频 COM，降低长时间运行的崩溃风险。
-            # 音乐停止由 _check_music_sing 定时检测后清掉 _music_sing_active。
-            if self._music_sing_enabled and self._music_sing_active:
-                self._switch(SING_ANIM)
-                return
-            self._music_sing_active = False
         if name == self.drag and self._dragging:
             if not self._restart_current_clip(name):
                 # 拖拽动画也被拒（退役池卡死）：回退可播放动画并安排重试，
@@ -3474,14 +3448,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         """Compatibility delegation (window_alerts.set_bubble_suppressed)."""
         return window_alerts.set_bubble_suppressed(self, *args, **kwargs)
 
-    def _start_music_sing_polling(self, *args, **kwargs):
-        """Compatibility delegation (window_alerts.start_music_sing_polling)."""
-        return window_alerts.start_music_sing_polling(self, *args, **kwargs)
-
-    def _check_music_sing(self, *args, **kwargs):
-        """Compatibility delegation (window_alerts.check_music_sing)."""
-        return window_alerts.check_music_sing(self, *args, **kwargs)
-
     def show_alert(self, *args, **kwargs):
         """Compatibility delegation (window_alerts.show_alert)."""
         return window_alerts.show_alert(self, *args, **kwargs)
@@ -3495,9 +3461,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         return window_alerts.pump_alerts(self, *args, **kwargs)
 
     def show_bubble(self, text: str, duration_ms: int = 3200, subtitle: str | None = None,
-                    *, sticky: bool = False, buttons: list[tuple[str, object]] | None = None,
-                    title_first: bool = False, width_locked: bool = False,
-                    reserve: bool = True) -> bool:
+                    *, sticky: bool = False, buttons: list[tuple[str, object]] | None = None) -> bool:
         """向桌宠头顶冒泡提示（app 层反馈用，非侵入）。重要气泡会占用气泡位。
 
         ``sticky=True`` 显示「一直挂到主动关闭」的气泡（审批等）：不启动自动
@@ -3532,12 +3496,10 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             )
             return True
         _set_speech_bubble_interactive(self)
-        # Match the overlay host: lyrics do not reserve the notification slot.
-        if reserve:
-            self.hold_bubble(duration_ms / 1000.0 + 2.0)
+        self.hold_bubble(duration_ms / 1000.0 + 2.0)
         self._speech_bubble.show_text(
             str(text), window_placement.bubble_anchor_rect(self), duration_ms, pet_scale=self.scale,
-            subtitle=str(subtitle or ""), title_first=title_first, width_locked=width_locked)
+            subtitle=str(subtitle or ""))
         return True
 
     def hide_bubble(self, *args, **kwargs):
@@ -3628,14 +3590,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             self._animation_gap_timer.start(
                 max(1, int(round(self.animation_gap_seconds * 1000)))
             )
-        self._music_sing_enabled = bool(self.cfg.get('music_sing_enabled', False))
-        if self._music_sing_enabled:
-            # 隐藏期间保持停止，恢复显示时由 _resume_activity 按开关状态启动
-            if self.isVisible():
-                self._start_music_sing_polling()
-        else:
-            self._music_sing_active = False
-            self._music_sing_timer.stop()
         self._self_talk_enabled = bool(self.cfg.get('self_talk_enabled', False))
         bubble = getattr(self, "_speech_bubble", None)
         if bubble is not None:
@@ -4220,8 +4174,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         # 不主动停会让旧窗口在 deleteLater 之后仍被轮询线程保活（B9）
         if getattr(self, 'agent_link_manager', None) is not None:
             self.agent_link_manager.shutdown()
-        # 歌词控制器同持轮询 timer，关闭路径一并收口（close 只隐藏不销毁窗口）
-        self.shutdown_music_lyric()
         if getattr(self, "_interaction_state", IDLE) == SLINGSHOT_AIMING:
             self._cancel_slingshot_to_anchor()
         self._disarm_screen_restore_retry()  # 窗口销毁前摘掉 screenAdded 监听/超时回调
@@ -4231,7 +4183,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             self._input_controller.stop()
             self._input_controller = None
         # 不在这里覆盖记忆位置：避免自动移动/抛掷后的随机终点被存下来。
-        # 关闭即停掉全部活动定时器（含待重试被拒动画、移动/挤压/物理/唱歌），
+        # 关闭即停掉全部活动定时器（含待重试被拒动画、移动/挤压/物理），
         # 否则 win.close() 只隐藏不销毁窗口，残留单次 timeout 会在后续测试的
         # processEvents 触发悬空指针（全量套件崩溃点漂移、exit 139 的来源之一）。
         self._stop_all_timers()

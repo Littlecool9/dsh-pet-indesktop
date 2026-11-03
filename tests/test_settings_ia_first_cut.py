@@ -22,7 +22,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QScrollArea
 
 import pet.modern_settings_dialog as settings_mod
-from pet import settings_music, settings_reset_defaults
+from pet import settings_reset_defaults
 from pet.config import Config
 from pet.modern_settings_dialog import SettingRow, SettingsSection
 from pet.settings_widgets import CollapsibleGroup, SettingsTabContainer
@@ -33,7 +33,6 @@ _REPO = Path(__file__).resolve().parents[1]
 #: 第一刀允许改动的生产文件（V1 的 grep 口径）。
 _PRODUCTION_FILES = (
     "pet/modern_settings_dialog.py",
-    "pet/settings_music.py",
     "pet/settings_network.py",
     "pet/settings_reset_defaults.py",
 )
@@ -42,7 +41,7 @@ _FORBIDDEN_TOKENS = ("SMTC", "UDP", "223.5.5.5", "网卡字节计数器", "甩�
 #: 桌宠域页内标签（第二刀 2026-10-08）**标签内**的组序；高级组永远垫底其所属标签页。
 #: 标签 1 的高级组标题随平台上有没有「标题格式」行动态取（用例里拼）。
 _PET_TAB_SECTIONS = {
-    "display_music": ("显示", "音乐关联"),
+    "display": ("显示",),
     "motion_collision": ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼", "多开碰撞"),
 }
 
@@ -158,7 +157,6 @@ def test_v1_forbidden_jargon_is_gone_from_the_production_files():
 def test_v1_required_wording_is_present_where_it_belongs():
     """定稿要求的语义句必须真的落在对的文件里（换个说法就等于没改）。"""
     required = {
-        "pet/settings_music.py": ("媒体控制插件", "通常留空即可"),
         "pet/settings_network.py": ("只在打开弹窗时取一次", "不轮询"),
         "pet/settings_reset_defaults.py": ("各服务商的 API Key", "每个自定义服务商只保留"),
     }
@@ -173,20 +171,6 @@ def test_v1_rewritten_rows_carry_the_final_wording(tmp_path, monkeypatch):
     """七处定稿的逐处落点（行级，含动态日流量与平台分支）。"""
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        # foobar2000 两行只在 Windows 建（窗口标题源走 Win32 枚举）——平台闸门，
-        # 不是被整理掉了；非 Windows 上不建行，就没这条文案可查。
-        if settings_music.foobar_lyrics_supported():
-            lyrics = _row(dialog, "foobar_lyrics").hint_label.text()
-            assert "媒体控制插件" in lyrics and "可搜索 foo_mediacontrol 插件" in lyrics
-            assert "装好后不需要打开本开关" in lyrics
-            assert "停止播放后可能仍显示上一首" in lyrics
-            assert "SMTC" not in lyrics
-
-            fmt = _row(dialog, "foobar_title_format")
-            assert fmt.label.text() == "播放器标题格式（高级）"
-            assert fmt.hint_label.text().startswith("通常留空即可。")
-            assert "类似 %artist% - %title% 这样的格式" in fmt.hint_label.text()
-
         drop = _row(dialog, "drop_gravity").hint_label.text()
         assert drop.startswith("松开鼠标时如果宠物几乎没移动，它不再停在半空，而是自然落下、落地静止；")
         assert "贴地松手不会弹起。与「拖动物理」无关：关掉拖动物理后甩出惯性依然不生效。" in drop
@@ -218,18 +202,12 @@ def test_v1_reset_confirm_keeps_the_rewritten_kept_items():
 
 # ------------------------------------------------------------------ V2 高级折叠与组序
 def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch):
-    """三个新高级组在**最终域**里 advanced=True 且默认收起；常用开关不得被误藏。"""
+    """高级组在**最终域**里 advanced=True 且默认收起；常用开关不得被误藏。"""
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        music_title = settings_music.advanced_group_title(dialog)
         expected = {
             "harness_autostart": "启动项（高级）",
             "harness_launch_target": "启动项（高级）",
-            "music_player_netease": music_title,
-            "music_player_qqmusic": music_title,
-            "music_player_kugou": music_title,
-            "music_player_soda": music_title,
-            "music_player_detect": music_title,
         }
         for key, title in expected.items():
             section = _section_of(dialog, key)
@@ -247,18 +225,11 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
                 parent = parent.parentWidget()
             assert len(ancestors) == 1, f"{key} 的 SettingsSection 祖先必须唯一"
 
-        # 常用开关一律留在主视线（未被误藏）。浏览器媒体会话开关只在 Windows 建行
-        # （SMTC 是 Windows 专属能力），非 Windows 上没这一行可查。
-        common = ["autostart", "music_sing", "music_lyric",
-                  "drag_physics", "collision_enabled",
+        # 常用开关一律留在主视线（未被误藏）。
+        common = ["autostart", "drag_physics", "collision_enabled",
                   "agent_sound_enabled"]
-        if settings_music.browser_media_supported():
-            common.append("music_browser_media")
         for key in common:
             assert _section_of(dialog, key).advanced is False, f"{key} 是常用开关，不得收进高级组"
-        if settings_music.foobar_lyrics_supported():
-            assert _section_of(dialog, "foobar_lyrics").advanced is False
-            assert _section_of(dialog, "foobar_title_format").advanced is True
     finally:
         dialog.close()
 
@@ -266,24 +237,29 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
 def test_v2_pet_domain_group_order_is_per_tab_with_advanced_last(tmp_path, monkeypatch):
     """桌宠域页内标签（第二刀）的组序：每组只属于一个标签，高级组垫底其标签页。
 
-    第一刀钉的是域级组序（7 个主视线组 + 2 个垫底高级组）；第二刀把域拆成
-    「显示与音乐 / 动作与碰撞」两个标签，组序断言下移到标签内——覆盖不削弱：
-    主视线组一个不少、相对顺序不变、两个高级组仍各自垫底。
+    第一刀钉的是域级组序；第二刀把域拆成「显示 / 动作与碰撞」两个标签，组序
+    断言下移到标签内——覆盖不削弱：主视线组一个不少、相对顺序不变，动作与
+    碰撞标签的高级组仍垫底。
     """
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
         expected = {
-            "display_music": _PET_TAB_SECTIONS["display_music"]
-            + (settings_music.advanced_group_title(dialog),),
-            "motion_collision": _PET_TAB_SECTIONS["motion_collision"] + ("碰撞参数（高级）",),
+            "display": (False, _PET_TAB_SECTIONS["display"]),
+            "motion_collision": (
+                True,
+                _PET_TAB_SECTIONS["motion_collision"] + ("碰撞参数（高级）",),
+            ),
         }
-        for tab_key, titles in expected.items():
+        for tab_key, (advanced_last, titles) in expected.items():
             _page_widget, sections = _page_sections(dialog, "桌宠", tab_key)
             assert [_section_title(section) for section in sections] == list(titles), (
                 f"标签 {tab_key} 的组序必须与裁决一致"
             )
-            assert all(section.advanced is False for section in sections[:-1])
-            assert sections[-1].advanced is True, "高级组必须垫底其所属标签页"
+            if advanced_last:
+                assert all(section.advanced is False for section in sections[:-1])
+                assert sections[-1].advanced is True, "高级组必须垫底其所属标签页"
+            else:
+                assert all(section.advanced is False for section in sections)
     finally:
         dialog.close()
 
@@ -347,8 +323,7 @@ def test_v2_new_advanced_groups_fit_the_compact_content_width(tmp_path, monkeypa
         dialog.resize(dialog.minimumSize())
         dialog.show()
         groups = {}
-        for key, domain in (("harness_autostart", "常规"),
-                            ("music_player_detect", "桌宠")):
+        for key, domain in (("harness_autostart", "常规"),):
             section = _section_of(dialog, key)
             section.toggle.setChecked(True)
             groups[key] = _page(dialog, domain)[1]
@@ -369,16 +344,6 @@ def test_v2_new_advanced_groups_fit_the_compact_content_width(tmp_path, monkeypa
         dialog.close()
 
 
-def test_v2_group_title_degrades_without_a_foobar_row():
-    """非 Windows（无标题格式行）时组名不含不存在的行：「播放器路径（高级）」。"""
-    host = type("H", (), {"foobar_title_format_edit": None})()
-    assert settings_music.advanced_group_title(host) == "播放器路径（高级）"
-    host2 = type("H", (), {"foobar_title_format_edit": object()})()
-    expected = ("播放器路径与标题格式（高级）" if sys.platform == "win32"
-                else "播放器路径（高级）")
-    assert settings_music.advanced_group_title(host2) == expected
-
-
 def test_v1_long_hints_fit_their_labels_at_compact_width(tmp_path, monkeypatch):
     """长 hint 在最小窗口下按宽度换行、不纵向裁切（GATES §3「长文案」硬项）。
 
@@ -389,8 +354,6 @@ def test_v1_long_hints_fit_their_labels_at_compact_width(tmp_path, monkeypatch):
         dialog.resize(dialog.minimumSize())
         dialog.show()
         keys = ["drop_gravity", "harness_autostart", "harness_launch_target"]
-        if sys.platform == "win32":
-            keys += ["foobar_lyrics", "foobar_title_format"]
         for key in keys:  # 折叠组先展开，否则子行的几何是陈旧值（量不出裁切）
             section = _section_of(dialog, key)
             if section.advanced:
@@ -447,19 +410,10 @@ def test_v3_agent_box_is_collapsed_and_only_holds_the_chime_rows(tmp_path, monke
 
 # ------------------------------------------------------------------------ V4 搜索
 def test_v4_search_expands_new_advanced_groups_and_reveals_the_row(tmp_path, monkeypatch):
-    """搜「标题格式」→ 展开「播放器路径与标题格式（高级）」；搜「自启」回车遍历
-    两次到 harness 两行 → 展开「启动项（高级）」。命中行必须**实际可见**。"""
+    """搜「自启」回车遍历两次到 harness 两行 → 展开「启动项（高级）」。
+    命中行必须**实际可见**。"""
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        # 标题格式（含 foobar 的平台才有这一行；非 Windows 跳过该段）
-        if sys.platform == "win32":
-            row = _search(dialog, "标题格式")
-            assert row.objectName() == "settingRow_foobar_title_format"
-            section = _section_of(dialog, "foobar_title_format")
-            assert section.toggle.isChecked() is True, "命中折叠组内的行必须自动展开"
-            assert not section.card.isHidden()
-            assert row.isVisibleTo(_current_page(dialog))
-
         # 自启：autostart → harness_autostart → harness_launch_target（回车遍历）
         for presses in (1, 2):
             row = _search(dialog, "自启", presses=presses)

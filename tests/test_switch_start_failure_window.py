@@ -209,8 +209,8 @@ def test_close_drops_pending_switch_retry(app, tmp_path):
 def test_close_stops_all_activity_timers(app, tmp_path):
     """P1-1（生命周期）：closeEvent 必须停掉全部活动定时器，而非只停 self_talk/retry。
 
-    回归背景：closeEvent 此前漏停 _move_timer/_squash_timer/_physics_timer/
-    _music_sing_timer。这些 QTimer(self) 子对象在 win.close()（只隐藏不销毁）
+    回归背景：closeEvent 此前漏停 _move_timer/_squash_timer/_physics_timer。
+    这些 QTimer(self) 子对象在 win.close()（只隐藏不销毁）
     之后仍残留单次 timeout，后续测试的 processEvents 触发悬空指针
     （崩溃点漂移、exit 139 的来源之一）。统一由 _stop_all_timers 收口。
     """
@@ -218,7 +218,7 @@ def test_close_stops_all_activity_timers(app, tmp_path):
     win = _make_win(tmp_path, lib)
     # 直接置为活跃以覆盖 closeEvent 的计时器收口面（不依赖真实鼠标/物理事件时序）
     timers = (
-        "_move_timer", "_squash_timer", "_physics_timer", "_music_sing_timer",
+        "_move_timer", "_squash_timer", "_physics_timer",
         "_self_talk_timer", "_animation_gap_timer", "_switch_retry_timer",
         "_drag_move_timer",
     )
@@ -553,7 +553,7 @@ def test_link_idle_keeps_non_link_retry(app, tmp_path):
 def test_switch_unknown_animation_name_is_refused_safely(app, tmp_path):
     """DLC 守卫：目标动画名不在素材库时 _switch 判失败且不崩溃、不换动画。
 
-    换角色（同路径替换素材）后，写死名的直传路径（余额档位/唱歌等）可能
+    换角色（同路径替换素材）后，写死名的直传路径（余额档位等）可能
     请求当前角色没有的动画；lib.movie(name) 的 KeyError 绝不能崩进 GUI 线程。
     """
     lib = FakeLibrary()

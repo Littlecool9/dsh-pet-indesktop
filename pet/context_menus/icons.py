@@ -456,7 +456,7 @@ def vector_menu_icon(menu: QMenu, name: str, size: int | None = None) -> QIcon:
     elif name in {"tools", "functions"}:
         painter.drawRoundedRect(QRectF(1.5, 2.0, 13.0, 12.0), 2.0, 2.0)
         painter.drawLine(QPointF(5.0, 5.0), QPointF(11.0, 11.0)); painter.drawEllipse(QPointF(4.5, 4.5), 1.5, 1.5); painter.drawEllipse(QPointF(11.5, 11.5), 1.5, 1.5)
-    elif name in {"sound", "speaker", "music"}:
+    elif name in {"sound", "speaker"}:
         # 扬声器图标
         path.moveTo(3.0, 6.0)
         path.lineTo(6.0, 6.0)
