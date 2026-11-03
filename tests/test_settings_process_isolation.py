@@ -279,11 +279,7 @@ def test_apply_external_config_change_fans_out_to_all_instances(tmp_path, monkey
     class _Inst:
         def __init__(self):
             self.win = mock.Mock()
-            self.prewarm = 0
             self.chats = 0
-
-        def _sync_animation_prewarm(self):
-            self.prewarm += 1
 
         def _refresh_chat_windows(self):
             self.chats += 1
@@ -297,7 +293,6 @@ def test_apply_external_config_change_fans_out_to_all_instances(tmp_path, monkey
     shell._apply_external_config_change()
     for inst in shell._instances:
         inst.win.refresh_pet_settings.assert_called_once_with()
-        assert inst.prewarm == 1
         assert inst.chats == 1
 
 

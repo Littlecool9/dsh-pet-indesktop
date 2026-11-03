@@ -277,20 +277,6 @@ if (-not $SkipBuild) {
         Write-Host "[frameseq] frame-sequence material OK" -ForegroundColor Green
     }
 
-    # 采集后端硬门（2026-10-11）：游戏帧率段的读数是子进程跑官方独立程序拿到的，
-    # 程序本体随 Windows 包分发（resources\presentmon\，见下面的 --add-data）。
-    # 缺件或换版时产品**不崩**——那一段按 unsupported 不占位、卡片写"缺少内置采集
-    # 程序"，于是少打了后端的包在界面上看起来完全正常，只是这个功能永远不出数。
-    # 这里在 PyInstaller 起跑前按 pet\game_fps.py 的单一真相源（文件名 + SHA256）
-    # 再叠一条产品自己没做的架构校验（必须 x86-64：上游 x64 与 ARM64 是两个文件，
-    # 混进 ARM 二进制的话在 ARM 机器上会得到一段永远采不到数的读数），非零即中止。
-    # 非 Windows 平台（build_linux.sh / build_macos.sh）不加载也不捆这个后端：
-    # pet\game_fps.py 在那两个平台上整段按 unsupported 呈现。
-    Write-Host "[presentmon] verifying bundled game-FPS capture backend..." -ForegroundColor Cyan
-    python scripts\verify_presentmon.py
-    if ($LASTEXITCODE -ne 0) { throw "verify_presentmon failed: $LASTEXITCODE" }
-    Write-Host "[presentmon] capture backend OK" -ForegroundColor Green
-
     # 本地 OCR 模型硬门（2026-10-13）：快速识屏的「截图提取文字」走随包的三个
     # ONNX 模型（resources\rapidocr_models\，30.3 MiB / 31.7 MB 实测，见下面的
     # --add-data）。
@@ -398,7 +384,6 @@ if (-not $SkipBuild) {
         --add-data "LICENSE;." `
         --add-data "THIRD_PARTY_NOTICES.md;." `
         --add-data "integrations;integrations" `
-        --add-data "resources\presentmon;resources\presentmon" `
         @rapidocrData `
         @rapidocrHidden `
         @excludes `
@@ -616,22 +601,8 @@ function Wait-SmokeWindow {
     throw "[smoke] $Label running but no window appeared within ${TimeoutSec}s - $NoWindowHint"
 }
 
-# ---------- 采集后端随包校验（游戏帧率，2026-10-11） ----------
-# 上面那条门只证明**源目录**里的后端是校验过的那一个；`--add-data` 只保证"源目录
-# 存在就拷"——源目录缺失时 PyInstaller 一个错都不报，产物里就没有这个后端，而产品
-# 界面看不出来（那一段按 unsupported 不占位）。所以在产物里按**同一份**判据再验一次
-# （文件名 / sha256 / x86-64），缺件、拷坏、被后续步骤删掉都在这里中止。
-# 文件名从 pet\game_fps.py 读，不在本脚本里写第二份字面量（换版本只需改产品常量）。
-$backendName = (& python -c "from pet import game_fps; print(game_fps.BACKEND_EXE_NAME)").Trim()
-if (-not $backendName) { throw "[presentmon] cannot resolve BACKEND_EXE_NAME from pet/game_fps.py" }
-$backendInBundle = Join-Path $appDir ("_internal\resources\presentmon\" + $backendName)
-Write-Host "[presentmon] verifying bundled backend in the built app..." -ForegroundColor Cyan
-python scripts\verify_presentmon.py --path $backendInBundle
-if ($LASTEXITCODE -ne 0) { throw "[presentmon] bundled capture backend missing or corrupt" }
-Write-Host "[presentmon] bundle carries the capture backend + its license" -ForegroundColor Green
-
 # ---------- 本地 OCR 随包校验（快速识屏，2026-10-13） ----------
-# 同 presentmon 的理由：上面那条门只证明**源目录**里的东西是校验过的那一份；
+# 上面那条门只证明**源目录**里的东西是校验过的那一份；
 # 产物里缺件、拷坏、被瘦身误删都在这里兜住。判据来自 pet\screen_capture\ocr.py
 # 的单一真相源（脚本自己读，本文件不抄第二份文件名/摘要）。
 #

@@ -3,13 +3,13 @@
 
 背景：overlay 拓扑不建 ``PetWindow``（``PetInstance.win`` / ``AppShell.win`` 恒
 None），而一批 app 级服务仍只认 ``win``：完整聊天窗打不开、报时/待办落到
-系统通知、定时余额直接 return、省电开关保存后不生效、隐藏提示读不到托盘、设置页
+系统通知、定时余额直接 return、隐藏提示读不到托盘、设置页
 已开时静默无反应。
 
 装配口径：**真 AppShell + 真 PetInstance + 真 OverlayShell 最小构造**（屏/sprite
 工厂替身，同 ``tests/test_overlay_*.py`` 的 ``_make_shell``）；只有素材库
 （ffmpeg 子进程）、网络线程与凭据库是不可在单测里跑的边界，用替身。
-``PetInstance`` 走真实实现（``open_chat`` / ``_sync_animation_prewarm`` /
+``PetInstance`` 走真实实现（``open_chat`` /
 ``_notify_pet_hidden``），不 mock 产品对象。
 
 纪律：offscreen；同步直调，不 sleep 赌时序。
@@ -480,32 +480,6 @@ def test_show_balance_uses_overlay_host(tmp_path, monkeypatch):
         # 异步结果回填同样走壳（缓存/网络两条路径共用 _show_balance_payload）
         shell._balance_bridge.done.emit(True, {"text": "余额 12.34", "info": {"total": 12.34}})
         assert "12.34" in _bubble_text(overlay)
-    finally:
-        _teardown(overlay)
-
-
-# ---------------------------------------------------------------- A4 预热开关
-def test_prewarm_sync_reaches_overlay_libraries(tmp_path):
-    """省电模式保存后 ``_sync_animation_prewarm`` 必须落到 sprite 壳的库上
-    （主宠 + 已生子宠），此前 overlay 下 win=None 直接 return。"""
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        main_lib = overlay.lib
-        assert isinstance(main_lib, _HostLibrary), "主库必须来自本用例的替身（前置不成立）"
-        overlay.spawn_pet()
-        assert overlay._spawned, "spawn_pet 未产出子宠（用例前置不成立）"
-        child_lib = overlay._spawned_libs[overlay._spawned[0]]
-
-        inst._sync_animation_prewarm()          # 省电关（默认）→ 预热开
-        assert main_lib.prewarm_calls == [(True, False)]
-        assert child_lib.prewarm_calls == [(True, False)]
-
-        inst.config.set("idle_low_fps_enabled", True)
-        inst.config.save()
-        inst._sync_animation_prewarm()          # 保存后立即生效，不必等下次启动
-
-        assert main_lib.prewarm_calls[-1][0] is False
-        assert child_lib.prewarm_calls[-1][0] is False
     finally:
         _teardown(overlay)
 

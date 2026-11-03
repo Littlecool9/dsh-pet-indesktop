@@ -435,7 +435,9 @@ def test_save_and_exit_button_asks_for_the_save_icon(tmp_path, monkeypatch):
 #: "代表长期独立用户目标、预计包含**至少两个**稳定设置组"。下面这两个域是该判据落地之前
 #: 就在的既成事实，作为快照豁免；它们现在是 1 组就写 1 组——将来变多，这条断言会逼你更新
 #: 快照，免得豁免名单悄悄扩大成垃圾桶。
-DOMAINS_WITH_ONE_GROUP = {"语音"}
+# 「桌面组件」在删掉灵动岛内置指标（含「网络延迟检测」组）后只剩胶囊一组；阶段 2 把灵动岛
+# 拆成模块时会重排设置域，届时再决定它是并入别的域还是补回第二组。
+DOMAINS_WITH_ONE_GROUP = {"语音", "桌面组件"}
 
 
 def test_new_top_level_domain_must_own_at_least_two_setting_groups(tmp_path, monkeypatch):

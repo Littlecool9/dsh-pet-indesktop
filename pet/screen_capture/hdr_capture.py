@@ -20,8 +20,7 @@ DisplayConfig 判定 → ``DuplicateOutput1`` 抓 FP16 → 按 SDR 白点归一 
 sRGB 编码）。本模块的差异都写明了理由：
 
 - **纯 ctypes，不引 comtypes**：仓库里的 DXGI 用法（``.scratch/screen-capture/
-  probe_hdr.py``、``pet/gpu_monitor.py``）一律是 ctypes 手写虚表调用，沿用同一
-  套路可以不动依赖与打包脚本；
+  probe_hdr.py``）一律是 ctypes 手写虚表调用，沿用同一套路可以不动依赖与打包脚本；
 - **开复制会话时 ``DuplicateOutput1`` 之后还有经典 ``DuplicateOutput`` 兜底**，
   且**判据落在"这一帧是不是 FP16"上**：只有 ``DuplicateOutput1`` 给的才是带真实
   内容的 FP16 帧；经典接口的稳态帧是 BGRA8（唯一那张 FP16 是未初始化的全零面），

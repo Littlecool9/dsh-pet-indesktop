@@ -482,11 +482,9 @@ class PetInstance:
     # ------------------------------------------------------------ 窗口构建
     def _create_library(self, character_id: str) -> MovieLibrary:
         # 预热策略：默认 balanced（瞬时交互核 pinned 预热首帧，随机动作池
-        # 按需解码）。预热开关已并入省电模式：省电开启 = 闲置降帧 + 关闭
-        # 后台预热（此处经 prewarm_enabled 传入，设置保存后由
-        # _sync_animation_prewarm 同步）。media_prewarm 键保留给高级用户。
+        # 按需解码）。media_prewarm 键保留给高级用户。
         prewarm = str(self.config.get("media_prewarm", "balanced") or "balanced")
-        # 首帧缓存全局预算（高级用户可在 config.json 调小，省电/低配机用）；
+        # 首帧缓存全局预算（高级用户可在 config.json 调小，低配机用）；
         # 进程级设置，幂等，切角色重复调用无害。
         webm_clip_mod.set_first_frame_budget(
             int(self.config.get("first_frame_cache_max_mb", 8)) * 1024 * 1024
@@ -494,7 +492,6 @@ class PetInstance:
         lib = MovieLibrary(
             character_id=character_id,
             prewarm_policy=prewarm,
-            prewarm_enabled=not bool(self.config.get("idle_low_fps_enabled", False)),
         )
         # UI 就绪后统一调度预热：高优先级立即后台跑（带 0~0.05s 错峰），
         # 随机动作池延迟 2s 补全，避免多开启动时 ffmpeg 进程洪峰。
@@ -1039,45 +1036,10 @@ class PetInstance:
             # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
             shell._sync_todo_service()
             shell._sync_chime_service()
-            self._sync_animation_prewarm()
             self._refresh_chat_windows()
         # 台词可能刚被改动：把还没有本地音频的句子交给后台补齐（开关默认关闭，
         # 关着时这里是 no-op；点了「编辑点击动画绑定」后直接 Esc 关设置也能一起收）
         self.shell.precache_self_talk_voice("设置保存后")
-
-    def _sync_animation_prewarm(self) -> None:
-        """设置保存后把预热状态同步到当前素材库（幂等）。
-
-        预热开关已并入省电模式（省电 = 闲置降帧 + 不预热）：省电模式开启时
-        关闭后台预热，关闭时恢复。上游 PR73 的独立 animation_prewarm_enabled
-        键已移除（8MB 首帧预算下其省内存的价值主张不成立）。
-
-        overlay 拓扑没有 PetWindow（``self.win`` 恒 None），素材库挂在 sprite 壳上
-        ——漏掉这条回退，设置页保存省电模式后要等下次启动/切角色才生效。
-        """
-        win = self.win
-        if win is not None:
-            libs = [getattr(win, "lib", None)]
-            visible = None
-            is_visible = getattr(win, "isVisible", None)
-            if callable(is_visible):
-                visible = bool(is_visible())
-        else:
-            shell = getattr(self.shell, "_overlay_shell", None)
-            if shell is None:
-                return
-            # 主宠 + 已生子宠各自的库（口径同 overlay_shell 的退出收口遍历）
-            libs = [getattr(shell, "lib", None)]
-            libs.extend(lib for lib in getattr(shell, "_spawned_libs", {}).values())
-            visible = None
-            is_visible = getattr(shell, "isVisible", None)
-            if callable(is_visible):
-                visible = bool(is_visible())
-        enabled = not bool(self.config.get("idle_low_fps_enabled", False))
-        for lib in libs:
-            setter = getattr(lib, "set_prewarm_enabled", None)
-            if callable(setter):
-                setter(enabled, visible=visible)
 
     # ------------------------------------------------------------ 其它窗口级
     def sync_look_to_chat(self, user_text: str, reply: str) -> None:
@@ -1780,10 +1742,6 @@ class AppShell:
         if not self._dsh_tracker_wanted():
             threading.Thread(target=self._stop_harness_if_still_unwanted,
                              daemon=True, name="pet-harness-stop").start()
-        for inst in getattr(self, "_instances", []):
-            prewarm = getattr(inst, "_sync_animation_prewarm", None)
-            if callable(prewarm):
-                prewarm()
         for inst in getattr(self, "_instances", []):
             refresh = getattr(inst, "_refresh_chat_windows", None)
             if callable(refresh):
@@ -2501,12 +2459,6 @@ class AppShell:
         logging.info(
             "会话结束：已停止全部 ffmpeg reader（%d 个素材库收口），进入静默退出", stopped,
         )
-        # 游戏帧率采集同样是进程级资源（采集子进程 + 它那场独占 ETW 会话），会话结束
-        # 必须一并收口——否则桌宠随注销被拆掉时，那场会话与采集进程会留在系统里。
-        # ``terminate_session=False``：这条路径不派生任何进程（issue #111：关机窗口期
-        # CreateProcess 出来的进程在 DLL 初始化阶段失败，弹出阻塞关机的对话框），
-        # 所以只做有界硬停、不发官方终止命令。
-        self._teardown_fps_capture(terminate_session=False)
 
     def _release_overlay_gate(self) -> None:
         """释放桌宠单实例进程门（D4；幂等，未注入门时 no-op）。"""
@@ -2517,36 +2469,6 @@ class AppShell:
             gate.release()
         except Exception:
             logging.exception("释放桌宠单实例进程门失败")
-
-    def _teardown_fps_capture(self, *, terminate_session: bool) -> None:
-        """进程级收口游戏帧率采集（有界、幂等、**只动我们自己的会话**）。
-
-        为什么必须在 ``aboutToQuit`` / 会话结束这一层收口：岛的 ``closeEvent`` 与
-        岛的 ``aboutToQuit`` 槽只做**退订**（``FpsSlot.release`` → ``unsubscribe``），
-        而退出线程是 daemon、收口是**非阻塞**的——解释器可能在采集子进程的收口途中
-        就退出了，于是留下"采集进程 + 它那场独占 ETW 会话"。这里补上那一步有界收口
-        （``FpsHub.close``：停线程 → 停会话 → 有界 join），并且**只在进程级退出**
-        调用：正常交互（隐藏岛 / 换目标 / 关一只宠）走的仍是各岛的非阻塞路径，
-        不会被这里的等待吊住。
-
-        只操作**我们自己的**那场会话：会话名进程内唯一（``game_fps.new_session_name``），
-        终止走官方 ``--terminate_existing_session`` 指名停它——本模块永不使用
-        ``--stop_existing_session``（那是停别人的采集会话）。多宠共用一个宿主，
-        所以这里的收口对"全部退出"是恰好一次。
-
-        ``terminate_session``：正常退出（托盘退出 / 关最后一窗）为真——那条路径允许
-        派生终止命令，它是唯一能由我们保证释放 ETW 会话的方式；关机/注销为假——那条
-        路径的纪律是"静默、快速、不再派生任何进程"（issue #111），只做有界硬停。
-        """
-        try:
-            from . import island_fps as island_fps_mod
-        except ImportError:  # pragma: no cover - 纯桌宠变体没有岛模块
-            return
-        try:
-            island_fps_mod.reset_shared_hub(terminate_session=terminate_session)
-        except Exception:
-            # 退出收口是尽力而为：任何一个子系统的失败都不许挡住后面的收尾。
-            logging.exception("退出时收口游戏帧率采集失败")
 
     def _mark_session_ending(self) -> None:
         """置位进程级 ffmpeg spawn 闸门（webm_clip.set_session_ending）。
@@ -2852,11 +2774,6 @@ class AppShell:
             self._decode_hub.stop_all()
         except Exception:
             logging.exception("退出时关闭共享解码 hub 失败")
-        # 帧率段：停表 + 停采集线程 + **进程级有界收口**（全部退出才收口，与共享
-        # 子系统/解码 hub 同一条纪律）。岛自己的 aboutToQuit 槽只退订（非阻塞），
-        # 解释器可能在采集子进程与它那场独占 ETW 会话收口完之前就退出——那正是
-        # "退出后残留采集进程"的成因，所以这里补上有界收口。
-        self._teardown_fps_capture(terminate_session=True)
         # 设置页进程隔离：释放 config 目录 watcher 与两个定时器（无主 QTimer 的
         # timeout 连接会从 Qt C++ 侧强引用住本对象图，不停则阻碍回收）。
         self._teardown_config_watcher()
@@ -2871,19 +2788,10 @@ class AppShell:
         - 共享子系统经 ``SharedSubsystems._shutdown_live_for_tests`` 收口；
         - 断开 shell → app 的 aboutToQuit 连接并释放反向引用；
         - 停灵动岛碰撞体定时器并注销全局聊天订阅（同生产收口口径）；
-        - 复位**游戏帧率的进程级退出闸门**：测试直接调 ``_on_about_to_quit`` /
-          ``_on_session_end``（没走真实进程退出）会把它置位，而它在同一进程里是
-          一次性的——不复位，后面任何一个用例都再也建不出采集宿主。
 
         不做 ``_on_about_to_quit`` 的退出语义（保存位置/永久关闭写盘 worker）：
         那是「全部退出」，测试收口不得触发。
         """
-        try:
-            from . import island_fps as _island_fps
-
-            _island_fps._clear_exit_latch_for_tests()
-        except Exception:  # pragma: no cover - 纯桌宠变体没有岛模块
-            logging.debug("测试收口复位帧率退出闸门失败", exc_info=True)
         for shell in tuple(_LIVE_SHELLS):
             try:
                 service = getattr(shell, "todo_service", None)
@@ -3280,7 +3188,7 @@ class AppShell:
         """桌宠隐藏期间灵动岛反馈面是否可用（window 的联动暂停决策探针）。
 
         可用时隐藏不暂停联动监视器：DSH 事件继续驱动岛反馈气泡；
-        不可用（无聊天模块 / 岛未启用 / hidden_chat 关）时照旧暂停省电。"""
+        不可用（无聊天模块 / 岛未启用 / hidden_chat 关）时照旧暂停联动。"""
         return self._island_chat_available()
 
     def _island_feedback_bubble(self, text: str, subtitle: str = "",

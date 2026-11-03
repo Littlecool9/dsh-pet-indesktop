@@ -111,7 +111,7 @@ def test_self_talk_disabled_does_not_arm_timer(tmp_path):
 
 # ---------------------------------------------------------------- 4. 显隐对称
 def test_hide_stops_timer_and_show_reschedules(tmp_path):
-    """隐藏期 timer 停（省电、防止对不可见壳冒泡）；恢复显示重排。"""
+    """隐藏期 timer 停（防止对不可见壳冒泡）；恢复显示重排。"""
     shell, _config = _make_shell(tmp_path, _talk_values())
     try:
         shell.overlay.show()

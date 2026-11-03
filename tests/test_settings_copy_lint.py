@@ -64,17 +64,8 @@ _ROW_WHITELIST: dict[str, frozenset[str]] = {
     # 自定义台词模板是 JSON：用户要复制/粘贴的就是它。
     "dialogue_mode": frozenset({"JSON"}),
     "dialogue_template_actions": frozenset({"AI", "JSON"}),
-    # 流量/内存单位。
-    "island_network": frozenset({"KB"}),
+    # 图标单位。
     "dynamic_island_icon_value": frozenset({"MB"}),
-    # 岛指标段名：CPU/GPU 是用户日常词汇（段就叫这个名），不是实现黑话；
-    # 内存行的 hint 如实说「与 CPU 共用同一条采样线程」。
-    "island_cpu": frozenset({"CPU"}),
-    "island_mem": frozenset({"CPU"}),
-    "island_gpu": frozenset({"GPU"}),
-    # 游戏帧率段：FPS 就是这一段在用户侧的名字（同 CPU / GPU 的口径），也是用户搜索
-    # 这一行时打的词；hint 里的「Present FPS」正是在点明读数口径，不能改写掉。
-    "island_fps": frozenset({"FPS"}),
     # 「AI 回复到达」是对话功能在用户侧的通用说法。
     "dynamic_island_hidden_chat": frozenset({"AI"}),
     "dynamic_island_event_effects": frozenset({"AI"}),

@@ -61,7 +61,7 @@ def _register(**overrides) -> isl.SegmentDeclaration:
 
 # ---------------------------------------------------------------- 合法注册
 def test_register_returns_the_declaration_and_keeps_order():
-    """注册序 = 用户优先级 = 尾部先被折叠（与内置段同一口径）。"""
+    """注册序 = 用户优先级 = 尾部先被折叠。"""
     first = _register(id="wifi", label="WiFi")
     second = _register(id="temp", label="温度", max_text="88")
     assert isinstance(first, isl.SegmentDeclaration)
@@ -126,13 +126,6 @@ def test_duplicate_id_is_rejected_and_the_first_one_wins():
 def test_invalid_ids_are_rejected(bad_id):
     with pytest.raises((ValueError, TypeError)):
         _register(id=bad_id)
-
-
-@pytest.mark.parametrize("reserved", [isl.NETWORK, isl.CPU, isl.MEM, isl.GPU])
-def test_builtin_ids_are_reserved(reserved):
-    """内置段 id 是保留字：第三方注册同名 id 会与折叠/卡片索引撞车。"""
-    with pytest.raises(ValueError):
-        _register(id=reserved)
 
 
 @pytest.mark.parametrize("missing", ["id", "format_value", "max_text"])
@@ -312,12 +305,12 @@ def test_ok_snapshot_renders_label_plus_value():
 
 
 def test_declared_thresholds_feed_the_alert_pipeline():
-    """声明的阈值进既有告警判定（含滞回），第三方段与 CPU/内存同一套语义。"""
+    """声明的阈值进既有告警判定（含滞回）。"""
     _register(thresholds=(70.0, 85.0))
     assert isl.alert_thresholds("wifi") == (70.0, 85.0)
     assert isl.alert_severity("wifi", 71.0) == isl.ALERT_WARN
     assert isl.alert_severity("wifi", 90.0) == isl.ALERT_CRIT
-    # 滞回带 = crit − 3pt：83 仍在 crit 里、81 才降到 warn（与 CPU/内存同一条链）
+    # 滞回带 = crit − 3pt：83 仍在 crit 里、81 才降到 warn（同一条判定链）
     assert isl.alert_severity("wifi", 83.0, isl.ALERT_CRIT) == isl.ALERT_CRIT
     assert isl.alert_severity("wifi", 81.0, isl.ALERT_CRIT) == isl.ALERT_WARN
     assert isl.alert_severity("wifi", 10.0, isl.ALERT_CRIT) == ""

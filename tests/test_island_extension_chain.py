@@ -40,12 +40,44 @@ from pet import island_extension_host as host
 from pet import island_layout, island_segments as isl
 from pet.config import Config
 from pet.dynamic_island import DynamicIsland
-from pet.island_segments import CPU, MEM
 from tests.test_island_extension_host import (
     MANIFEST, _wait_for, _write_component,
 )
 from tests.test_island_extension_recovery import _GatedProvider
-from tests.test_island_segment_render import _StubConfig, _StubMonitor
+
+#: 两个只用于"未知段降级"路径的 id（真 Config 会按声明清单过滤掉它们，
+#: 所以这类用例用下面的替身配置）。
+CPU = "plain_a"
+MEM = "plain_b"
+
+
+class _StubConfig:
+    """最小配置替身：允许把**未归一化**的 id 塞进 ``island_metrics``。
+
+    真 ``Config`` 会把未声明的 id 归一化掉，所以"配置里残留没实现的段"这条防崩溃
+    路径只能用替身复现。
+    """
+
+    def __init__(self, **data):
+        self._data = {"dynamic_island": {
+            "enabled": True, "show_icon": True, "show_name": True, "show_info": True,
+            "info_mode": "time", "custom_text": "", "show_status": True,
+            "style": "dark",
+        }}
+        self._data.update(data)
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value) -> None:
+        self._data[key] = value
+
+    def save(self) -> bool:
+        return True
+
+    def character_alias(self, character_id: str) -> str:
+        aliases = self._data.get("character_aliases")
+        return str(aliases.get(character_id, "")) if isinstance(aliases, dict) else ""
 
 app = QApplication.instance() or QApplication([])
 
@@ -183,8 +215,7 @@ def _clean_state(tmp_path, monkeypatch):
     host.reset_cache()
     isl.clear_segments()
     yield root
-    for segment_id in [key for key in isl.ALERT_THRESHOLDS
-                       if key not in isl.BUILTIN_SEGMENT_IDS]:
+    for segment_id in list(isl.ALERT_THRESHOLDS):
         isl.drop_thresholds(segment_id)
         isl.ALERT_THRESHOLDS.pop(segment_id, None)
     isl.clear_segments()
@@ -214,10 +245,6 @@ def _config(tmp_path, *, metrics=(), **overrides) -> Config:
 
 def _patch_sampling(monkeypatch, made: list[_StubSampler], *, screen_width: int = 1400):
     """三条采样路径都换替身（本文件不验真实线程节奏），并固定屏幕。"""
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, interval: _StubMonitor(interval))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, interval: _StubMonitor(interval))
     monkeypatch.setattr(island_mod.DynamicIsland, "_make_extension_sampler",
                         lambda self, interval: made.append(_StubSampler(interval)) or made[-1])
     screen = FakeScreen(screen_width)
@@ -317,10 +344,6 @@ def _wait_paint(island: _PaintingIsland, *, timeout: float = 5.0) -> int:
 
 def _real_ext_island(config, monkeypatch, *, interval: float = 0.25) -> _PaintingIsland:
     """真第三方采样器（真线程、真 provider）+ 另两条采样路径换替身。"""
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, i: _StubMonitor(i))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, i: _StubMonitor(i))
     monkeypatch.setattr(island_mod.DynamicIsland, "_make_extension_sampler",
                         lambda self, i: host.ExtensionSampler(interval=interval))
     return _PaintingIsland(config)
@@ -443,15 +466,15 @@ def test_island_metrics_admits_declared_components_only(tmp_path, _clean_state):
     """准入看**声明清单**：声明过的收，没声明的照旧清掉。"""
     directory = _write_component(_clean_state)
     cfg = Config(base=tmp_path)
-    cfg.set("island_metrics", [CPU, EXT, "not_declared", EXT])
-    assert cfg.get("island_metrics") == [CPU, EXT]
+    cfg.set("island_metrics", [EXT, "not_declared", EXT])
+    assert cfg.get("island_metrics") == [EXT]
     assert cfg.save() is True
-    assert Config(base=tmp_path).get("island_metrics") == [CPU, EXT]
+    assert Config(base=tmp_path).get("island_metrics") == [EXT]
 
     (directory / host.MANIFEST_NAME).unlink()
     host.reset_cache()
     cfg2 = Config(base=tmp_path)
-    assert cfg2.get("island_metrics") == [CPU], "卸载（清单消失）后 id 不再合法"
+    assert cfg2.get("island_metrics") == [], "卸载（清单消失）后 id 不再合法"
 
 
 def test_declared_component_survives_a_restart(tmp_path, _clean_state):
@@ -569,7 +592,7 @@ def test_card_row_carries_unit_source_and_update_time(tmp_path, monkeypatch, _cl
 
 
 def test_alert_hysteresis_uses_the_declared_thresholds(tmp_path, monkeypatch, _clean_state):
-    """声明阈值进既有判定链：两级 + 3pt 滞回（与 CPU/内存同一条路）。"""
+    """声明阈值进既有判定链：两级 + 3pt 滞回。"""
     _write_component(_clean_state)
     island, made, _screen = _island(tmp_path, monkeypatch, metrics=[EXT])
     try:
@@ -619,8 +642,9 @@ def test_oversize_component_folds_before_the_tail_even_in_the_middle(
     """声明盒宽 >120px 的段是首批折叠候选：**它不在尾部也先折**，且计数/告警都正确。"""
     _write_component(_clean_state, "wide", manifest=WIDE_MANIFEST)
     _write_component(_clean_state)
-    island, made, screen = _island(tmp_path, monkeypatch,
-                                   metrics=[CPU, WIDE_EXT, MEM], screen_width=1400)
+    island, made, screen = _island_with_config(
+        _StubConfig(island_metrics=[CPU, WIDE_EXT, MEM]), monkeypatch,
+        screen_width=1400)
     try:
         island.show()
         app.processEvents()
@@ -653,8 +677,9 @@ def test_oversize_component_folds_before_the_tail_even_in_the_middle(
 def test_fold_unsubscribes_and_unfold_resubscribes_from_dashes(tmp_path, monkeypatch,
                                                               _clean_state):
     _write_component(_clean_state)
-    island, made, screen = _island(tmp_path, monkeypatch,
-                                   metrics=[CPU, MEM, EXT], screen_width=1400)
+    island, made, screen = _island_with_config(
+        _StubConfig(island_metrics=[CPU, MEM, EXT]), monkeypatch,
+        screen_width=1400)
     try:
         island.show()
         app.processEvents()
@@ -687,10 +712,6 @@ def test_strip_state_and_hide_stop_the_component_sampling(tmp_path, monkeypatch,
     cfg = _config(tmp_path, metrics=[EXT])
     cfg.set("dynamic_island", dict(cfg.get("dynamic_island"), edge_dock=True,
                                    dock_edge="top"))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, interval: _StubMonitor(interval))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, interval: _StubMonitor(interval))
     made: list[_StubSampler] = []
     monkeypatch.setattr(island_mod.DynamicIsland, "_make_extension_sampler",
                         lambda self, interval: made.append(_StubSampler(interval)) or made[-1])
@@ -801,10 +822,6 @@ def test_real_component_reaches_the_capsule_through_the_qt_loop(tmp_path, monkey
                                                                 _clean_state):
     """真组件 → 真采样线程 → 岛（真实 Qt 事件循环）：只断言"接线通了"。"""
     _write_component(_clean_state)
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, interval: _StubMonitor(interval))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, interval: _StubMonitor(interval))
     island = DynamicIsland(_config(tmp_path, metrics=[EXT]))
     try:
         island.show()
@@ -842,10 +859,6 @@ def test_circuit_broken_component_says_so_in_the_card(tmp_path, monkeypatch,
     _write_component(
         _clean_state,
         provider=PROVIDER_SLOW)
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, interval: _StubMonitor(interval))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, interval: _StubMonitor(interval))
     monkeypatch.setattr(
         island_mod.DynamicIsland, "_make_extension_sampler",
         lambda self, interval: host.ExtensionSampler(
@@ -874,10 +887,6 @@ def test_the_real_qt_loop_delivers_the_component_reading_to_capsule_and_card(
     （provider 真的被调）、读数却永远进不了宿主，这条用例就会红。
     """
     directory = _write_component(_clean_state, provider=PROVIDER_WAITS_FOR_RELEASE)
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, interval: _StubMonitor(interval))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, interval: _StubMonitor(interval))
     island = DynamicIsland(_config(tmp_path, metrics=[EXT]))
     try:
         island.show()
@@ -894,7 +903,7 @@ def test_the_real_qt_loop_delivers_the_component_reading_to_capsule_and_card(
 
         segment = _seg(island, EXT)
         assert segment.state == isl.STATE_OK and segment.unit == "°C"
-        assert segment.severity == isl.ALERT_WARN, "原始值 74 进了与 CPU/内存同一条阈值链"
+        assert segment.severity == isl.ALERT_WARN, "原始值 74 进了同一阈值链"
         assert island._ext_pending == set(), "拿到第一拍后不再是 pending"
         assert island._ext_samples[EXT].text == "74"
 
@@ -1107,10 +1116,6 @@ def test_deactivation_keeps_the_sampler_and_never_adds_a_second_worker(
         made.append(sampler)
         return sampler
 
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_net_monitor",
-                        lambda self, interval: _StubMonitor(interval))
-    monkeypatch.setattr(island_mod.DynamicIsland, "_make_sys_monitor",
-                        lambda self, interval: _StubMonitor(interval))
     monkeypatch.setattr(island_mod.DynamicIsland, "_make_extension_sampler", _make)
     island = DynamicIsland(_config(tmp_path, metrics=[EXT]))
     try:
@@ -1175,15 +1180,16 @@ def test_settings_page_lists_component_rows_at_the_builtin_level(tmp_path, monke
         assert cfg.get("island_metrics") == [EXT]
         assert Config(base=tmp_path).get("island_metrics") == [EXT], "重启后偏好还在"
 
-        # 与内置行同序规则：后勾的追尾，已有且仍勾的按原序在前
+        # 后勾的追尾，已有且仍勾的按原序在前
+        _write_component(_clean_state, "wide", manifest=WIDE_MANIFEST)
         dialog2 = settings_mod.ModernSettingsDialog(Config(base=tmp_path), include_ai=True)
         try:
-            dialog2.island_cpu_check.setChecked(True)
+            getattr(dialog2, f"island_{WIDE_EXT}_check").setChecked(True)
             assert dialog2._write_config() is True
         finally:
             dialog2.close()
-        assert Config(base=tmp_path).get("island_metrics") == [EXT, CPU], \
-            "组件行在典范序里排在内置行之后"
+        assert Config(base=tmp_path).get("island_metrics") == [EXT, WIDE_EXT], \
+            "后勾的组件按声明序追尾"
     finally:
         dialog.close()
 
@@ -1248,10 +1254,8 @@ def test_settings_process_reads_the_manifest_without_executing_providers(tmp_pat
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     assert payload["ids"] == ["marker"]
-    assert payload["kept"] == ["cpu", "marker"]
-    assert payload["order"][:4] == ["network", "cpu", "mem", "gpu"], \
-        "内置行的典范序不变（组件行追加在后）"
-    assert payload["order"][-1] == "marker"
+    assert payload["kept"] == ["marker"], "只有已声明组件合法"
+    assert payload["order"] == ["marker"]
     assert not (directory / "imported.flag").exists(), \
         "设置进程路径不得执行组件代码"
 

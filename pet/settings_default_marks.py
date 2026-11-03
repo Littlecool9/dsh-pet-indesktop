@@ -16,7 +16,7 @@ settings_quiet / settings_music / settings_reset_defaults
   其余控件（QDoubleSpinBox、QComboBox、ColorPicker、ResourcePathPicker、复合控件等）
   整行不参与，既不显示标记也不报错。
 - **没有可比默认值的行不显示标记**：逐服务商字段（api_url/model/api_key/…）、列表
-  成员（island_network/cpu/mem/gpu 是 ``island_metrics`` 列表的成员）、UI 记忆
+  成员（第三方组件行是 ``island_metrics`` 列表的成员）、UI 记忆
   （dialogue_scope）等，清单由 ``tests/test_settings_default_marks.py`` 的快照钉住。
 - **单项重置只改控件值**：本模块不碰 ``Config``，也不新增任何写回路径——重置把控件
   设回默认值后，落盘时机跟着**该行自己的保存语义**走，与本模块无关：即时生效型开关
@@ -97,7 +97,6 @@ _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
     "click_self_talk_speak": "self_talk_speak_enabled",
     "click_self_talk_precache": "self_talk_voice_precache_enabled",
     "golden_spin_click": "golden_spin_on_click",
-    "idle_low_fps": "idle_low_fps_enabled",
     # 桌宠
     "edge_probe": "edge_probe_enabled",
     "collision_sound_volume": ("collision_sound_volume", 100),

@@ -156,16 +156,6 @@ DRAG_MOVE_COALESCE_MS = 8
 # （780 贴地回正）——400 是"视觉上明显已减速"的中段。
 THROW_SLOW_ANIM_SPEED = 400.0
 
-# ---- 闲置降帧（性能调研 §4.3；批11 联动解码节流）----
-# 长时间不碰桌宠且可见时动画降帧。批11 起解码/消费联动降速：
-# reader 入队由超时丢帧改为有界阻塞，被丢弃的帧在 reader 侧未解码。
-# 节流路径仍每帧消费源帧（帧号锚定源时间线），动画时长随解码减半。
-# 默认闲置阈值 30 秒（idle_low_fps_threshold）；开关默认关（灰度）。
-IDLE_LOW_FPS_DEFAULT_THRESHOLD = 30.0
-# 降帧除数：每 N 帧发布 1 帧（2=半帧率）；批11 起同时是解码节流比率。
-# 节流比率可配的预留接口：替换 _sync_movie_throttle 里的 divisor 即可。
-IDLE_LOW_FPS_DIVISOR = 2
-
 # ---- 帧快路径素材内容弱指纹（P2）----
 # mtime+size 无法识别同尺寸原地替换，补首尾块指纹兜底；按固定间隔刷新，
 # 稳态零文件 I/O，内容被替换时最迟一个刷新周期内触发重建。
@@ -354,7 +344,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
     _draw_delta = QPoint(0, 0)
 
     def __init__(self, lib: MovieLibrary, config: Config,
-                 broker_facade=None, *, clock=None, agent_link_manager=None, proactive_watcher=None) -> None:
+                 broker_facade=None, *, agent_link_manager=None, proactive_watcher=None) -> None:
         super().__init__()
         self.lib = lib
         self.cfg = config
@@ -371,15 +361,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         # _broker_shareable() 变 False，若按当下开关判定，收尾会被跳过，
         # 发布 session 残留到 shutdown。
         self._broker_registered: tuple | None = None
-        # 闲置降帧的单调时钟（可注入，测试用假时钟控制时间流逝，零抖动）。
-        # 注意：只用 time.monotonic 语义的时钟——绝不使用 wall clock。
-        self._clock = clock if callable(clock) else time.monotonic
-        self._last_activity_ts = self._clock()
-        self.idle_low_fps_enabled = bool(config.get('idle_low_fps_enabled', False))
-        self.idle_low_fps_threshold = max(
-            1.0, min(3600.0, float(config.get('idle_low_fps_threshold',
-                                              IDLE_LOW_FPS_DEFAULT_THRESHOLD)))
-        )
         self.on_switch_character = None  # 由 app 注入，用于运行时切换角色
         self.on_open_chat = None
         self.on_open_quick_chat = None
@@ -774,117 +755,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
     def collision_sound_volume(self, value: float) -> None:
         self.cfg.set('collision_sound_volume', float(value))
 
-    # ================================================================ 闲置降帧（性能调研 §4.3）
-    def mark_activity(self) -> None:
-        """记录一次用户/联动交互，刷新"最近活跃"时刻（单调时钟）。
-
-        闲置降帧的时间线锚点：任何交互都刷新"最近活跃"时刻，下一帧动画
-        立即恢复全帧率呈现。
-
-        活跃度判定范围（进入闲置降帧前的计时锚点）：
-        - 鼠标：到达桌宠窗口的按下/移动/松手（含点击、拖拽、弹弓瞄准；
-          平台穿透 mask 已挡住透明区域，能到达窗口的鼠标事件视为用户注意，
-          左右留白收到事件也计入——这是设计选择而非误计）；
-        - 键盘：被窗口消费的按键（ESC 取消弹弓等，keyPressEvent）；
-        - 失焦取消弹弓（focusOutEvent）；
-        - 右键菜单弹出（_show_context_menu）；
-        - Agent 联动事件与 request_link_anim；
-        - 显示恢复（showEvent）。
-
-        不计入的范围（自动产生的视觉/物理活动，不算用户活跃）：
-        - 自动动画链/自动移动/物理抛掷/碰撞反弹/弹弓物理 tick
-          ——否则桌宠持续自动活动将永不进入降帧；
-        - 未到达窗口或被窗口忽略的输入。
-        """
-        self._last_activity_ts = self._clock()
-        # 任何交互立刻回满帧率：同步把解码节流关掉（幂等，非 WebMClip /
-        # 本就未节流时为 no-op），不等下一帧 _on_frame 才恢复（响应更快）。
-        self._sync_movie_throttle(False)
-
-    def _agent_busy(self) -> bool:
-        """Agent 联动忙碌（dsh 等正在干活）视为活跃，不降帧。"""
-        mgr = getattr(self, 'agent_link_manager', None)
-        if mgr is None:
-            return False
-        any_busy = getattr(mgr, 'any_busy', None)
-        return bool(any_busy()) if callable(any_busy) else False
-
-    def _idle_reduction_active(self) -> bool:
-        """闲置降帧门控：开关开 + 窗口可见 + 超过闲置阈值 + 无活跃按压/菜单 + Agent 不忙。
-
-        隐藏/不可见时维持现有全停语义（_hidden_paused 时动画本就停着），
-        这里返回 False 表示不额外降帧；按住/菜单打开/Agent 干活都算活跃。
-        """
-        if not self.idle_low_fps_enabled:
-            return False
-        if self._hidden_paused or not self.isVisible():
-            return False
-        if self._press_global is not None or self._context_menu_open:
-            return False
-        if self._agent_busy():
-            return False
-        return self._clock() - self._last_activity_ts >= self.idle_low_fps_threshold
-
-    @staticmethod
-    def _is_reduced_publish_frame(frame_index: int, divisor: int = IDLE_LOW_FPS_DIVISOR) -> bool:
-        """闲置降帧的隔帧发布判定（按源时间线跳帧）。
-
-        frame_index = 素材源时间线上的 0-based 显示帧索引（= elapsed video
-        time × fps；由播放器按源时间线打标，reader 队列满丢帧后仍一致，
-        与主线程消费序号无关——P1 复审）。目标呈现帧 =
-        floor(elapsed×fps/divisor)×divisor，即帧号能被 divisor 整除的帧才
-        发布（24fps 素材 → 12fps 效果）。
-
-        批11 适用范围收窄：本判定只用于**解码未联动节流**的播放器
-        （GifClip、测试替身等不支持 set_decode_throttle 的 movie）——
-        它们仍全速解码、靠这里跳帧省显示。WebMClip 的闲置降帧走
-        _sync_movie_throttle 联动（消费端 interval ×divisor + reader 背压
-        阻塞，解码速率 ≈半帧率）：消费端已按 divisor 降速，每帧都是目标
-        呈现帧，不再经过本判定（否则会把已减半的流再砍一半成 6fps）。
-        """
-        return int(frame_index) % max(1, int(divisor)) == 0
-
-    def _movie_decode_throttled(self) -> bool:
-        """当前 movie 的解码节流是否生效（WebMClip 联动后 divisor > 1）。"""
-        movie = self.movie
-        if movie is None:
-            return False
-        return getattr(movie, 'decode_throttle_divisor', 1) > 1
-
-    def _sync_movie_throttle(self, reduced: bool) -> None:
-        """闲置降帧 → 解码节流联动（批11）：把节流比率推到当前 movie。
-
-        reduced=True 时推 IDLE_LOW_FPS_DIVISOR（默认 2，可配接口——
-        未来若给节流比率单独配置，改这里一处即可，不硬编码）；False 推 1
-        恢复全速。只对暴露 set_decode_throttle 的播放器（WebMClip）生效，
-        GifClip / 测试替身自动跳过；比率未变时幂等 no-op（每帧同步调用
-        的成本仅一次 int 比较）。必须在 GUI 线程调用（触碰 movie 的 QTimer）。
-
-        批5.3 共享解码：本窗 movie 若被 hub 接管 pace（decode_pace_external），
-        其 divisor 由 hub 按「min(在挂消费者期望值)」仲裁——窗口只经
-        `_broker_facade._report_desired_throttle` 上报期望值，**不直接推 movie**，
-        避免每帧覆盖 hub。非接管（默认）路径行为逐位不变。
-        """
-        movie = self.movie
-        if movie is None:
-            return
-        setter = getattr(movie, 'set_decode_throttle', None)
-        if setter is None:
-            return
-        divisor = IDLE_LOW_FPS_DIVISOR if reduced else 1
-        hub = getattr(self, '_broker_facade', None)
-        report = getattr(hub, '_report_desired_throttle', None)
-        if getattr(movie, 'decode_pace_external', False):
-            # hub 接管源解码 pace：上报期望，由 hub 重算有效值并推给源 clip。
-            if callable(report):
-                report(movie, divisor)
-            return
-        if getattr(movie, 'decode_throttle_divisor', 1) != divisor:
-            setter(divisor)
-        # 本窗是 fan-out 参与方（源或订阅者）时上报期望，让 hub 重算源 pace。
-        if callable(report):
-            report(movie, divisor)
-
     def _arm_screen_restore_retry(self, *args, **kwargs):
         """Compatibility delegation (window_placement.arm_screen_restore_retry)."""
         return window_placement.arm_screen_restore_retry(self, *args, **kwargs)
@@ -1121,9 +991,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             self._hidden_paused = False
             self._phys_vel[:] = [0.0, 0.0]
             self._resume_activity()
-            # 恢复显示 = 用户重新看着桌宠：重置闲置计时，重新以全帧率呈现
-            # （只有再闲置 idle_low_fps_threshold 秒才进入降帧）
-            self.mark_activity()
         music_timer = getattr(self, "_music_sing_timer", None)
         if getattr(self, "_music_sing_enabled", False) and music_timer is not None and music_timer.isActive():
             QTimer.singleShot(0, self, self._check_music_sing)
@@ -1498,11 +1365,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         movie = self.lib.movie(name)
         self._connect_movie(name, movie)
         self.movie = movie
-        # 批11：切换动画时按当前门控同步解码节流（在 start() 之前——start
-        # 里会用 _timer_interval 重设 QTimer interval）。clip 实例被库缓存
-        # 复用，上次播放遗留的 divisor 必须在此对齐当前门控，否则切到闲置
-        # 动画时可能以错误的节流状态开播最多一帧。
-        self._sync_movie_throttle(self._idle_reduction_active())
         movie.stop()
         # _switch 切动画必须从头播：stop() 若触发圈末软停驻留（_soft_parked），
         # start() 会走续圈路径直接返回、不重置 queue/frame_index，导致动画从
@@ -1607,8 +1469,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self._collision_local_bounds = None
         self._ended_fired = False
         self.movie = movie
-        # 批11：idle 回退同样按当前门控对齐解码节流（见 _switch 同名调用）。
-        self._sync_movie_throttle(self._idle_reduction_active())
         movie.stop()
         # 同 _switch：idle 回退也必须从头播，清除圈末软停驻留态。
         movie._soft_parked = False
@@ -1681,8 +1541,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         B7 复审 R2：新的联动请求覆盖旧的联动失败重试（同一请求流，最新
         覆盖旧的），避免旧重试在 1.5s 后顶掉新联动动作。
         """
-        # 联动请求 = 联动事件：刷新闲置降帧的活跃锚点
-        self.mark_activity()
         if self._pending_switch_link:
             self._cancel_pending_switch_retry()
         self._pending_link_anim = name
@@ -1740,24 +1598,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             plan['anchor_frames'] = float(frames_elapsed)  # 帧到达再锚定：帧号仍是位置权威
             plan['anchor_time'] = time.monotonic()
             self._move_window_towards(*move_position_at_frame(plan, frames_elapsed))  # 帧驱动位移：与墙钟解耦
-        reduced = self._idle_reduction_active()
-        # 批11 解码节流联动：把当前门控状态推给 movie（WebMClip 消费端
-        # interval ×divisor + reader 背压阻塞，解码速率 ≈半帧率）。推送先于
-        # 发布判定：WebMClip 在门控生效的那一帧起即按节流语义发布（见下）。
-        self._sync_movie_throttle(reduced)
         self._predict_prewarm(name, n)  # 批10-A1 帧驱动前置：墙钟剩余≤lead 时掷骰+预热
-        if (reduced and not self._movie_decode_throttled()
-                and not self._is_reduced_publish_frame(n)):
-            # 闲置降帧（解码未联动节流的播放器：GifClip / 测试替身）：
-            # 按时间线跳帧呈现（24fps 素材 → 12fps 效果），本帧不发布——
-            # 命中测试继续使用最近一次已发布的 alpha 图，不逐帧重建。
-            # WebMClip 节流路径消费端已按 divisor 降速、每帧都是目标呈现
-            # 帧，不经过本判定（否则会把已减半的流再砍一半成 6fps）；
-            # 帧号锚定（显示帧索引 = 源时间线）在两路径都不变。
-            # 末帧的动画链推进绝不能因跳帧而丢（否则停在最后一帧）。
-            if is_last and not self._ended_fired:
-                self._end_move_or_anim(name)
-            return
         self._rebuild_frame()
         self.update()
         if is_last and not self._ended_fired:
@@ -3063,10 +2904,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self._drag_move_pending = None
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        # 任何到达桌宠窗口的按下都是"鼠标命中"：立即回满帧率（闲置降帧锚点）。
-        # 窗口透明区域在 Windows 逐像素穿透/非 Windows mask 下不会收到事件，
-        # 因此能到达这里的一定是用户真的在点桌宠。
-        self.mark_activity()
         buttons = event.buttons() | event.button()
         if event.button() == Qt.MouseButton.RightButton and buttons & Qt.MouseButton.LeftButton:
             if (self._interaction_state == "DRAGGING" and self.slingshot_enabled
@@ -3116,8 +2953,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        # 拖拽/弹弓瞄准中的移动 = 交互：刷新闲置降帧的活跃锚点
-        self.mark_activity()
         buttons = event.buttons() | getattr(event, "button", lambda: Qt.MouseButton.NoButton)()
         if self._interaction_state == "SLINGSHOT_AIMING":
             self._update_slingshot_aim(event.globalPosition().toPoint())
@@ -3191,8 +3026,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         event.accept()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        # 松手 = 交互结束事件：同样刷新活跃锚点（点击/拖拽松手都算"碰过"）
-        self.mark_activity()
         if event.button() == Qt.MouseButton.RightButton and self._interaction_state == "SLINGSHOT_AIMING":
             self._cancel_slingshot_to_drag()
             event.accept()
@@ -3462,9 +3295,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Escape and self._interaction_state == "SLINGSHOT_AIMING":
-            # ESC 取消弹弓 = 被窗口消费的键盘交互：刷新闲置降帧活跃锚点
-            # （P2 顺修：键盘交互同样计活跃，任何交互立即回满帧率）。
-            self.mark_activity()
             self._cancel_slingshot_to_anchor()
             event.accept()
             return
@@ -3472,9 +3302,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
 
     def focusOutEvent(self, event) -> None:  # noqa: N802
         if self._interaction_state == "SLINGSHOT_AIMING":
-            # 失焦取消弹弓 = 被窗口消费的交互状态变更：同样刷新活跃锚点
-            # （P2 顺修：与 ESC 取消同一语义，避免取消后立刻落入降帧）。
-            self.mark_activity()
             self._cancel_slingshot_to_anchor()
         super().focusOutEvent(event)
 
@@ -3512,11 +3339,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         menu.exec(position)
 
     def _show_context_menu(self, global_pos: QPoint) -> None:
-        # 右键菜单弹出 = 用户交互：刷新闲置降帧的活跃锚点。
-        # getattr 守卫：测试桩/最小替代对象可以不实现 mark_activity。
-        mark = getattr(self, 'mark_activity', None)
-        if callable(mark):
-            mark()
         self._context_menu_anchor = QPoint(global_pos)
         # 气泡是置顶 Tool 窗口（层级高于原生菜单 popup），右键时先隐藏，
         # 避免气泡盖住菜单
@@ -3786,13 +3608,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         desired_slingshot = bool(self.cfg.get('slingshot_enabled', True))
         if desired_slingshot != self.slingshot_enabled:
             self.slingshot_enabled = desired_slingshot
-        # 闲置降帧开关/阈值即时生效（设置保存后无需重启）；降帧门控逐帧
-        # 读取这两个字段，关闭后下一帧即恢复全帧率。
-        self.idle_low_fps_enabled = bool(self.cfg.get('idle_low_fps_enabled', False))
-        self.idle_low_fps_threshold = max(
-            1.0, min(3600.0, float(self.cfg.get('idle_low_fps_threshold',
-                                                 IDLE_LOW_FPS_DEFAULT_THRESHOLD)))
-        )
         # 批10-A1 P2-2 / 批11-B1 P1-2：预测提前量与回收阈值即时生效并推送当前 clip。
         self.predict_prewarm_lead_ms = max(
             200, min(600, int(self.cfg.get('predict_prewarm_lead_ms', 350))))

@@ -3,12 +3,6 @@
 
 三个缺口（证据：.scratch/windows-parity-20260926-a/audit-20260927-swarm/raw.txt）：
 
-- T1「省电模式」（``idle_low_fps_enabled``）：文案声称「动画按半帧率呈现
-  （24fps 素材 → 12fps 效果）」。overlay 下可见帧率由素材 clip 自持定时器驱动
-  （``frameseq_clip`` 按素材 fps），与该键无关；该键的实际作用只是关闭后台动画
-  预热（``app.py``：``prewarm_enabled=not idle_low_fps_enabled``）。legacy 的
-  PetWindow 确实是降帧（``window.py`` 的 ``_idle_reduction_active`` +
-  ``_sync_movie_throttle``），故文案按拓扑分流，legacy 原文案不动。
 - T2「直播捕获兼容」（``stream_capture_mode``）：文案曾声称 overlay 下「重启后
   生效」但 overlay 全仓无消费者（``overlay_window`` 恒 FramelessTool、无
   ``set_stream_capture_mode``）→ 当时改为置灰 + 如实说明。**T4 Phase A 复盘
@@ -97,7 +91,7 @@ def _scope_note(dialog, setting_id: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# T1 省电模式
+# T2 直播捕获兼容
 # --------------------------------------------------------------------------
 @pytest.fixture
 def overlay_dialog(tmp_path, monkeypatch):
@@ -106,28 +100,6 @@ def overlay_dialog(tmp_path, monkeypatch):
     _close(dialog)
 
 
-def test_idle_low_fps_copy_matches_overlay_behaviour(overlay_dialog):
-    """overlay：只描述真实作用（停预热），不得再声称降低呈现帧率。"""
-    hint = _hint(overlay_dialog, "idle_low_fps")
-    assert "预热" in hint
-    assert "半帧率" not in hint and "12fps" not in hint
-    assert "帧率不受影响" in hint
-
-
-def test_idle_low_fps_copy_keeps_legacy_frame_reduction(tmp_path, monkeypatch):
-    """legacy：PetWindow 仍按半帧率呈现，文案逐字保持原样。"""
-    dialog = _dialog(tmp_path, monkeypatch, topology="legacy")
-    try:
-        hint = _hint(dialog, "idle_low_fps")
-    finally:
-        _close(dialog)
-    assert "半帧率" in hint
-    assert "停止后台动画预热" in hint
-
-
-# --------------------------------------------------------------------------
-# T2 直播捕获兼容
-# --------------------------------------------------------------------------
 def test_stream_capture_enabled_with_restart_level_copy_under_overlay(overlay_dialog):
     """overlay：可点 + T4 口径（重启后生效、多宠先收拢为主宠物、影响所有桌宠）。"""
     hint = _hint(overlay_dialog, "stream_capture")

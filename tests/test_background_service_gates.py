@@ -109,7 +109,6 @@ def _start_shell(tmp_path, monkeypatch, *, dsh=False, topology="legacy",
     if ui_stub:
         shell.instance._create_ui = ui_create or (lambda cid: None)
         shell.instance._apply_spawn_offset = lambda: None
-        shell.instance._sync_animation_prewarm = lambda: None
         shell.instance._refresh_chat_windows = lambda: None
         shell._apply_balance_timer = lambda: None
         shell._sync_dynamic_island = lambda: None

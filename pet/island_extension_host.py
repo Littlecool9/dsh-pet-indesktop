@@ -508,13 +508,13 @@ def declared_metric_ids() -> frozenset[str]:
 
 
 def allowed_metric_ids() -> frozenset[str]:
-    """``island_metrics`` 的**全部**合法成员：内置段 ∪ 已声明组件。
+    """``island_metrics`` 的**合法成员**：已声明组件。
 
     这是配置准入的唯一真源（``pet/config.py::_clean_island_metrics`` 与设置页
     共用它）。它**刻意不看运行期注册表**——"谁注册了谁自动合法"会让配置的合法性
     取决于进程内的注册顺序，两个进程（主进程 / 设置进程）就可能各存一份结果。
     """
-    return island_segments.BUILTIN_SEGMENT_IDS | declared_metric_ids()
+    return declared_metric_ids()
 
 
 def declared_provider_missing(segment_id: Any) -> str:

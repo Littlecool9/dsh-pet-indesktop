@@ -5,7 +5,7 @@
 
 - 这里只有"一段长什么样、摆在哪个 x、宽多少、宁可选谁先牺牲"——纯数据与纯几何，
   度量对象（``QFontMetrics`` 或测试替身）由调用方注入，本模块不引入 Qt 依赖
-  （与 ``island_segments`` / ``sys_monitor`` 同一条零 Qt 纪律）。
+  （与 ``island_segments`` 同一条零 Qt 纪律）。
 - ``dynamic_island.py`` 只管"什么时候重算、拿什么值来算、画到 QPainter 上"。
 
 为什么独立成模块：D1 的段管线已让 ``dynamic_island.py`` 净增 471 行，而收缩
@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import island_segments, net_monitor
+from . import island_segments
 
 # ---------------------------------------------------------------- 行内几何常量
 #: 统一基线：所有字号层级共用一条（胶囊垂直中心线下方 5px，见设计稿 §2.1）。
@@ -68,24 +68,6 @@ _PRIMARY_SAMPLES = {
     "balance": "余额 ¥88888.88",
     "balance_tier": "低谷 → 88:88",
 }
-#: 网络段盒宽样本：用真格式化器生成（手写样本会和 ``format_network_slot`` 的定宽
-#: 契约漂移）。取「千兆满速 + 近秒级延迟」这一**现实包络**（5 列全宽数字 + 3 位
-#: 毫秒）——包络内读数在盒内右对齐伸缩、不推邻居；包络外（G 级速率 / 四位毫秒）
-#: 由字段盒右省略护栏承接（R1 评审修复：盒宽恒为样本，采样值永不进宽度键）。
-#: 不取 G 级病态最坏形态：那会让典型读数（K 级 + 两位毫秒）在盒内留出大块空白。
-_NETWORK_BOX_SAMPLE = net_monitor.format_network_slot(
-    1023 * 1024 ** 2, 1023 * 1024 ** 2, 999.0)
-#: 设备槽段的标签（数值盒样本与单位盒内容见 ``DynamicIsland._device_segment``：
-#: ``sys_monitor.MAX_TEXT`` 经 ``island_segments.split_value_unit`` 拆成值/单位两半，
-#: 与格式化器同源）。
-_DEVICE_LABELS = {island_segments.CPU: "CPU", island_segments.MEM: "内存"}
-#: 设备槽段 id（订阅 key 同 id；cpu/mem 共用一条采样线程）。
-_SYS_METRIC_IDS = (island_segments.CPU, island_segments.MEM)
-#: GPU 段的胶囊标签。GPU **不是设备槽成员**（它的读数来自 PDH 读数器而不是 psutil
-#: 快照，订阅也走 ``subscribe_gpu`` 那本账），所以它有独立常量而不是进
-#: :data:`_DEVICE_LABELS`：那张表同时是"设备槽的段 id 集合"（胶囊分发用它）。
-_GPU_LABEL = "GPU"
-
 # ---------------------------------------------------------------- 段数据
 #: 折叠 chip 的段类型（"+N"）。它不是指标段：没有 label、不参与折叠、不画竖线、
 #: 盒宽自带内边距（见 :data:`_CHIP_PAD_PX`），文字在盒内居中而不是右对齐。
@@ -456,8 +438,7 @@ def plan_info_row(
     ``island_segments.oversize_segment_ids`` 的判决喂进来）：声明盒宽 >120px 的
     第三方段先被牺牲，**哪怕它不在列表尾部**——长段自付代价，而"尾部先折"仍然是
     其余段之间的次序。折叠计数、``+N`` chip 与实际可见段集都按这个次序算，所以
-    中间段被折不会折错段（见 :func:`apply_shrink`）。内置段默认不在候选里
-    （它们的盒宽是产品自己定的模板，不受第三方 120px 规则约束）。
+     中间段被折不会折错段（见 :func:`apply_shrink`）。
 
     逐级候选**按牺牲顺序排列**，取第一个 fits 的；一个都不 fits 就取最后一个
     （保底：头像 + 主信息 + 状态点永不折，宽度如实溢出，由绘制的截断护栏兜）。

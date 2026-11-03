@@ -124,19 +124,6 @@ GLOBAL_SCOPE_ROWS: tuple[tuple[str, str], ...] = (
     ("harness_launch_target", ALL_PETS_SCOPE_SENTENCE),
 )
 
-#: 「省电模式」（idle_low_fps_enabled）文案，按拓扑分流：
-#: overlay 下该键唯一作用是关掉后台动画预热（``app.py`` 建库与
-#: ``_sync_animation_prewarm``）；可见帧率由素材 clip 自持定时器按素材 fps
-#: 驱动，与开关无关；legacy 的 PetWindow 仍按半帧率呈现。
-IDLE_LOW_FPS_OVERLAY_HINT = (
-    "开启后停止后台动画预热（降低待机占用，首次切换动画可能略慢）。"
-    "动画帧率不受影响：闲置时的系统降载自动进行，与本开关无关。"
-)
-IDLE_LOW_FPS_LEGACY_HINT = (
-    "一段时间不操作桌宠时，动画按半帧率呈现（24fps 素材 → 12fps 效果）"
-    "并停止后台动画预热，任何交互立即恢复全帧率。"
-)
-
 #: 「自启目标」（harness_launch_target）说明文案，按桌面端能力分流（能力口径是
 #: ``harness_launcher.DESKTOP_SUPPORTED``，设置页不另写一份平台判定）。
 #:
@@ -196,13 +183,6 @@ def stream_capture_hint() -> str:
     if overlay_settings_command.env_forces_legacy():
         return STREAM_CAPTURE_HINT
     return STREAM_CAPTURE_RESTART_HINT
-
-
-def idle_low_fps_hint() -> str:
-    """「省电模式」说明文案（按渲染拓扑分流，同 ``stream_capture_hint``）。"""
-    if _is_overlay_topology():
-        return IDLE_LOW_FPS_OVERLAY_HINT
-    return IDLE_LOW_FPS_LEGACY_HINT
 
 
 def harness_target_hint(desktop_available: bool) -> str:
@@ -520,8 +500,6 @@ def build_pet_controls(host) -> None:
 
     host.self_talk_check = ToggleSwitch(host)
     host.self_talk_check.setChecked(bool(host.config.get("self_talk_enabled", False)))
-    host.idle_low_fps_check = ToggleSwitch(host)
-    host.idle_low_fps_check.setChecked(bool(host.config.get("idle_low_fps_enabled", False)))
     host.self_talk_duration_spin = BrowserDoubleSpinBox(host)
     host.self_talk_duration_spin.setRange(1.0, 300.0)
     host.self_talk_duration_spin.setSingleStep(0.5)

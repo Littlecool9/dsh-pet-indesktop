@@ -299,17 +299,14 @@ def test_voice_domain_keeps_its_self_built_cards(tmp_path, monkeypatch):
 
 # --------------------------------------------------- 桌面胶囊：压平仍是定稿口径（不动）
 def test_desktop_island_keeps_its_single_flattened_card(tmp_path, monkeypatch):
-    """「桌面胶囊（灵动岛）」的压平是定稿口径（见装配处注释），本刀不拆——只有探测
-    间隔（高级）一项另立。"""
+    """「桌面胶囊（灵动岛）」的压平是定稿口径（见装配处注释）。"""
     dialog = _dialog(tmp_path, monkeypatch)
     try:
         assert _top_level_titles(_content(dialog, "桌面组件")) == [
-            "桌面胶囊（灵动岛）", "网络延迟检测（高级）"]
+            "桌面胶囊（灵动岛）"]
         card = _section(dialog, "桌面组件", "桌面胶囊（灵动岛）")
         names = {row.objectName() for row in card.rows}
-        assert {"settingRow_dynamic_island_enabled", "settingRow_island_network",
-                "settingRow_island_cpu"} <= names, "岛行不分家，整表在同一张卡里"
-        assert "settingRow_network_probe_interval" not in names
+        assert "settingRow_dynamic_island_enabled" in names, "岛行不分家，整表在同一张卡里"
     finally:
         dialog.close()
 
@@ -916,7 +913,7 @@ def test_chips_name_their_section_and_take_keyboard_focus(tmp_path, monkeypatch)
         # 桌面胶囊（灵动岛）在装配处被压平成单卡——它也只算一个区。
         _page_widget, island_bar = _select(dialog, "桌面组件")
         assert [chip.text() for chip in _chips(island_bar)] == [
-            "桌面胶囊（灵动岛）", "网络延迟检测（高级）"]
+            "桌面胶囊（灵动岛）"]
     finally:
         dialog.close()
 

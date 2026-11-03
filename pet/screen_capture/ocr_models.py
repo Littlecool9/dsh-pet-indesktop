@@ -49,8 +49,7 @@ __all__ = [
     "resolve_model_dir",
 ]
 
-#: 模型在源码树 / 冻结包里的相对目录。冻结包按 ``sys._MEIPASS`` 为根（与
-#: ``pet/game_fps.py::bundled_backend_path`` 同一约定）。
+#: 模型在源码树 / 冻结包里的相对目录。冻结包按 ``sys._MEIPASS`` 为根。
 MODEL_RELATIVE_DIR = ("resources", "rapidocr_models")
 
 #: 三个模型文件（键就是 rapidocr 配置里的段名，注入 session 时按它对应）。
@@ -66,7 +65,7 @@ MODEL_FILES = {
 #: 要是被截断、换成了同名的另一版、或者混进别的语言模型，产品**不会崩**——识别
 #: 结果会静默变差（错字、漏行），用户只会觉得"这个识屏不准"。所以在打包阶段就按
 #: 名字 + 摘要挡住，而不是等用户发现问题。运行期**不**校验：每次启动多读 31 MB
-#: 只为一件 CI 该做的事（与 ``pet/game_fps.py::REQUIRED_SHA256`` 同一取舍）。
+#: 只为一件 CI 该做的事。
 #:
 #: 换模型版本时：改 ``MODEL_FILES`` + 本表 + THIRD_PARTY_NOTICES.md，三处必须同时改。
 MODEL_SHA256 = {
@@ -83,9 +82,8 @@ def bundled_model_dir() -> Path:
     """随包模型目录（**纯函数**，不碰文件系统，也不做回退）。
 
     冻结包取 ``sys._MEIPASS/resources/rapidocr_models``，源码运行取仓库根的同一
-    相对路径；``DSH_PET_OCR_MODEL_DIR`` 可以整个覆盖它。与
-    ``pet/game_fps.py::bundled_backend_path`` 同一套写法，理由也一样：模型必须
-    来自我们知道的那一份，不能在 PATH / 环境里"就近找一个"。
+    相对路径；``DSH_PET_OCR_MODEL_DIR`` 可以整个覆盖它。模型必须来自我们知道
+    的那一份，不能在 PATH / 环境里"就近找一个"。
     """
     override = os.environ.get(OCR_MODEL_DIR_ENV)
     if override:

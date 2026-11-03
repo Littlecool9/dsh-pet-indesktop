@@ -247,9 +247,7 @@ DIALOGUE_KEY_PARAMS = dict(PARAMETERS)
 
 # 搜索命中「被前置开关藏起来」的行时，指向必须先去打开的那一项（依赖不满足绝不
 # 自动改配置）。只登记会成为搜索目标的隐藏行；新加依赖时按需补一行。
-_SEARCH_HIDDEN_PREREQUISITES = {
-    "network_probe_interval": "island_network",
-}
+_SEARCH_HIDDEN_PREREQUISITES: dict[str, str] = {}
 
 
 def dialogue_params_hint(key: str) -> str:
@@ -638,7 +636,7 @@ class ModernSettingsDialog(QDialog):
                 island_content,
             )
         )
-        # 灵动岛指标（issue #172 + P1 Slice C）：控件/行/保存在 settings_network（行数预算原因）。
+        # 灵动岛第三方指标：控件/行/保存在 settings_network（行数预算原因）。
         island_layout.addWidget(SettingsSection(
             "桌面组件", settings_network.build_island_network_rows(self), island_content))
         island_layout.addStretch(1)
@@ -656,12 +654,6 @@ class ModernSettingsDialog(QDialog):
                     # 右键菜单的速率也只改被点的那一只），文案不许再说"所有桌宠"。
                     SettingRow("playback_speed", "播放速率", "控制这只桌宠动画的播放速度。", self.speed_select),
                     SettingRow("animation_gap", "动作等待间隔", "非待机动作之间的休息时间；0 秒表示连续播放。", self.gap_spin),
-                    SettingRow(
-                        "idle_low_fps",
-                        "省电模式",
-                        settings_pet_controls.idle_low_fps_hint(),
-                        self.idle_low_fps_check,
-                    ),
                     SettingRow("no_move", "不移动", "暂停桌宠在桌面上的自动移动。", self.no_move_check),
                     # 鼠标穿透行归「互动 · 输入」（settings_interaction 构建）。
                 ],
@@ -1772,7 +1764,7 @@ class ModernSettingsDialog(QDialog):
             "动作与碰撞",
             page_content(
                 [
-                    ("动画与移动", claim("playback_speed", "animation_gap", "idle_low_fps", "no_move")),
+                    ("动画与移动", claim("playback_speed", "animation_gap", "no_move")),
                     ("拖拽与弹射", claim("drag_physics", "drop_gravity", "throw_strength", "slingshot_enabled", "lock_position", "shift_drag")),
                     ("边缘探头", claim("edge_probe")),
                     ("生小肥鱼", claim("spawn_inherit_size", "spawn_scale", "clear_spawned_pets")),
@@ -1828,15 +1820,9 @@ class ModernSettingsDialog(QDialog):
         menu.setProperty("contentMaxWidth", 1240)
         island_rows = settings_page_guide.rows_in_layout_order(old_pages.get("灵动岛", QWidget()))  # 布局顺序，不是创建顺序
         claimed.update(island_rows)
-        # 网络延迟检测（高级）只能在**最终域装配处**拆：旧岛页整节会被摊平进同一个
-        # 「桌面胶囊（灵动岛）」卡片（R2 §一-2）。只拆探测间隔行，其余岛行不动。
-        interval_rows = [row for row in island_rows
-                         if row.objectName() == "settingRow_network_probe_interval"]
-        island_rows = [row for row in island_rows if row not in interval_rows]
         desktop_components = page_content(
             [
                 ("桌面胶囊（灵动岛）", island_rows),
-                ("网络延迟检测（高级）", interval_rows, True),
             ]
         )
         # 全行被前置开关藏起来的组不留在页面上（高级组尤其：空了就是一条误导标题）。
@@ -2272,7 +2258,6 @@ class ModernSettingsDialog(QDialog):
             self.config.set("stream_capture_mode", self.stream_capture_check.isChecked())
         self.config.set("playback_speed", float(self.speed_select.currentData()))
         self.config.set("animation_gap_seconds", self.gap_spin.value())
-        self.config.set("idle_low_fps_enabled", self.idle_low_fps_check.isChecked())
         self.config.set("self_talk_enabled", self.self_talk_check.isChecked())
         self.config.set("self_talk_bubble_style", self.bubble_style_select.currentData())
         self.config.set("self_talk_min_interval", minimum)

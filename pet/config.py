@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import catalog, island_segments, music_players
+from . import catalog, music_players
 from .focus_mode import normalize_focus_config
 
 
@@ -491,7 +491,7 @@ def _float_or_default(value, default, minimum, maximum):
         return default
     if number != number:  # NaN
         # NaN 与任何数比较都为假，max/min 的结果取决于参数顺序（实测回落到区间
-        # **上限**），是夹取夹不出来的脏值——与 net_monitor.clamp_interval /
+        # **上限**），是夹取夹不出来的脏值——与 island_extension_host.clamp_interval /
         # speech_bubble_text.clamp_bubble_text_scale 同规：回默认。
         return default
     return max(minimum, min(maximum, number))
@@ -648,21 +648,11 @@ def _clean_dynamic_island_data(value) -> dict:
     return result
 
 
-#: 灵动岛附加指标的合法 id（P1 三员 + P3 的 GPU + 游戏帧率的 FPS）。唯一来源是
-#: ``island_segments`` 的常量——这里再抄一份字面量迟早与段注册表漂移。第三方组件的 id **不在这里**：
-#: 它们来自由 ``pet/island_extension_host.py`` 读出的**声明清单**（见
-#: :func:`_clean_island_metrics`），那是主进程与设置进程读的同一份静态 metadata。
-_ISLAND_METRIC_IDS = frozenset({
-    island_segments.NETWORK, island_segments.CPU, island_segments.MEM,
-    island_segments.GPU, island_segments.FPS,
-})
-
-
 def _clean_island_metrics(value) -> list:
     """``island_metrics`` 归一化：非 list → ``[]``；非 str 丢弃；去重保首次序；未知 id 丢弃。
 
-    **合法成员 = 内置段 ∪ 已声明的第三方组件**（``island_extension_host.allowed_metric_ids``）：
-    组件的准入由**声明清单**决定，而不是"谁在运行期注册过谁就自动合法"——后者会让
+    **合法成员 = 已声明的第三方组件**（``island_extension_host.allowed_metric_ids``）：
+    段 id 的准入由**声明清单**决定，而不是"谁在运行期注册过谁就自动合法"——后者会让
     这份配置的合法性取决于进程内的注册顺序，主进程与设置进程可能各存一份结果。
     声明清单是标准库 JSON（设置进程只读静态 metadata，不执行组件代码），两个进程
     因此读的是同一份真值。
@@ -677,16 +667,17 @@ def _clean_island_metrics(value) -> list:
     """
     if not isinstance(value, list):
         return []
-    # 清单扫描失败不能连累配置加载（读目录/解析是外部输入面）：拿不到就只认内置段，
-    # 已声明组件的 id 会在下一次（扫描恢复后）重新被接受——宁可这一拍收紧，不炸启动。
+    # 清单扫描失败不能连累配置加载（读目录/解析是外部输入面）：拿不到就一个 id 都
+    # 不认，已声明组件的 id 会在下一次（扫描恢复后）重新被接受——宁可这一拍收紧，
+    # 不炸启动。
     try:
         from . import island_extension_host
 
         allowed = island_extension_host.allowed_metric_ids()
     except Exception:  # pragma: no cover - 目录不可读等极端环境
         logging.getLogger(__name__).warning(
-            "灵动岛组件声明清单不可读，本次只认内置段 id", exc_info=True)
-        allowed = _ISLAND_METRIC_IDS
+            "灵动岛组件声明清单不可读，本次不接受任何指标 id", exc_info=True)
+        allowed = frozenset()
     cleaned: list[str] = []
     for item in value:
         # bool/int 不是 str（isinstance 天然把 True 挡在外面，不做字符串化）
@@ -694,98 +685,6 @@ def _clean_island_metrics(value) -> list:
             continue
         if item not in cleaned:  # 去重保首次序 = 保用户优先级
             cleaned.append(item)
-    return cleaned
-
-
-#: 游戏帧率段（``island_metrics`` 的 fps 成员）的采集目标模式：``foreground`` = 跟随
-#: 前台程序（默认），``process`` = 只认 ``game_fps_process`` 里那个程序名。两种都是
-#: **偏好**，不是"当前前台是谁"——运行期的目标解析（含切换去抖）归采集链路，配置层
-#: 只存用户的选择。
-GAME_FPS_TARGET_MODES = ("foreground", "process")
-GAME_FPS_DEFAULT_TARGET_MODE = "foreground"
-#: 指定程序名的字符上限（进程镜像名的实际长度远小于它，限长只是护栏）。
-GAME_FPS_PROCESS_MAX_CHARS = 120
-#: 进程镜像名里允许出现的标点（字母数字走 :meth:`str.isalnum`，非 ASCII 名字照收）。
-#: 这张表是"这个值永不当命令行用"的**机器化落点**——路径分隔符 ``\ /``、引号、
-#: 控制字符与命令元字符 ``; & | $ ` < > ^ % * ? :`` 全都不在表内（也不 isalnum），
-#: 所以归一化后的值不可能是命令、不可能是路径、不可能带参数。
-_GAME_FPS_PROCESS_PUNCT = "._-+()[]#@!~"
-#: 名字**内部**允许的空格：``My Game.exe`` 是合法的 Windows 进程镜像名，而 argv 是
-#: list 传、``shell=False``，没有任何地方按空白切它。首尾空间与连续空格由
-#: :func:`_clean_game_fps_process` 收掉。
-_GAME_FPS_PROCESS_SPACE = " "
-
-
-def _game_fps_name_char(char: str) -> bool:
-    """该字符能不能出现在进程镜像名里（归一化的**唯一判据**，测试直接对账这条）。"""
-    return (char.isalnum() or char in _GAME_FPS_PROCESS_PUNCT
-            or char == _GAME_FPS_PROCESS_SPACE)
-
-
-def _clean_game_fps_target_mode(value) -> str:
-    """``game_fps_target_mode`` 归一化：枚举外的值一律回落 ``foreground``。
-
-    ``str()`` 必须在前（同 ``chat_ui_style`` 的写法）：json 合法脏值可以是 list/dict，
-    直接 ``value in {...}`` 抛 ``TypeError: unhashable type`` —— 那会让 ``Config()``
-    构造失败，启动直接崩、连独立设置页都进不去。
-    """
-    mode = str(value or "").strip()
-    return mode if mode in GAME_FPS_TARGET_MODES else GAME_FPS_DEFAULT_TARGET_MODE
-
-
-def _clean_game_fps_process(value) -> str:
-    """``game_fps_process`` 归一化：只留**一个纯 exe 名**（路径/引号/参数/元字符剥掉）。
-
-    "纯 exe 名"是**安全契约**而不是排版洁癖：这个值只被拿去和进程的镜像名比对，
-    永不拼进命令行、永不 shell、永不作为程序启动。归一化四步（**幂等**：把输出再喂
-    一次得到同一个值，所以"存进去的值每次加载都被收敛"不会滚雪球）：
-
-    ① **取最后一段路径**（``C:\\Games\\My Game\\game.exe`` → ``game.exe``）——用户直接
-       粘整条路径（含带空格的目录名）是常态，不是错误；
-    ② **剥首尾引号**（``"My Game.exe"`` → ``My Game.exe``）；
-    ③ **明显参数串整段丢掉**：从第一个以 ``-`` 开头的空白段起（含它）全部不要
-       （``game.exe --fullscreen`` → ``game.exe``、``My Game.exe -windowed`` →
-       ``My Game.exe``）。**只有这一条**按空白分段，而且只按**普通空格**分——制表符/
-       换行是控制字符，走第 ④ 步截断，不许被"合并成一个空格"粘进名字里；名字内部的
-       空格是真名字的一部分，留着（连续空格收敛成一个）；
-    ④ **从第一个非法字符处截断**（``game.exe; calc.exe`` → ``game.exe``、
-       ``$(whoami).exe`` → ``""``）——截断而不是"删掉非法字符"，免得拼出一个既不是
-       用户输入、也不对应任何进程的缝合名字；最后按 :data:`GAME_FPS_PROCESS_MAX_CHARS`
-       限长（截断后再剥一次首尾空格，否则截在空格上会让归一化不幂等）。
-
-    **为什么不按空白切 token**：这个值永不当命令行用（argv 是 list、``shell=False``），
-    而 Windows 的进程镜像名**允许空格**——分空白会把合法名字 ``My Game.exe`` 截成
-    ``My``（曾经如此），那是对用户输入的破坏，不是收紧。
-
-    非 str / 空 / 截断后不含任何字母数字 → ``""``：**空 = 没有指定**，不是"随便挑一个
-    帧率最高的程序"（不猜目标是产品口径，见设置页文案）。
-
-    **已知边界**：参数在前、名字在后（``-windowed My Game.exe``）会被整条拒成 ``""``
-    ——没有引号语法可用时，前导连字符段只能是参数；宁可让用户重填，也不把参数留在值里。
-    带非 ASCII 字母的名字（``游戏.exe``）照收（判据是 isalnum，不是 ASCII 表）。
-    """
-    if not isinstance(value, str):
-        return ""
-    text = value.strip()
-    for separator in ("/", "\\"):
-        text = text.rsplit(separator, 1)[-1]
-    text = text.strip().strip("\"'")
-    kept: list[str] = []
-    for token in text.split(_GAME_FPS_PROCESS_SPACE):
-        if not token:
-            continue
-        if token.startswith("-"):
-            break
-        kept.append(token)
-    text = _GAME_FPS_PROCESS_SPACE.join(kept)
-    cleaned = ""
-    for char in text:
-        if not _game_fps_name_char(char):
-            break
-        cleaned += char
-    cleaned = cleaned[:GAME_FPS_PROCESS_MAX_CHARS].strip()
-    if not any(char.isalnum() for char in cleaned):
-        return ""
     return cleaned
 
 
@@ -1057,8 +956,6 @@ class Config:
             "click_sound_volume": 0.70,
             "slingshot_enabled": True,  # 弹弓弹射
             "throw_strength": "standard",  # gentle / standard / strong / crazy
-            "idle_low_fps_enabled": False,  # 闲置降帧（灰度默认关）：长时间无交互时动画隔帧呈现
-            "idle_low_fps_threshold": 30.0,  # 闲置阈值（秒）：超过该时长无交互且窗口可见才降帧
             "click_show_balance": False,  # 点击显示 DeepSeek 余额
             "self_talk_speak_enabled": False,  # 点击自言自语同句朗读（复用语音报时音频通道，默认关）
             "self_talk_voice_precache_enabled": False,  # 台词/点击绑定本地语音预缓存（需本机 TTS 服务，默认关）
@@ -1116,37 +1013,11 @@ class Config:
             "character_aliases": {},  # 角色显示名别名 {角色id: 自定义名}，空名=恢复默认
             "chat_always_on_top": False,  # 聊天窗置顶
             "dynamic_island": _default_dynamic_island_data(),
-            # —— 灵动岛附加指标（P1 Slice C）——
+            # —— 灵动岛附加指标 ——
             # 岛胶囊上附加指标段的**有序列表**（段 id 字符串）。**列表序 = 用户
-            # 优先级 = 收缩时尾部先被折叠**；合法 id = 内置段（network / cpu /
-            # mem / gpu / fps，见 ``island_segments.BUILTIN_SEGMENT_IDS``）∪ 声明清单
-            # 里的组件（``_clean_island_metrics`` 是准入口径；这里刻意不写死个数——
-            # 每加一个内置段就要改一遍注释的那种计数迟早变假）。常量在
-            # island_segments，不在这里写第二份字面量。默认空 = 只要主信息，
-            # 升级用户不会突然多出指标。
+            # 优先级 = 收缩时尾部先被折叠**；合法 id = 声明清单里的第三方组件
+            # （``_clean_island_metrics`` 是准入口径）。默认空 = 只要主信息。
             "island_metrics": [],
-            # —— 游戏帧率段（island_metrics 的 fps 成员，默认关）——
-            # 采集目标：foreground（默认）= 跟随前台程序；process = 只认下面那个程序名。
-            # 只存用户的**偏好**：当前前台是谁由采集链路自己解析（含切换去抖），
-            # 配置层不记录"现在正在采谁"——那是运行状态，不是设置。
-            "game_fps_target_mode": GAME_FPS_DEFAULT_TARGET_MODE,
-            # 指定程序名（仅 process 模式消费）：**纯 exe 名**（如 game.exe）。归一化会
-            # 剥掉路径 / 参数 / 引号并按镜像名合法字符收紧（见 _clean_game_fps_process），
-            # 它永远只用来比对进程镜像名，**不会被执行**（不拼命令行、不 shell、不启动）。
-            # 空 = 没有指定（process 模式下等于"没有目标"，不是"随便挑一个"）。
-            "game_fps_process": "",
-            # —— 网络信息（issue #172）——
-            # 灵动岛信息槽改显「延迟 + 上下行网速」。默认关：延迟探测每秒要发一次
-            # 小包（单次往返在网约 160 字节，含 IP/UDP 头），属"要花流量"的能力，
-            # 必须用户显式开启；网速读网卡计数器本身零流量，但它和延迟同槽展示，
-            # 故同一个开关。
-            # **已废弃为写入来源**（P1 Slice C）：真值搬到 island_metrics 的 network
-            # 成员，本键只在**归一化阶段单向迁移**一次（判真 → 追加 network，然后
-            # 自己置回 False；加载与 set() 都会跑归一化）。保留键名只为降级读取
-            # 不炸档：旧版仍按它判断。
-            "island_network_enabled": False,
-            # 延迟探测间隔（秒），由 net_monitor.clamp_interval 夹到 [0.5, 60]。
-            "network_probe_interval_seconds": 1.0,
             # 右键菜单「网络信息」入口显隐（弹窗只在打开时取一次数据，不轮询）。
             "network_info_menu_enabled": True,
             "proactive_screen": _default_proactive_screen_data(),
@@ -1366,8 +1237,6 @@ class Config:
             "click_sound_volume",
             "slingshot_enabled",
             "throw_strength",
-            "idle_low_fps_enabled",
-            "idle_low_fps_threshold",
             "click_show_balance",
             "self_talk_speak_enabled",
             "self_talk_voice_precache_enabled",
@@ -1433,10 +1302,6 @@ class Config:
             "chat_always_on_top",
             "dynamic_island",
             "island_metrics",
-            "game_fps_target_mode",
-            "game_fps_process",
-            "island_network_enabled",
-            "network_probe_interval_seconds",
             "network_info_menu_enabled",
             "collision_enabled",
             "collision_restitution",
@@ -1782,34 +1647,12 @@ class Config:
         self.data["chat_ui_style"] = ui_style if ui_style in {"modern", "classic"} else "modern"
         self.data["chat_always_on_top"] = bool(self.data.get("chat_always_on_top", False))
         self.data["dynamic_island"] = _clean_dynamic_island_data(self.data.get("dynamic_island"))
-        # 网络信息（issue #172）三键：布尔同规防字符串布尔误开；探测间隔走
-        # net_monitor 的区间口径（0.5~60 秒）——真值与消费方共用一处实现，
-        # 不在这里另写一份 0.5/60 字面量（两份迟早漂移）。
-        from . import net_monitor as net_monitor_mod
-
-        self.data["island_network_enabled"] = _bool_or_default(
-            self.data.get("island_network_enabled"), False)
-        self.data["network_probe_interval_seconds"] = net_monitor_mod.clamp_interval(
-            self.data.get("network_probe_interval_seconds"))
+        # 网络信息菜单入口：布尔同规防字符串布尔误开。
         self.data["network_info_menu_enabled"] = _bool_or_default(
             self.data.get("network_info_menu_enabled"), True)
-        # 灵动岛附加指标（P1 Slice C）：列表归一化 + 旧键 island_network_enabled
-        # 的**单向迁移**。迁移只在旧键判真时发生一次（把 network 追加到尾部，列表序
-        # 是用户优先级，不插队），随后旧键置回 False——列表成为唯一真值，旧键不再是
-        # 第二写入来源；判假时列表原样（新用户与已迁移用户零影响）。
-        metrics = _clean_island_metrics(self.data.get("island_metrics"))
-        if self.data["island_network_enabled"]:
-            if island_segments.NETWORK not in metrics:
-                metrics.append(island_segments.NETWORK)
-            self.data["island_network_enabled"] = False
-        self.data["island_metrics"] = metrics
-        # 游戏帧率段（island_metrics 的 fps 成员）两键：枚举键同 chat_ui_style 的写法
-        # （先 str() 再判成员，list/dict 脏值不抛），程序名走"纯 exe 名"归一化
-        # （路径/参数/引号剥掉，见 _clean_game_fps_process）。
-        self.data["game_fps_target_mode"] = _clean_game_fps_target_mode(
-            self.data.get("game_fps_target_mode"))
-        self.data["game_fps_process"] = _clean_game_fps_process(
-            self.data.get("game_fps_process"))
+        # 灵动岛附加指标：列表归一化（只接受已声明的第三方组件 id）。
+        self.data["island_metrics"] = _clean_island_metrics(
+            self.data.get("island_metrics"))
         for prefix in ("chat_background", "modern_chat_background"):
             opacity_key = f"{prefix}_opacity"
             fill_key = f"{prefix}_fill"
@@ -1823,11 +1666,6 @@ class Config:
             self.data.get("modern_chat_card_opacity"), 84.0, 10.0, 100.0))
 
         self.data["slingshot_enabled"] = bool(self.data.get("slingshot_enabled", True))
-        # 闲置降帧（性能调研 §4.3）：开关默认关（灰度）；阈值夹到 [1, 3600] 秒
-        # 终审 P1-3：必须用 _bool_or_default——bool("false") is True，字符串
-        # 布尔（外部手改配置/旧版导出）会被误开；与其它布尔键同规。
-        self.data["idle_low_fps_enabled"] = _bool_or_default(self.data.get("idle_low_fps_enabled"), False)
-        self.data["idle_low_fps_threshold"] = _float_or_default(self.data.get("idle_low_fps_threshold"), 30.0, 1.0, 3600.0)
         # 上游 #60 系统通知开关：同规防字符串布尔误开（bool("false") is True）。
         self.data["system_notifications_enabled"] = _bool_or_default(self.data.get("system_notifications_enabled"), True)
         # 待办提醒：开关同规防字符串布尔误开；提前量钳到 [0, 60] 分钟（0=不提前）。
@@ -1978,8 +1816,6 @@ class Config:
             "throw_strength",
             "drop_gravity",
             "agent_link",
-            "idle_low_fps_enabled",
-            "idle_low_fps_threshold",
             "media_prewarm",
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
@@ -2006,10 +1842,6 @@ class Config:
             "chat_always_on_top",
             "dynamic_island",
             "island_metrics",
-            "game_fps_target_mode",
-            "game_fps_process",
-            "island_network_enabled",
-            "network_probe_interval_seconds",
             "network_info_menu_enabled",
         }:
             self._normalize_pet_settings()

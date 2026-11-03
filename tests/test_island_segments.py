@@ -34,6 +34,12 @@ def _qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
+#: 测试用的通用段 id（内置段已整体移除，这里只验契约本身）。
+_ALPHA = "alpha"
+_BETA = "beta"
+_GAMMA = "gamma"
+
+
 @pytest.fixture(autouse=True)
 def _clear_width_cache():
     """每个用例一份干净缓存：宽度缓存是进程级全局，跨用例复用会掩盖重测 bug。"""
@@ -77,18 +83,13 @@ class FakeMetrics:
         return self.calls.count(text)
 
 
-def _seg(seg_id: str = isl.CPU, **kwargs) -> isl.SegmentSnapshot:
+def _seg(seg_id: str = _ALPHA, **kwargs) -> isl.SegmentSnapshot:
     fields = {"label": "CPU", "text": "24%", "max_text": "888%"}
     fields.update(kwargs)
     return isl.SegmentSnapshot(id=seg_id, **fields)
 
 
 # ---------------------------------------------------------------- 段快照契约
-def test_builtin_segment_ids_are_stable():
-    """内置段 id 是收缩/折叠/卡片行的稳定标识，改了就是破坏契约。"""
-    assert (isl.NETWORK, isl.CPU, isl.MEM) == ("network", "cpu", "mem")
-
-
 def test_state_vocabulary_is_the_four_state_contract():
     assert isl.STATES == frozenset({
         isl.STATE_OK, isl.STATE_SAMPLING, isl.STATE_UNKNOWN,
@@ -102,7 +103,7 @@ def test_state_vocabulary_is_the_four_state_contract():
 
 
 def test_snapshot_defaults_are_ok_with_empty_detail():
-    seg = isl.SegmentSnapshot(id=isl.MEM, text="61%", max_text="888%")
+    seg = isl.SegmentSnapshot(id=_BETA, text="61%", max_text="888%")
     assert seg.state == isl.STATE_OK
     assert seg.label == ""
     assert seg.detail == {}
@@ -117,7 +118,7 @@ def test_snapshot_detail_defaults_are_not_shared_between_instances():
 
 def test_snapshot_detail_passthrough():
     detail = {"unit_full": "百分比", "source": "psutil", "updated_at": 1234.5, "error_reason": ""}
-    seg = isl.SegmentSnapshot(id=isl.MEM, text="61%", max_text="888%", detail=detail)
+    seg = isl.SegmentSnapshot(id=_BETA, text="61%", max_text="888%", detail=detail)
     assert seg.detail is detail
 
 
@@ -163,7 +164,7 @@ def test_truncated_label_is_idempotent(caplog):
 
     caplog.clear()
     caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
-    again = isl.SegmentSnapshot(id=isl.CPU, label=first.label, text="1", max_text="8")
+    again = isl.SegmentSnapshot(id=_ALPHA, label=first.label, text="1", max_text="8")
     assert again.label == first.label
     assert caplog.text == ""
 
@@ -172,9 +173,9 @@ def test_truncated_label_is_idempotent(caplog):
 def test_registry_preserves_registration_order():
     """列表序 = 用户优先级 = 尾部先折叠（S2/S3 收缩从尾部取段）。"""
     registry = isl.SegmentRegistry()
-    for seg_id in (isl.NETWORK, isl.CPU, isl.MEM):
+    for seg_id in (_GAMMA, _ALPHA, _BETA):
         registry.register(_seg(seg_id))
-    assert [seg.id for seg in registry.snapshots()] == [isl.NETWORK, isl.CPU, isl.MEM]
+    assert [seg.id for seg in registry.snapshots()] == [_GAMMA, _ALPHA, _BETA]
 
 
 def test_registry_rejects_duplicate_id_and_keeps_the_first():
@@ -183,12 +184,12 @@ def test_registry_rejects_duplicate_id_and_keeps_the_first():
     registry.register(first)
     with pytest.raises(ValueError):
         registry.register(_seg(text="99%"))
-    assert registry.get(isl.CPU) is first
+    assert registry.get(_ALPHA) is first
     assert len(registry.snapshots()) == 1
 
 
 def test_registry_accepts_initial_segments():
-    registry = isl.SegmentRegistry([_seg(isl.CPU), _seg(isl.MEM)])
+    registry = isl.SegmentRegistry([_seg(_ALPHA), _seg(_BETA)])
     assert len(registry.snapshots()) == 2
 
 
@@ -199,15 +200,15 @@ def test_registry_rejects_non_snapshot():
 
 
 def test_registry_unknown_id_returns_none_without_raising():
-    registry = isl.SegmentRegistry([_seg(isl.CPU)])
+    registry = isl.SegmentRegistry([_seg(_ALPHA)])
     assert registry.get("gpu") is None
     assert registry.get(None) is None
 
 
 def test_registry_snapshots_returns_a_copy():
-    registry = isl.SegmentRegistry([_seg(isl.CPU)])
+    registry = isl.SegmentRegistry([_seg(_ALPHA)])
     snapshots = registry.snapshots()
-    snapshots.append(_seg(isl.MEM))
+    snapshots.append(_seg(_BETA))
     assert len(registry.snapshots()) == 1
 
 
