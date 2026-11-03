@@ -165,21 +165,6 @@ def _gate_with(verify_tts, monkeypatch, tmp_path, platform, frozen):
     return verify_tts.verify(tmp_path, exe)
 
 
-@pytest.mark.parametrize("platform", ["linux", "darwin"])
-def test_windows_only_modules_are_not_required_on_other_targets(
-        verify_tts, monkeypatch, tmp_path, platform):
-    """干净 Linux/macOS 构建不装 Windows-only 依赖，门禁不许因此判红。
-
-    astra 第 13 轮：`MINIMUM_MODULES` 无条件要求 `win32ctypes.pywin32.win32cred`，而
-    `build_linux.sh` / `build_macos.sh` 调的是同一个 `verify()`——那是把正确的产物
-    拒掉。修法是让这类依赖按目标平台生效。
-    """
-    code, summary = _gate_with(verify_tts, monkeypatch, tmp_path, platform,
-                               set(verify_tts.MINIMUM_MODULES))
-    assert code == 0, summary
-    assert "win32ctypes.pywin32.win32cred" not in summary["checked"]
-
-
 def test_windows_target_still_requires_its_backend_dependency(verify_tts, monkeypatch, tmp_path):
     """反过来：Windows 目标少带 win32ctypes 必须判红（别把条件化做成放水）。"""
     code, summary = _gate_with(verify_tts, monkeypatch, tmp_path, "win32",
@@ -193,7 +178,3 @@ def test_windows_target_still_requires_its_backend_dependency(verify_tts, monkey
     assert code == 0, summary
 
 
-def test_platform_modules_is_empty_off_windows(verify_tts):
-    assert verify_tts.platform_modules("linux") == ()
-    assert verify_tts.platform_modules("darwin") == ()
-    assert verify_tts.platform_modules("win32") == verify_tts.WINDOWS_ONLY_MODULES

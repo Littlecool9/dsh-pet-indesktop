@@ -621,7 +621,6 @@ def test_petapp_settings_finish_applies_todo_prefs(tmp_path, monkeypatch):
     from pet.app import AppShell, PetInstance
 
     qapp = _qapp()
-    monkeypatch.setattr(app_mod, "_mac_set_dock_icon_visible", lambda *a, **k: None)
     owner = PetInstance.__new__(PetInstance)
     owner.shell = AppShell.__new__(AppShell)
     owner.modern_settings_dialog = None

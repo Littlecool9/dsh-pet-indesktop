@@ -684,29 +684,6 @@ def test_modern_select_reuses_one_popup_without_accumulating_children(tmp_path, 
     app.processEvents()
 
 
-def test_dock_icon_row_platform_gated(tmp_path, monkeypatch):
-    """「显示 Dock 图标」是 macOS 专属选项，其他平台不应显示。"""
-    import sys
-
-    import pet.modern_settings_dialog as settings_mod
-    from PySide6.QtWidgets import QApplication
-
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(sys, "platform", "win32")
-    config = Config(tmp_path)
-    dialog = settings_mod.ModernSettingsDialog(config, include_ai=True)
-    assert dialog.findChild(settings_mod.SettingRow, "settingRow_dock_icon") is None
-    dialog.close()
-    monkeypatch.setattr(sys, "platform", "darwin")
-    dialog2 = settings_mod.ModernSettingsDialog(config, include_ai=True)
-    assert dialog2.findChild(settings_mod.SettingRow, "settingRow_dock_icon") is not None
-    dialog2.close()
-    app.processEvents()
-
-
 @pytest.mark.skipif(
     os.name == "nt",
     reason="Windows 无 time.tzset()，无法在测试进程内切换时区（CI runner 为 UTC）",
@@ -937,51 +914,16 @@ def test_windows_ojingjing_children_do_not_intercept_hover():
     app.processEvents()
 
 
-def test_macos_hide_pet_respects_dock_icon_hidden_preference(tmp_path, monkeypatch):
-    """macOS 关闭「显示 Dock 图标」后，隐藏桌宠不得再临时唤回 Dock 图标。
-
-    issue #74：托盘（菜单栏）菜单已承担恢复入口（显示/隐藏、鼠标穿透、
-    桌宠设置），因此隐藏桌宠应尊重用户关闭 Dock 图标的偏好，不再把
-    activation policy 临时改回 Regular，也不写回配置。
-    """
-    import sys
-
-    from unittest import mock
-
-    from PySide6.QtWidgets import QWidget
-
-    import pet.app
-    from pet.config import Config
-    from pet.window import PetWindow
-
-    monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(pet.app, "_mac_set_dock_icon_visible", mock.Mock())
-
-    for pref in (False, True):
-        with mock.patch.object(QWidget, "hide") as mock_hide:
-            win = PetWindow.__new__(PetWindow)
-            win.cfg = Config(tmp_path)
-            win.cfg.set("show_dock_icon", pref)
-            PetWindow.hide(win, notify=False)
-            mock_hide.assert_called_once()
-            assert win.cfg.get("show_dock_icon") is pref
-            pet.app._mac_set_dock_icon_visible.assert_not_called()
-
-
-def test_windows_settings_has_no_orphan_macos_dock_toggle(tmp_path, monkeypatch):
+def test_windows_settings_has_no_orphan_toggles(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     import pet.modern_settings_dialog as settings_mod
     from pet.config import Config
 
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.sys, "platform", "win32")
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    config = Config(tmp_path)
-    config.set("show_dock_icon", False)
-    dialog = settings_mod.ModernSettingsDialog(config, include_ai=False)
+    dialog = settings_mod.ModernSettingsDialog(Config(tmp_path), include_ai=False)
 
-    assert dialog.dock_icon_check is None
     assert not any(
         isinstance(child, settings_mod.ToggleSwitch)
         for child in dialog.children()
@@ -994,98 +936,7 @@ def test_windows_settings_has_no_orphan_macos_dock_toggle(tmp_path, monkeypatch)
     ) is not None
 
     dialog._save()
-    assert config.get("show_dock_icon") is False
     app.processEvents()
-
-
-# Linux 回归：Windows 专属开关不得在非 Windows 平台创建后游离到设置窗左上角。
-def test_linux_settings_has_no_orphan_windows_cursor_passthrough_toggle(tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QApplication
-
-    import pet.modern_settings_dialog as settings_mod
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.sys, "platform", "linux")
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    dialog = settings_mod.ModernSettingsDialog(Config(tmp_path), include_ai=False)
-
-    assert dialog.cursor_hidden_passthrough_check is None
-    assert not any(
-        isinstance(child, settings_mod.ToggleSwitch)
-        for child in dialog.children()
-    ), "所有开关都必须被设置行接管，不能游离在窗口左上角"
-
-    dialog.close()
-    app.processEvents()
-
-
-def test_hide_pet_notifies_and_dock_click_restores(tmp_path, monkeypatch):
-    """用户主动隐藏：弹托盘提示 + macOS 点击 Dock 图标恢复桌宠。"""
-    import sys
-
-    from unittest import mock
-
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QWidget
-
-    import pet.window as window_mod
-    from pet.config import Config
-
-    monkeypatch.setattr(sys, "platform", "darwin")
-    app = QApplication.instance() or QApplication([])
-    win = window_mod.PetWindow.__new__(window_mod.PetWindow)
-    win.cfg = Config(tmp_path)
-    notified = []
-    win.on_hidden = lambda: notified.append(True)
-
-    with mock.patch.object(QWidget, "hide"), mock.patch.object(
-        window_mod.PetWindow, "show"
-    ) as mock_show, mock.patch.object(app, "applicationStateChanged") as m_sig:
-        window_mod.PetWindow.hide(win)
-        assert notified, "用户主动隐藏应触发托盘提示回调"
-        # 隐藏后 arm Dock 点击恢复监听
-        m_sig.connect.assert_called_once()
-        # 点击 Dock 图标 → 应用激活 → 自动恢复桌宠
-        window_mod.PetWindow._restore_on_dock_reactivate(
-            win, Qt.ApplicationState.ApplicationActive
-        )
-        mock_show.assert_called_once()
-        # 一次性监听：再次激活不再恢复
-        mock_show.reset_mock()
-        window_mod.PetWindow._restore_on_dock_reactivate(
-            win, Qt.ApplicationState.ApplicationActive
-        )
-        mock_show.assert_not_called()
-
-
-def test_hide_pet_internal_replacement_skips_notify(tmp_path, monkeypatch):
-    """角色切换等内部替换隐藏：不弹提示、不 arm Dock 恢复监听。"""
-    import sys
-
-    from unittest import mock
-
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QWidget
-
-    import pet.window as window_mod
-    from pet.config import Config
-
-    monkeypatch.setattr(sys, "platform", "darwin")
-    app = QApplication.instance() or QApplication([])
-    win = window_mod.PetWindow.__new__(window_mod.PetWindow)
-    win.cfg = Config(tmp_path)
-    win.on_hidden = lambda: pytest.fail("内部替换不应弹提示")
-
-    with mock.patch.object(QWidget, "hide"), mock.patch.object(
-        window_mod.PetWindow, "show"
-    ) as mock_show, mock.patch.object(app, "applicationStateChanged") as m_sig:
-        window_mod.PetWindow.hide(win, notify=False)
-        m_sig.connect.assert_not_called()
-        window_mod.PetWindow._restore_on_dock_reactivate(
-            win, Qt.ApplicationState.ApplicationActive
-        )
-        mock_show.assert_not_called()
 
 
 def test_animation_icon_applier_updates_action_and_cleans_worker():
@@ -1145,14 +996,11 @@ def test_build_scripts_bundle_menu_templates_and_chat_styles():
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[1]
-    linux = (repo / "scripts" / "build_linux.sh").read_text(encoding="utf-8")
-    macos = (repo / "scripts" / "build_macos.sh").read_text(encoding="utf-8")
     windows = (repo / "scripts" / "build_onedir.ps1").read_text(encoding="utf-8")
 
-    for name, text in (("build_linux.sh", linux), ("build_macos.sh", macos), ("build_onedir.ps1", windows)):
-        assert "menu_templates" in text, f"{name} 必须打包 pet/menu_templates"
-        assert "legacy_styles.qss" in text, f"{name} 必须打包 legacy_styles.qss"
-        assert "modern_styles.qss" in text, f"{name} 必须打包 modern_styles.qss"
+    assert "menu_templates" in windows, "build_onedir.ps1 必须打包 pet/menu_templates"
+    assert "legacy_styles.qss" in windows, "build_onedir.ps1 必须打包 legacy_styles.qss"
+    assert "modern_styles.qss" in windows, "build_onedir.ps1 必须打包 modern_styles.qss"
     # 兜底：默认菜单布局 JSON 必须能按资源方式读出来（右键菜单的唯一布局来源；
     # 旧版菜单退役后 pet/menu_templates 下只剩它）
     from pet.menu_layout import load_default_menu_layout
@@ -1214,7 +1062,7 @@ def test_config_normalizes_polluted_absolute_easter_egg_paths(tmp_path):
 def test_easter_egg_activate_defers_until_menu_closes():
     """彩蛋点击在菜单可见时排入 deferred callbacks，菜单关闭后才开窗。
 
-    回归背景：macOS 原生 NSMenu 跟踪循环中直接开窗被 AppKit 抑制（首点无效）。
+    回归背景：原生菜单跟踪循环中直接开窗被系统抑制（首点无效）。
     """
     import time
 
@@ -1580,7 +1428,6 @@ def test_modern_settings_finished_refreshes_even_on_rejected(tmp_path, monkeypat
     owner.shell._sync_divination_service = lambda: None  # 每日一签同属懒启停族（无定时器，仍按开关建/释放）
     owner._refresh_chat_windows = lambda: None
     owner._sync_animation_prewarm = lambda: None
-    monkeypatch.setattr(app_mod, "_mac_set_dock_icon_visible", lambda *a, **k: None)
     PetInstance._modern_settings_finished(owner, 0)  # QDialog.Rejected（X 关闭）
     assert refreshed == [1], "Rejected 关闭也必须刷新桌宠"
 
@@ -1692,41 +1539,6 @@ def test_modern_autostart_write_failure_warns(tmp_path, monkeypatch):
     assert "失败" in str(warnings[0][2])
     dialog.close()
     app.processEvents()
-# --- macOS Dock recovery menu regression (2026-09-03) ---
-
-
-def test_macos_dock_menu_keeps_settings_reachable_when_pet_is_mouse_through(monkeypatch):
-    from unittest import mock
-
-    from PySide6.QtWidgets import QApplication
-
-    import pet.app as app_mod
-
-    app = QApplication.instance() or QApplication([])
-    controller = app_mod.AppShell.__new__(app_mod.AppShell)
-    controller.app = app
-    controller.enable_chat = True
-    controller.instance = app_mod.PetInstance.__new__(app_mod.PetInstance)
-    controller.instance.win = mock.Mock()
-    controller.instance.open_modern_settings = mock.Mock()
-    controller.instance.open_chat = mock.Mock()
-    monkeypatch.setattr(app_mod.sys, "platform", "darwin")
-
-    menu = controller._install_macos_dock_menu()
-
-    assert menu is controller.dock_menu
-    assert menu.property("dockMenuInstalled") is callable(getattr(menu, "setAsDockMenu", None))
-    labels = [action.text() for action in menu.actions() if not action.isSeparator()]
-    assert labels[:3] == ["显示桌宠", "桌宠设置", "AI 对话"]
-    next(action for action in menu.actions() if action.text() == "桌宠设置").trigger()
-    controller.instance.open_modern_settings.assert_called_once_with()
-    menu.close()
-    app.processEvents()
-
-
-# --- 评审回归：碰撞分离累计写回 / 隐藏宠退出碰撞世界（2026-10-03）---
-
-
 def _make_pet_sprite(pos, scale=0.5):
     """真 PetSprite（offscreen）：假 clip 无 ffmpeg 依赖，几何 = 640x360 画布 × scale。"""
     from PySide6.QtCore import QPointF

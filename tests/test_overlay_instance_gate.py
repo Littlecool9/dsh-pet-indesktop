@@ -455,12 +455,8 @@ def test_session_end_releases_gate(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- 真进程端到端
 def _child_base(tmp_path: Path) -> Path:
-    """子进程 ``config._default_base()`` 会返回的根（按平台推导，用于隔离真实配置）。"""
-    if sys.platform == "win32":
-        return tmp_path
-    if sys.platform == "darwin":
-        return tmp_path / "Library" / "Application Support"
-    return tmp_path / ".config"
+    """子进程 ``config._default_base()`` 会返回的根（用于隔离真实配置）。"""
+    return tmp_path
 
 
 def test_real_second_process_refused_on_overlay_topology(tmp_path):
@@ -472,10 +468,7 @@ def test_real_second_process_refused_on_overlay_topology(tmp_path):
     env = os.environ.copy()
     env["PET_RENDER_TOPOLOGY"] = "overlay"
     env["QT_QPA_PLATFORM"] = "offscreen"
-    if sys.platform == "win32":
-        env["APPDATA"] = str(tmp_path)
-    else:
-        env["HOME"] = str(tmp_path)
+    env["APPDATA"] = str(tmp_path)
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "pet"], cwd=str(_REPO_ROOT), env=env,

@@ -176,12 +176,7 @@ def character_gif_video_dir(character_id: str) -> Path:
 
 def _data_character_dirs(app_dir_name: str) -> list[Path]:
     """按平台返回某数据目录下 characters/ 的外部形象根目录。"""
-    if sys.platform == 'win32':
-        data_root = Path(os.environ.get('APPDATA', Path.home())) / app_dir_name
-    elif sys.platform == 'darwin':
-        data_root = Path.home() / 'Library' / 'Application Support' / app_dir_name
-    else:
-        data_root = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / app_dir_name
+    data_root = Path(os.environ.get('APPDATA', Path.home())) / app_dir_name
     return [data_root / 'characters']
 
 

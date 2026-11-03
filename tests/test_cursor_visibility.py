@@ -79,11 +79,6 @@ def test_get_cursor_visibility_failures_are_unknown(monkeypatch, user32):
     assert vision.get_cursor_visibility(user32) == 'UNKNOWN'
 
 
-def test_get_cursor_visibility_non_windows_does_not_access_user32(monkeypatch):
-    monkeypatch.setattr(vision, 'sys', _ns_shim(sys, platform='linux'))
-    assert vision.get_cursor_visibility(SimpleNamespace()) == 'UNKNOWN'
-
-
 def _state_window(monkeypatch):
     win = PetWindow.__new__(PetWindow)
     win.cfg = {'cursor_hidden_passthrough': True}

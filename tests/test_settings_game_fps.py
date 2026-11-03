@@ -580,33 +580,6 @@ def test_both_keys_are_global_not_per_pet():
         assert key not in overlay_spawn_state.PER_SLOT_SETTING_KEYS
 
 
-def test_fps_row_still_exists_on_a_non_windows_platform(tmp_path, monkeypatch):
-    """非 Windows：控制不撤（暂不可用 ≠ 永久不支持）、文案仍写明能力边界、保存同语义。
-
-    采集链路的平台边界是 Windows，但**设置 ID、默认值、依赖与保存语义三端共享**
-    （GATES §4）：撤掉控件会让用户既看不到原因也配不了，而"这段在别的系统上就是
-    不占位 + 卡片写原因"是岛侧既有的能力口径（同 GPU）。
-    """
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(settings_mod.sys, "platform", "linux")
-    cfg = Config(base=tmp_path)
-    dialog = settings_mod.ModernSettingsDialog(cfg, include_ai=True)
-    try:
-        row = _row(dialog, "island_fps")
-        assert "Windows" in row.hint_label.text(), "边界必须如实写在文案里"
-        dialog.island_fps_check.setChecked(True)
-        dialog.game_fps_target_mode_select.setCurrentData("process")
-        dialog.game_fps_process_edit.setText("game.exe")
-        assert dialog._write_config() is True
-        cfg.reload()  # #271：写盘走路由视图另建的主配置，传入对象需重读才可见
-        assert cfg.get("island_metrics") == [_METRIC_ID]
-        assert cfg.get("game_fps_target_mode") == "process"
-        assert cfg.get("game_fps_process") == "game.exe"
-    finally:
-        dialog.close()
-        app.processEvents()
-
-
 # ---------------------------------------------------------------- 布局与字体度量
 def test_rows_fit_the_compact_window_and_scale_with_the_font(tmp_path, monkeypatch):
     """最小窗口不越界；控件宽度按字体度量给足（长 exe 名在放大字体下不裁字）。"""

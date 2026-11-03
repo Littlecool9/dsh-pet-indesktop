@@ -38,14 +38,10 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 PR_TEST = WORKFLOWS / "pr-test.yml"
 BUILDS = {
     "windows": WORKFLOWS / "build-windows.yml",
-    "macos": WORKFLOWS / "build-macos.yml",
-    "linux": WORKFLOWS / "build-linux.yml",
 }
 # 构建入口（三端各自的真实命令），用于「素材供给必须排在构建之前」的位置断言
 BUILD_MARKERS = {
     "windows": "build_onedir.ps1",
-    "macos": "scripts/build_macos.sh",
-    "linux": "scripts/build_linux.sh",
 }
 PREPARE = "scripts/prepare_frameseq_bundle.py"
 CACHE_PATH = "assets/characters/*/frameseq"
@@ -230,17 +226,17 @@ def _render_run(run: str, *, runner_os: str) -> str:
 
 
 class TestPrTestWorkflow:
-    """PR 门禁：三 OS 真实 runner 矩阵 + 手动对齐入口 + 元数据留痕。"""
+    """PR 门禁：Windows runner + 手动对齐入口 + 元数据留痕。"""
 
-    def test_keeps_three_os_matrix_and_pr_integration_trigger(self):
+    def test_runs_on_windows_and_keeps_pr_integration_trigger(self):
         text = _text(PR_TEST)
         # PR 集成语义（合并提交后才判红绿）+ main push 回归，不许为「同一 SHA」
         # 把 PR 触发删掉或换成 head 检出
         assert "pull_request:" in text
         assert "branches: [main]" in text
-        matrix = _block(text, "matrix:")
-        for os_name in ("windows-latest", "ubuntu-latest", "macos-latest"):
-            assert os_name in matrix, f"{os_name} 真实 runner 必须保留在矩阵里"
+        assert "runs-on: windows-latest" in text
+        assert "ubuntu-latest" not in text
+        assert "macos-latest" not in text
 
     def test_has_manual_dispatch_with_source_ref(self):
         text = _text(PR_TEST)
@@ -287,121 +283,6 @@ class TestPrTestWorkflow:
         # 元数据记录不许被 `||` 重跑蒙混（真实失败码必须冒泡）
         for name in ("Record resolved source SHA", "Record toolchain versions"):
             assert "||" not in _step_block(_text(PR_TEST), name), name
-
-
-class TestPrTestCaptureAndFailureDiagnostics:
-    """主套件捕获方式按 OS 分流 + Linux 失败后的受限前缀诊断（2026-10-12 批）。
-
-    这一批只加「看得到原生崩溃」和「崩溃点在哪个用例」的能力，不新增判据：
-    主套件仍是唯一决定红绿的主套件运行（只有一条命令、仍是 `-q`），诊断重跑不覆盖
-    它的结果。
-    """
-
-    MAIN_SUITE = "Pytest (main suite)"
-    PREFIX_DIAGNOSTICS = "Pytest (Linux prefix diagnostics after main-suite failure)"
-
-    def test_main_suite_is_one_step_not_per_os_copies(self):
-        # 主套件的判据是它自己那份 --ignore 清单：按 OS 复制出第二个主套件步骤 =
-        # 每轮多跑 13-15 分钟，而且两处命令必然漂移
-        assert _text(PR_TEST).count("--ignore=tests/test_webm_reader_lifecycle.py") == 1
-
-    @pytest.mark.parametrize("os_name", sorted(RUNNER_OS))
-    def test_capture_flag_follows_runner_os(self, os_name):
-        step = _step_block(_text(PR_TEST), self.MAIN_SUITE)
-        rendered = _render_run(_run_text(step), runner_os=RUNNER_OS[os_name])
-        assert rendered.startswith("python -m pytest -q "), rendered
-        if RUNNER_OS[os_name] == "Linux":
-            assert "--capture=tee-sys" in rendered, (
-                "Linux 主套件要改用 tee-sys：默认 fd 捕获把原生写 fd 的输出"
-                "（glibc abort 文本、Qt 默认消息处理器、faulthandler 转储）吞进临时文件"
-            )
-        else:
-            assert "--capture=tee-sys" not in rendered, f"{os_name} 应保持默认 fd 捕获 + -q"
-        # 三个 OS 跑的是同一条命令：忽略清单必须都还在（只有捕获开关按 OS 展开）
-        for marker in ("--ignore=tests/test_webm_reader_lifecycle.py",
-                       "--ignore=tests/test_webm_clip_lifecycle.py",
-                       "--ignore=tests/test_webm_first_frame_lock.py",
-                       "--ignore=tests/test_low_priority_warm_interaction_yield.py"):
-            assert marker in rendered, marker
-
-    def test_prefix_diagnostics_condition_is_linux_failure_only(self):
-        condition = _if_condition(_step_block(_text(PR_TEST), self.PREFIX_DIAGNOSTICS))
-        # 必须**显式**带状态函数：GitHub 在 `if:` 里没有 failure()/success()/always()
-        # 时隐式套一层 success()，前序步骤一红本步就被跳过——诊断恰恰要在红时跑。
-        assert condition.startswith("failure()"), (
-            f"条件必须以 failure() 开头（缺了会被 GitHub 隐式 success() 跳过）：{condition}"
-        )
-        truth_table = [
-            # (runner.os, 之前有步骤失败, 主套件自己是否红, 期望本步是否运行)
-            ("Linux", True, True, True),
-            ("Linux", False, False, False),
-            # ruff/bridge 门在 Linux 上红、主套件没红：不再白跑这 ~2.5 min 前缀
-            ("Linux", True, False, False),
-            ("Windows", True, True, False),
-            ("macOS", True, True, False),
-        ]
-        for runner_os, failed, main_suite_failed, expected in truth_table:
-            actual = _eval_if(condition, event_name="pull_request", ref="refs/heads/main",
-                              runner_os=runner_os, failed=failed,
-                              main_suite_failed=main_suite_failed)
-            assert actual is expected, (
-                f"runner.os={runner_os} failed={failed} main_suite_failed={main_suite_failed}"
-                f" → 运行={actual}，期望 {expected}；条件原文：{condition}"
-            )
-
-    def test_prefix_diagnostics_condition_reads_main_suite_step_outcome(self):
-        # 条件里引用的 step id 必须真的挂在主套件那一步上：id 写错/被改掉时
-        # GitHub 求值成 null，条件是恒假——诊断步骤会静默永不运行（比红更难发现）。
-        main_suite = _step_block(_text(PR_TEST), self.MAIN_SUITE)
-        assert "id: main_suite" in main_suite, "主套件步骤必须带 id: main_suite"
-        assert "steps.main_suite.outcome" in _if_condition(
-            _step_block(_text(PR_TEST), self.PREFIX_DIAGNOSTICS)
-        )
-
-    def test_prefix_diagnostics_covers_agent_cost_to_config_schema_range(self):
-        step = _step_block(_text(PR_TEST), self.PREFIX_DIAGNOSTICS)
-        run = _run_text(step)
-        files = re.findall(r"tests/[A-Za-z0-9_]+\.py", run)
-        assert files[0] == "tests/test_agent_cost.py", "前缀起点必须是收集序首个测试文件"
-        assert files[-1] == "tests/test_config_schema.py", "前缀终点是 test_config_schema.py"
-        assert files == sorted(set(files)), "前缀清单必须按收集序去重升序（顺序决定 nodeid 对齐）"
-        # 有界性：升序 + 终点 = test_config_schema.py 已经保证清单不会越到该文件之后
-        # （那就不再是「有界前缀」，而是大半个主套件）；这里再钉两件事——收集序首文件
-        # 一改（新增更靠前的测试文件）前缀起点就得跟着改，以及清单里的文件必须真的
-        # 存在（改名后这一步会当场 exit 4，不会静默跑了个空）。
-        names = sorted(path.name for path in (ROOT / "tests").glob("test_*.py"))
-        assert names[: names.index("test_config_schema.py") + 1][0] == "test_agent_cost.py", (
-            "收集序首文件变了，前缀起点要跟着改"
-        )
-        for name in files:
-            assert (ROOT / name).is_file(), f"{name} 不存在：改名后这一步会 exit 4"
-        # 诊断重跑用 -vv：崩溃点在原生信号杀掉进程时只剩「最后一行 nodeid」这一条线索
-        assert "--capture=tee-sys" in run and "-vv" in run.split(), run
-
-    def test_prefix_diagnostics_does_not_override_the_failure(self):
-        step = _step_block(_text(PR_TEST), self.PREFIX_DIAGNOSTICS)
-        # 诊断重跑不是「重跑覆盖失败」：不许 continue-on-error，也不许用 `||` 兜底/重试
-        assert "continue-on-error" not in step
-        assert "||" not in _run_text(step), _run_text(step)
-
-    def test_pr_gate_never_swallows_failures_or_uploads_artifacts(self):
-        text = _without_comments(_text(PR_TEST))
-        # 门禁全程不许有 continue-on-error；PR 门禁也不上传产物
-        assert "continue-on-error" not in text
-        assert "upload-artifact" not in text, "PR 门禁不上传产物（打包上传归 build-*.yml）"
-
-    def test_crash_diagnostics_readback_is_the_last_step(self):
-        # 面包屑回读必须留在最后一步：所有 pytest 步骤跑完才读得到「最后死在哪一例」
-        names = re.findall(r"- name: (.+)", _text(PR_TEST))
-        assert names[-1] == "Pytest crash diagnostics", names[-1]
-        step = _step_block(_text(PR_TEST), "Pytest crash diagnostics")
-        assert _if_condition(step) == "failure()"
-        assert "tail -n 30" in step, "只回读末尾，不整篇进日志"
-        # 两个诊断目录都要回读：主套件那份 + Linux 受限前缀重跑那份（前缀步骤红时
-        # 才有）。只读一份就会漏掉另一半现场——前缀重跑跑完通过时，主套件那份
-        # 仍记录着「死在谁、哪个阶段」，反过来也一样。
-        for name in ("dspet-pytest-diag", "dspet-pytest-diag-linux-prefix"):
-            assert name in step, f"回读步骤必须覆盖 {name}"
 
 
 # ----------------------------------------------------------------- build 共用
@@ -523,13 +404,9 @@ class TestArtifactUploadBoundary:
                 f"→ 上传={actual}，期望 {expected}；条件原文：{condition}"
             )
 
-    def test_three_workflows_share_one_upload_condition(self):
-        # 三端必须是同一条表达式：一端漏改就是「某平台默默上传」
-        conditions = {
-            name: _if_condition(_step_block(_text(path), "Upload artifact"))
-            for name, path in BUILDS.items()
-        }
-        assert len(set(conditions.values())) == 1, conditions
+    def test_windows_upload_condition_is_the_only_one(self):
+        condition = _if_condition(_step_block(_text(BUILDS["windows"]), "Upload artifact"))
+        assert "refs/tags/" in condition and "upload_artifacts" in condition
 
 
 class TestReleaseBoundary:
@@ -545,12 +422,9 @@ class TestReleaseBoundary:
                 f"期望 {expected}；条件原文：{condition}"
             )
 
-    def test_three_workflows_share_one_release_condition(self):
-        conditions = {
-            name: _if_condition(_step_block(_text(path), "Publish Release"))
-            for name, path in BUILDS.items()
-        }
-        assert len(set(conditions.values())) == 1, conditions
+    def test_windows_release_condition_is_the_only_one(self):
+        condition = _if_condition(_step_block(_text(BUILDS["windows"]), "Publish Release"))
+        assert "refs/tags/" in condition and "github.event_name == 'push'" in condition
 
 
 # ------------------------------------------------------------ Windows 安装器
@@ -637,26 +511,15 @@ class TestWindowsShardRunner:
 
     SHARD_STEP = "Pytest (main suite, Windows shards)"
 
-    def test_shard_step_exists_windows_only_and_runs_script(self):
+    def test_shard_step_runs_the_script_on_windows(self):
         step = _step_block(_text(PR_TEST), self.SHARD_STEP)
         assert "python scripts/ci_shards.py" in _run_text(step)
-        assert "runner.os == 'Windows'" in _if_condition(step)
+        assert "if:" not in step, "Windows-only 工作流里不需要 runner.os 条件"
 
-    def test_monolithic_main_suite_skips_windows(self):
-        # 两个步骤合起来仍是「每端恰好一条主套件路径」
-        condition = _if_condition(_step_block(
-            _text(PR_TEST), TestPrTestCaptureAndFailureDiagnostics.MAIN_SUITE))
-        assert "runner.os != 'Windows'" in condition
-
-    def test_shard_script_ignores_parity_with_main_suite(self):
-        # 分片脚本里的忽略清单必须与主套件步骤同源同内容——漂移=漏跑一族
+    def test_shard_script_has_four_distinct_ignores(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "ci_shards", ROOT / "scripts" / "ci_shards.py")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        run = _run_text(_step_block(
-            _text(PR_TEST), TestPrTestCaptureAndFailureDiagnostics.MAIN_SUITE))
-        for path in mod.IGNORES:
-            assert f"--ignore={path}" in run, f"主套件步骤缺 {path}"
         assert len(mod.IGNORES) == 4 and len(set(mod.IGNORES)) == 4

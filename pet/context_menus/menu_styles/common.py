@@ -2,8 +2,6 @@
 """Shared style tokens and submenu inheritance without layout assumptions."""
 from __future__ import annotations
 
-import sys
-
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QMenu, QProxyStyle, QStyle
@@ -15,12 +13,7 @@ from PySide6.QtWidgets import QMenu, QProxyStyle, QStyle
 # 进程——菜单弹出一次后 msyh.ttc 37.6MB、StaticCache.dat 19.2MB、simhei/arial 等常驻，
 # RSS +70~150MB 不回。旧 macOS 三族栈、把它换成 Windows 三族栈、单族但不存在，三种写法
 # 实测都触发，所以 Windows 直接给一个覆盖中文的系统 UI 单族。
-if sys.platform == "win32":
-    SYSTEM_FONT_STACK = '"Microsoft YaHei UI"'
-elif sys.platform == "darwin":
-    SYSTEM_FONT_STACK = '"SF Pro Text", ".AppleSystemUIFont", "PingFang SC"'
-else:
-    SYSTEM_FONT_STACK = '"Noto Sans CJK SC", "WenQuanYi Micro Hei", "sans-serif"'
+SYSTEM_FONT_STACK = '"Microsoft YaHei UI"'
 
 
 class ResponsiveMenuStyle(QProxyStyle):

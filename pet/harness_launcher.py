@@ -1197,8 +1197,8 @@ def launch_harness_gui(parent=None, action: str = "start", target: str = "auto")
     命令解析可能同步执行 `npm root -g`（最长 15 秒）、进程反查在 Windows 上
     跑 PowerShell `Get-CimInstance`（最长 10 秒），放在 GUI 线程会卡住界面；
     确认框经 ``QTimer.singleShot`` 回 GUI 线程弹出（worker 用 Event 等答复），
-    且菜单项已 close_on_trigger（回调延迟到菜单关闭后）——macOS 原生菜单跟踪
-    会话中弹模态框会被 AppKit 抑制，与设置对话框首次点击无反应同源。
+    且菜单项已 close_on_trigger（回调延迟到菜单关闭后）——系统原生菜单跟踪
+    会话中弹模态框会被系统原生菜单会话抑制，与设置对话框首次点击无反应同源。
 
     ``action``：
     - ``start``   启动/复用本机实例并打开页面（旧行为，唯一不弹确认框的动作）；

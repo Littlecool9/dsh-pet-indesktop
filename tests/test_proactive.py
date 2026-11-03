@@ -512,12 +512,6 @@ class TestVisionAndWatcherPhase2:
         assert vision.foreground_app_info() == ""
         assert vision.get_foreground_window_rect() is None
 
-    def test_get_system_idle_seconds_non_windows(self, monkeypatch):
-        import sys
-        from pet import vision
-        monkeypatch.setattr(sys, "platform", "linux")
-        assert vision.get_system_idle_seconds() == 0.0
-
     def test_watcher_lifecycle_and_conditions(self, tmp_path, monkeypatch):
         from PySide6.QtWidgets import QApplication
         from pet.proactive import ProactiveScreenWatcher
@@ -1064,34 +1058,6 @@ class TestPhase4UIAndMenuIntegration:
         assert cfg.data["agent_link"]["dsh"] is False
         win.close()
         win.deleteLater()
-    def test_apply_config_non_windows_no_timer(self, tmp_path, monkeypatch):
-        """测试 4d：非 Windows 平台即使 enabled=True 且白名单非空也不起动定时器。"""
-        from PySide6.QtWidgets import QApplication
-        from pet.proactive import ProactiveScreenWatcher
-
-        app = QApplication.instance() or QApplication([])
-
-        class DummyWindow:
-            on_open_chat = True  # 模拟有聊天/视觉能力（否则主动识屏 watcher 不启动）
-            def __init__(self):
-                self.mouse_through = False
-                self._dragging = False
-                self._physics_mode = None
-                self._click_effect_phase = 0
-
-            def isVisible(self):
-                return True
-
-        # 仅作用于本次调用：替换 proactive 模块内的 sys 引用（不改全局 sys.platform）
-        monkeypatch.setattr("pet.proactive.sys", SimpleNamespace(platform="darwin"))
-
-        cfg = Config(base=tmp_path)
-        cfg.set("proactive_screen", {"enabled": True, "whitelist": ["code.exe"]})
-
-        watcher = ProactiveScreenWatcher(DummyWindow(), cfg)
-        watcher.apply_config()
-        assert watcher.is_running() is False
-
 # ============================================================================
 # 9. Phase 5 短期记忆分类与注入测试
 # ============================================================================

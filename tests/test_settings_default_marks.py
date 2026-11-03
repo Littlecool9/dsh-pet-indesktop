@@ -430,41 +430,6 @@ def test_supported_rows_without_default_are_a_frozen_set(env):
     assert supported - registered == set(NO_DEFAULT_ROWS)
 
 
-def test_macos_only_rows_align_with_the_same_snapshot(tmp_path, monkeypatch):
-    """平台专属行同样要对得上：darwin 下建整窗再跑一遍覆盖率快照。
-
-    本机是 Windows，macOS 专属行（「显示 Dock 图标」）在这里根本不存在——行键
-    （``dock_icon``）与配置键（``show_dock_icon``）不同名，漏进映射表只会在
-    macOS 上以「快照多出一个行键」的形式变红。故按既有平台分支测试模式
-    （``test_desktop_pet_features.py::test_dock_icon_visibility_defaults_on_...``）
-    模拟 darwin 建窗，用同一份口径复验。
-    """
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(settings_mod.sys, "platform", "darwin")
-    dialog = settings_mod.ModernSettingsDialog(Config(base=tmp_path), include_ai=True)
-    dialog.show()
-    app.processEvents()
-    try:
-        supported = {
-            _row_key(row) for row in dialog.findChildren(SettingRow)
-            if _is_supported(row.control)
-        }
-        registered = {_row_key(row) for row, _c, _d in dialog._default_mark_rows}
-        assert "dock_icon" in supported, "前提：darwin 下 Dock 图标行真的建出来了"
-        unregistered = supported - registered
-        assert unregistered == set(NO_DEFAULT_ROWS), (
-            f"darwin 专属行缺默认值映射：{sorted(unregistered - set(NO_DEFAULT_ROWS))}"
-        )
-        # 走完整链路：从行键查到默认值，且值就是配置里那个真默认
-        row = _row(dialog, "dock_icon")
-        assert settings_default_marks._row_default_value(row.control, "dock_icon") == (True, True)
-    finally:
-        dialog.close()
-        app.processEvents()
-
-
-# —— 默认值来源护栏 ——————————————————————————————————————————
-
 def test_mapping_table_registers_paths_not_default_values(tmp_path):
     """映射表里只能有「路径（+ 量纲倍数）」，且每条路径都真能在 Config 默认数据里走通。"""
     for row_key, entry in settings_default_marks._ROW_DEFAULT_PATHS.items():

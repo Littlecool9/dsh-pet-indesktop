@@ -421,7 +421,7 @@ def test_tray_menu_syncs_mouse_through_from_config(tmp_path):
     assert action.isChecked() is True
     assert config.get("mouse_through") is True, "弹出前同步不得反过来写配置"
     # 反向：托盘里点掉 → config 落盘。托盘条目是「菜单关闭后派发」
-    #（原生菜单跟踪会话里改窗面/冒泡会被 AppKit 抑制），故点击后要轮询等它执行。
+    #（原生菜单跟踪会话里改窗面/冒泡会被系统抑制），故点击后要轮询等它执行。
     action.trigger()
     assert action.isChecked() is False, "勾选态即时翻转"
     assert _wait_for_dispatch(lambda: config.get("mouse_through") is False), \

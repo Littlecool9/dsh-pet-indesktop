@@ -29,8 +29,6 @@ on:
         default: |
           dsh-pet-standalone-webm-portable.zip
           dsh-pet-standalone-webm-setup.exe
-          dsh-pet-standalone-webm-macos-arm64.zip
-          dsh-pet-standalone-webm-linux-x86_64.zip
 
 permissions:
   contents: write    # 覆盖 Release 附件

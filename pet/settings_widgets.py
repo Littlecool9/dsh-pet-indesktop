@@ -52,7 +52,7 @@ from .context_menus.quick_launch import fitted_application_icon
 def _system_font_families() -> tuple[str, ...]:
     """缓存系统字体族列表。
 
-    macOS 上 QFontDatabase.families() 走 CoreText 枚举，首次调用可达数百 ms，
+    QFontDatabase.families() 首次调用可能较慢，
     设置窗口每次打开都重建实例，同步枚举会明显拖慢打开速度。
     """
     if _system_font_families._cache is None:

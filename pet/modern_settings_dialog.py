@@ -527,15 +527,6 @@ class ModernSettingsDialog(QDialog):
                 self.harness_launch_target_select,
             ),
         ]
-        if sys.platform == "darwin":
-            launch_rows.append(
-                SettingRow(
-                    "dock_icon",
-                    "显示 Dock 图标",
-                    "在 macOS Dock 中显示桌宠应用；关闭后仍可通过桌宠和托盘操作。",
-                    self.dock_icon_check,
-                )
-            )
         general_layout.addWidget(SettingsSection("应用启动", launch_rows, general_content))
         window_rows = [
             SettingRow("on_top", "窗口置顶", "始终将桌宠保持在其他窗口上方。", self.on_top_check),
@@ -1832,7 +1823,7 @@ class ModernSettingsDialog(QDialog):
                 ("应用启动", claim("autostart")),
                 # 「光标隐藏时自动穿透」回主组：它也是窗口旗标类偏好（与置顶/全屏隐藏同族），
                 # 用户找它会先看这一组；原先跟「直播捕获」一起塞进"Windows 兼容"是埋掉了它。
-                ("窗口与系统", claim("dock_icon", "on_top", "auto_hide_fullscreen", "cursor_hidden_passthrough", "cross_screen")),
+                ("窗口与系统", claim("on_top", "auto_hide_fullscreen", "cursor_hidden_passthrough", "cross_screen")),
                 # 「直播捕获兼容」单独进一层折叠：行说明有四段（重启级切换、OBS 捕获方式、
                 # 平台限制、作用域），平铺在首屏就是逼用户读完。组描述只写一句"这一项做什么"，
                 # 重启/平台限制/作用域全部留在行内（展开即见全文），搜索照旧可达。
@@ -2302,8 +2293,6 @@ class ModernSettingsDialog(QDialog):
         self.config.set("spawn_inherit_size", self.spawn_inherit_size_check.isChecked())
         self.config.set("spawn_scale", float(self.spawn_scale_combo.currentData()))
         self.config.set("on_top", self.on_top_check.isChecked())
-        if self.dock_icon_check is not None:
-            self.config.set("show_dock_icon", self.dock_icon_check.isChecked())
         self.config.set("no_move", self.no_move_check.isChecked())
         self.config.set("mouse_through", self.mouse_through_check.isChecked())
         self.config.set("drag_physics", self.drag_physics_check.isChecked())

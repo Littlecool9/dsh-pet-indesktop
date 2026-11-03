@@ -382,7 +382,7 @@ def test_present_dialog_defers_until_popup_menu_closes(tmp_path: Path, monkeypat
     """菜单跟踪会话期间触发的设置弹窗应延迟到菜单关闭后再显示。
 
     回归 macOS 右键菜单首次点击「AI 设置/桌宠设置」无反应的问题：
-    原生 NSMenu 跟踪会话中新建窗口的 show/activate 会被 AppKit 抑制。
+    原生菜单跟踪会话中新建窗口的 show/activate 会被系统抑制。
     """
     import time
 

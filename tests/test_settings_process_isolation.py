@@ -295,7 +295,6 @@ def test_apply_external_config_change_fans_out_to_all_instances(tmp_path, monkey
     shell._sync_todo_service = lambda: None
     shell._sync_chime_service = lambda: None
     shell._sync_festival_service = lambda: None
-    monkeypatch.setattr(app_mod, "_mac_set_dock_icon_visible", lambda *a, **k: None)
     shell._apply_external_config_change()
     for inst in shell._instances:
         inst.win.refresh_pet_settings.assert_called_once_with()

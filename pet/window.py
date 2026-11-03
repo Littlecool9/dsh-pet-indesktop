@@ -97,8 +97,6 @@ from .proactive import effective_proactive_config
 from .window_optional_services import WindowFeatureGateMixin
 
 from . import platform_win
-from .platform_mac import (
-    _keep_macos_tool_window_visible, _mac_no_window_shadow_flag, _mac_set_window_level)
 from .platform_win import (
     GWL_EXSTYLE as GWL_EXSTYLE,
     _set_windows_click_through as _set_windows_click_through,
@@ -191,9 +189,6 @@ def build_window_flags(config, mouse_through: bool = False, stream_capture_mode:
         flags |= Qt.WindowType.WindowStaysOnTopHint
     if mouse_through:
         flags |= Qt.WindowType.WindowTransparentForInput
-    # macOS 关窗口系统阴影（issue #229：外圈黑边，普通模式与直播捕获模式都要关）。
-    # 放在 flags 工厂里：捕获模式开关重算 flags 时自动带上，无需在显示后补写。
-    flags |= _mac_no_window_shadow_flag()
     return flags
 
 
@@ -561,14 +556,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         if self._stream_capture_mode:
             self.setWindowTitle(STREAM_CAPTURE_TITLE)
         self._speech_bubble.set_capture_compat(self._stream_capture_mode, host=self)
-        # Cocoa hides Tool windows when an accessory application deactivates.
-        # Visibility and z-order are separate: always keep the pet visible,
-        # then use WindowStaysOnTopHint/NSWindow level for the on-top setting.
-        _keep_macos_tool_window_visible(self)
-        app = QApplication.instance()
-        if app is not None:
-            app.applicationStateChanged.connect(self._on_application_state_changed)
-
         # ---- 状态 ----
         self.anim: str = self.idle
         self.facing: str = config.get('facing', 'left')  # left | right
@@ -1104,45 +1091,16 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         """公开转发：手动回到右下角（等价 _go_default_corner）。"""
         self._go_default_corner()
 
-    def _schedule_macos_window_level(self, on: bool) -> None:
-        if sys.platform != 'darwin':
-            return
-        level = 3 if on else 0
-
-        def apply_current_native_window() -> None:
-            _mac_set_window_level(int(self.winId()), level)
-
-        # Apply immediately, then again after Qt/Cocoa have processed the
-        # native-window recreation and ordering events. winId is deliberately
-        # resolved inside every callback so a stale NSView is never reused.
-        apply_current_native_window()
-        for delay in (0, 40, 160):
-            QTimer.singleShot(delay, self, apply_current_native_window)
-
     def set_on_top(self, on: bool) -> None:
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
         self.cfg.set('on_top', on)
         self.cfg.save()
         self.show()
-        self._schedule_macos_window_level(on)
         if on:
             self.raise_()
         bubble = getattr(self, '_speech_bubble', None)
         if bubble is not None:
             bubble.set_host_on_top(on)
-
-    def _restore_on_top_after_context_menu(self) -> None:
-        """Reassert the native floating level after menus/app activation changes."""
-        if not bool(self.cfg.get('on_top', True)):
-            return
-        _keep_macos_tool_window_visible(self)
-        self._schedule_macos_window_level(True)
-
-    def _on_application_state_changed(self, _state) -> None:
-        # Opening a native menu and then clicking another application can make
-        # Cocoa reorder its owner Tool window. Reapply the level after the
-        # activation transition without activating or stealing keyboard focus.
-        QTimer.singleShot(0, self, self._restore_on_top_after_context_menu)
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
         """窗口显示时校正层级（延迟执行，避免被 Qt 窗口重建覆盖）。"""
@@ -1154,7 +1112,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         # 原生窗口此刻已就绪：置位 WS_EX_NOACTIVATE，点击桌宠不夺前台（issue #98）。
         # 放在 showEvent 是因为改 flags / 重建原生窗口都可能丢掉扩展样式位。
         self._apply_windows_no_activate()
-        self._schedule_macos_window_level(bool(self.cfg.get('on_top', True)))
         self._apply_opacity()
         # 启动即登记 runtime 标记：否则没被拖动过的新生小肥鱼没有标记，
         # 「退出子肥鱼」按标记枚举时根本看不见它（实机：总有一只清不掉）。
@@ -1179,7 +1136,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
     def hide(self, *, notify: bool = True) -> None:
         """隐藏桌宠。
 
-        notify=False 供角色切换等内部替换使用（不弹托盘提示、不 arm Dock 点击恢复监听）。
+        notify=False 供角色切换等内部替换使用（不弹托盘提示）。
         隐藏即暂停动画解码与全部活动定时器（低功耗：不可见就零消耗）。
         """
         if getattr(self, "_interaction_state", IDLE) == SLINGSHOT_AIMING:
@@ -1193,7 +1150,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             return
         if callable(getattr(self, "on_hidden", None)):
             self.on_hidden()
-        self._arm_dock_reactivate_restore()
 
     def _stop_all_timers(self) -> None:
         """停止全部活动定时器并清空关联状态（隐藏/关闭共用的收口）。
@@ -1466,30 +1422,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         """Compatibility delegation (window_screen.set_quick_chat_capture_widget)."""
         return window_screen.set_quick_chat_capture_widget(self, widget)
 
-
-    def _arm_dock_reactivate_restore(self) -> None:
-        """macOS：隐藏后点击 Dock 图标激活应用时自动恢复桌宠（一次性监听）。
-
-        连接只建立一次，用 _dock_reactivate_armed 控制响应次数，
-        避免对销毁中的窗口反复 connect/disconnect。
-        """
-        if sys.platform != 'darwin':
-            return
-        if getattr(self, "_dock_reactivate_armed", False):
-            return
-        app = QApplication.instance()
-        if app is None:
-            return
-        self._dock_reactivate_armed = True
-        app.applicationStateChanged.connect(self._restore_on_dock_reactivate)
-
-    def _restore_on_dock_reactivate(self, state) -> None:
-        if state != Qt.ApplicationState.ApplicationActive:
-            return
-        if not getattr(self, "_dock_reactivate_armed", False):
-            return
-        self._dock_reactivate_armed = False
-        self.show()
 
     def set_no_move(self, on: bool) -> None:
         """切换「不移动」：禁用自动移动；勾选瞬间若正在移动则立即停下回待机。"""
@@ -3609,9 +3541,6 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         menu = QMenu(self)
         self._active_context_menu = menu
         _populate_context_menu(menu, self)
-        menu.aboutToHide.connect(
-            lambda self=self: QTimer.singleShot(0, self, self._restore_on_top_after_context_menu)
-        )
         # 根菜单避让角色且始终保持 LTR 视觉方向；右侧不够时贴近角色左侧。
         # 子菜单弹出侧由 Qt 按屏幕空间决定，再不行使用整树重叠最少的远角。
         pet_rect = self.visible_content_rect()
@@ -4092,7 +4021,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self.cfg.save()
         self._apply_effective_mouse_through()
         if on and self.isVisible() and not getattr(self, "_bubble_suppressed", False):
-            tray_label = "点菜单栏托盘图标" if sys.platform == "darwin" else "右键系统托盘图标"
+            tray_label = "右键系统托盘图标"
             self.show_bubble(
                 f"已开启鼠标穿透～我现在点不动啦。需要恢复点击时，{tray_label} → 取消勾选「鼠标穿透」，或到桌宠设置里关闭。",
                 duration_ms=7000,

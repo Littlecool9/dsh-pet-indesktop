@@ -359,9 +359,7 @@ def test_unsupported_platform_report_has_no_handle_side_effects():
 
 def test_is_supported_only_on_windows():
     assert memory_trim.is_supported("win32") is True
-    assert memory_trim.is_supported("darwin") is False
-    assert memory_trim.is_supported("linux") is False
-    assert memory_trim.is_supported() == (sys.platform == "win32")
+    assert memory_trim.is_supported() is True
 
 
 # ---------------------------------------------------------------- 真 ctypes 薄封装
@@ -832,11 +830,7 @@ def test_registry_registers_memory_trim_with_a_windows_gate(monkeypatch):
     assert registry_mod.ACTION_LABELS["memory_trim"] == "回收内存"
     pet = _Pet()
 
-    monkeypatch.setattr(sys, "platform", "win32")
     assert "memory_trim" in registry_mod.MENU_ACTIONS.available_ids(pet)
-
-    monkeypatch.setattr(sys, "platform", "darwin")
-    assert "memory_trim" not in registry_mod.MENU_ACTIONS.available_ids(pet)
 
 
 def test_modern_menu_offers_memory_trim_on_windows_only(app, monkeypatch):
@@ -845,20 +839,12 @@ def test_modern_menu_offers_memory_trim_on_windows_only(app, monkeypatch):
     pet = _Pet({"context_menu_layout": None, "context_menu_appearance": {}})
     monkeypatch.setattr(shared_mod.autostart_mod, "is_enabled", lambda: False)
 
-    monkeypatch.setattr(sys, "platform", "win32")
     menu = QMenu()
     populate_context_menu(menu, pet)
     windows_labels = [action.text() for action in menu.actions()]
     menu.close()
 
-    monkeypatch.setattr(sys, "platform", "darwin")
-    other_menu = QMenu()
-    populate_context_menu(other_menu, pet)
-    other_labels = [action.text() for action in other_menu.actions()]
-    other_menu.close()
-
     assert "回收内存" in windows_labels
-    assert "回收内存" not in other_labels
     app.processEvents()
 
 
@@ -869,20 +855,12 @@ def test_shared_builder_offers_memory_trim_on_windows_only(app, monkeypatch):
     pet = _Pet()
     monkeypatch.setattr(shared_mod.autostart_mod, "is_enabled", lambda: False)
 
-    monkeypatch.setattr(sys, "platform", "win32")
     menu = QMenu()
     add_memory_trim(menu, pet)
     windows_labels = [action.text() for action in menu.actions()]
     menu.close()
 
-    monkeypatch.setattr(sys, "platform", "darwin")
-    other_menu = QMenu()
-    add_memory_trim(other_menu, pet)
-    other_labels = [action.text() for action in other_menu.actions()]
-    other_menu.close()
-
     assert "回收内存" in windows_labels
-    assert "回收内存" not in other_labels
     app.processEvents()
 
 
@@ -941,27 +919,6 @@ def test_finished_report_reaches_the_pet_bubble(app, monkeypatch):
     app.processEvents()
 
     assert pet.bubbles == ["已回收：1 个进程，跳过 1，无权限 0"]
-    menu.close()
-    app.processEvents()
-
-
-def test_unsupported_platform_click_reports_instead_of_crashing(app, monkeypatch):
-    """菜单项在非 Windows 已被隐藏；即便被外部调用也只提示不支持。"""
-    monkeypatch.setattr(sys, "platform", "darwin")
-    # 真机（Windows）上 Win32ProcessApi.supported 是导入期常量；这里按"非 Windows
-    # 平台"的语义改掉它，避免用例真的对本机进程下手（红线：单测不碰真实进程）。
-    monkeypatch.setattr(memory_trim.Win32ProcessApi, "supported", False)
-
-    pet = _Pet()
-    menu = QMenu()
-    action = shared_mod.add_memory_trim(menu, pet)
-    assert action is None
-
-    shared_mod.trigger_memory_trim(pet)
-    # 这条走**真实** run_in_background：报告在 worker 线程产生、经队列信号回 GUI
-    # 线程，故等气泡而不是 processEvents 一次就断言。
-    assert _wait_until(app, lambda: bool(pet.bubbles)), "不支持平台也该有可见反馈"
-    assert "Windows" in pet.bubbles[0]
     menu.close()
     app.processEvents()
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Compact macOS project-menu appearance used exclusively by modern layout."""
+"""Compact project-menu appearance used exclusively by modern layout."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer

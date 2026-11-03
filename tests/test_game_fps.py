@@ -425,10 +425,6 @@ def test_platform_support_follows_os_and_architecture(monkeypatch):
     assert gf.platform_support() is False
     assert "x86" in gf.platform_problem()
 
-    monkeypatch.setattr(sys, "platform", "darwin")
-    assert gf.platform_support() is False
-    assert gf.platform_problem() == gf.PLATFORM_UNSUPPORTED_REASON
-
 
 def test_machine_architecture_reads_the_env_and_the_native_wow64_value(monkeypatch):
     """架构判据读环境变量（不派生 WMI 子进程），且内核架构优先于本进程架构。"""
@@ -440,11 +436,6 @@ def test_machine_architecture_reads_the_env_and_the_native_wow64_value(monkeypat
     _arch_env(monkeypatch, "amd64", native="ARM64")
     assert gf.machine_architecture() == "arm64"
     assert gf.platform_support() is False, "模拟层下也不许声称支持（读数未验证）"
-
-    # 非 Windows：不读这些变量（POSIX 上它们没有意义）
-    monkeypatch.setattr(sys, "platform", "linux")
-    _arch_env(monkeypatch, "AMD64")
-    assert gf.machine_architecture() == ""
 
 
 def test_unknown_architecture_does_not_disable_the_feature(monkeypatch):
@@ -500,12 +491,6 @@ def test_backend_problem_reports_missing_and_present(tmp_path):
     assert gf.backend_problem(tmp_path) != ""
 
 
-def test_platform_support_never_lies_on_posix(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "darwin")
-    assert gf.platform_support() is False
-
-
-# ---------------------------------------------------------------- 命令行（纯函数）
 def test_capture_args_use_the_default_metric_set():
     args = gf.build_capture_args(session_name="dsh-pet-fps-1-ab", pid=4242)
     assert args[0:2] == ["--session_name", "dsh-pet-fps-1-ab"]

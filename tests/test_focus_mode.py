@@ -156,19 +156,18 @@ def test_focus_settings_and_island_controls_are_real_widgets(tmp_path, monkeypat
         app.processEvents()
 
 
-@pytest.mark.parametrize("platform,enabled", [("win32", True), ("linux", False), ("darwin", False)])
-def test_focus_foreground_control_explains_platform_and_preserves_preference(tmp_path, monkeypatch, platform, enabled):
+def test_focus_foreground_control_explains_platform_and_preserves_preference(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from PySide6.QtWidgets import QApplication, QWidget
     from pet.config import Config
     import pet.settings_focus as settings
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings, "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(settings, "sys", SimpleNamespace(platform="win32"))
     dialog = QWidget()
     dialog.config = Config(base=tmp_path)
     try:
         rows = settings.build_focus_rows(dialog)
-        assert dialog.focus_screen_enabled.isEnabled() is enabled
+        assert dialog.focus_screen_enabled.isEnabled() is True
         assert "Windows" in rows[-1].hint_label.text()
         settings.save_focus_settings(dialog)
         assert dialog.config.get("focus_mode")["screen_enabled"] is True

@@ -32,7 +32,3 @@ def test_importing_media_modules_installs_hide_patch():
         assert ffmpeg_hide._INSTALLED is True
 
 
-def test_install_is_noop_off_windows(monkeypatch):
-    monkeypatch.setattr(ffmpeg_hide, "_INSTALLED", False)
-    monkeypatch.setattr(ffmpeg_hide.sys, "platform", "linux")
-    assert ffmpeg_hide.install() is False

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """桌宠自言自语与聊天状态使用的轻量气泡。
 
-macOS 焦点问题由气泡窗口自身解决：`WindowDoesNotAcceptFocus`、
+气泡窗口自身解决焦点问题：`WindowDoesNotAcceptFocus`、
 `WA_ShowWithoutActivating` 和透明鼠标事件共同保证提示不会成为键盘或
-鼠标目标。应用本身保持 Regular activation policy，Dock 图标因此可见。
+鼠标目标。
 
 注意：不要用“绕过 Qt show() 直接对原生窗口 orderFront”的做法——Qt
 认为窗口未显示就不会触发绘制，气泡会“出现但看不见”。
@@ -17,7 +17,6 @@ macOS 焦点问题由气泡窗口自身解决：`WindowDoesNotAcceptFocus`、
 from __future__ import annotations
 
 import logging
-import sys
 
 log = logging.getLogger(__name__)
 from math import ceil, floor
@@ -110,8 +109,6 @@ __all__ = [
     "truncate_bubble_text",
     "PetSpeechBubble",
 ]
-
-_MAC = sys.platform == "darwin"
 
 # 标题优先气泡（歌词）在"同一次显示"期间把宽度锁在整栏宽。
 # 原因：气泡定位是按当前尺寸居中算的，歌词每句长短不同 → 宽度变 →
@@ -332,9 +329,6 @@ class PetSpeechBubble(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        if _MAC:
-            # 与主窗口一致：Tool 窗口置顶在 macOS 上需要该属性（QTBUG-38580）
-            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.label = QLabel(self)
         self.label.setObjectName("pet-speech-label")
         # Text is pre-wrapped with the actual font metrics so the organic safe
@@ -849,13 +843,11 @@ class PetSpeechBubble(QFrame):
             self._capture_host = None
             self.setParent(None)
             self._apply_window_flags()
-            if _MAC:
-                self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         if not self._anchor_rect.isEmpty():
             self._place(self._anchor_rect)
         if was_visible:
             self.show()
-            if not on and not _MAC:
+            if not on:
                 self.raise_()
         else:
             # 子模式重挂到主窗后，Qt 会随父窗显示把未显式隐藏的子控件一起显示；
@@ -965,8 +957,7 @@ class PetSpeechBubble(QFrame):
         self.adjustSize()
         self._place(anchor_rect)
         self.show()
-        if not _MAC:
-            self.raise_()
+        self.raise_()
         if sticky or interactive:
             # 审批等需主动关闭的气泡：不启动自动隐藏，由上层 dismiss() 收尾
             self._hide_timer.stop()
@@ -1295,8 +1286,7 @@ class PetSpeechBubble(QFrame):
         self.adjustSize()
         self._place(anchor_rect)
         self.show()
-        if not _MAC:
-            self.raise_()
+        self.raise_()
         self._hide_timer.start(max(500, int(duration_ms)))
         return True
 

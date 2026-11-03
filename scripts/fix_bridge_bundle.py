@@ -33,15 +33,10 @@ REQUIRED_SMOKE = "verify_import.mjs"
 def find_dist_bridge(app_dir: str) -> "str | None":
     """定位产物里的 bridge 目录。
 
-    PyInstaller 的产物布局随平台不同：Windows/Linux 的 onedir 把数据放在
-    ``<app>/_internal/``，macOS 的 ``.app`` 放在 ``Contents/Resources/``
-    （部分版本在 ``Contents/Frameworks/``）。早期实现硬编码 ``_internal/``，
-    导致 macOS 构建在「dist bridge missing」处失败。
+    PyInstaller 的 Windows onedir 把数据放在 ``<app>/_internal/``。
     """
     candidates = (
         os.path.join(app_dir, "_internal", "integrations", "dsh-pet-bridge"),
-        os.path.join(app_dir, "Contents", "Resources", "integrations", "dsh-pet-bridge"),
-        os.path.join(app_dir, "Contents", "Frameworks", "integrations", "dsh-pet-bridge"),
         os.path.join(app_dir, "integrations", "dsh-pet-bridge"),
     )
     for path in candidates:
@@ -64,7 +59,7 @@ def main() -> int:
     # 归一为绝对路径：CI 以 `--dist dist`（相对）调用构建脚本并透传到此，
     # 若保持相对，下面 subprocess.run(..., cwd=dst_bridge) 会让 node 相对
     # 自己的 cwd 再拼一次 smoke 路径（双重嵌套 → Cannot find module，
-    # Linux/macOS 构建红；Windows 走 build_onedir.ps1 绝对路径不受影响）。
+    # 相对路径调用会路径双重嵌套）。
     args.app_dir = os.path.abspath(args.app_dir)
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -75,7 +70,7 @@ def main() -> int:
         print(f"[bridge] dist bridge missing under: {args.app_dir}", file=sys.stderr)
         return 1
 
-    # 防线 0（不依赖 node，Linux/macOS 构建路径没有别的清单校验）：dist 副本的
+    # 防线 0（不依赖 node）：dist 副本的
     # 清单必须零依赖——dependencies/peerDependencies/optionalDependencies 任一
     # 有声明即判红。pnpm 的 link: 协议不安装被链接包自己的依赖，而链接目标常是
     # 这份无 node_modules 的打包副本。
