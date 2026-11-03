@@ -499,7 +499,7 @@ def test_unexpected_exception_asks_instead_of_dropping_the_draft(tmp_path, app, 
     """
     import shiboken6
 
-    from pet import settings_file_interpret
+    from pet import settings_network
 
     _main_config(tmp_path)
     _profile_exists(tmp_path, {"scale": 0.8})
@@ -514,7 +514,7 @@ def test_unexpected_exception_asks_instead_of_dropping_the_draft(tmp_path, app, 
     def explode(_dialog):
         raise RuntimeError("页面保存炸了（用例注入）")
 
-    monkeypatch.setattr(settings_file_interpret, "save_file_interpret_settings", explode)
+    monkeypatch.setattr(settings_network, "save_network_settings", explode)
     try:
         dialog.scale_combo.setCurrentIndex(dialog.scale_combo.findData(1.0))
 
@@ -536,7 +536,7 @@ def test_unexpected_exception_can_still_be_discarded(tmp_path, app, monkeypatch)
     """异常路径的出口同样可达：选放弃即可关窗（异常不是"必须留下"的理由）。"""
     from PySide6.QtWidgets import QDialog
 
-    from pet import settings_file_interpret
+    from pet import settings_network
 
     _main_config(tmp_path)
     _profile_exists(tmp_path, {"scale": 0.8})
@@ -549,7 +549,7 @@ def test_unexpected_exception_can_still_be_discarded(tmp_path, app, monkeypatch)
     def explode(_dialog):
         raise RuntimeError("页面保存炸了（用例注入）")
 
-    monkeypatch.setattr(settings_file_interpret, "save_file_interpret_settings", explode)
+    monkeypatch.setattr(settings_network, "save_network_settings", explode)
     try:
         _close_with_escape(dialog, app)
         assert seen[0]["failure"].kind == settings_slot_config.SAVE_FAILURE_UNKNOWN

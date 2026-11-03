@@ -324,13 +324,12 @@ def test_secondary_display_words_reach_the_cross_screen_row(tmp_path, monkeypatc
 
 
 def test_domain_names_land_on_their_representative_rows(tmp_path, monkeypatch):
-    """照着侧栏念域名也要搜得到：10 个域名里用户最常念的 4 个各给一个落点。
+    """照着侧栏念域名也要搜得到：8 个域名里用户最常念的 3 个各给一个落点。
 
     侧栏域名是导航标签（``SETTINGS_DOMAIN_NAV``），不在行文案里，因此关键词路径
     永远 0 命中。落点选该域**最有代表性**的那一行（逐条理由写在别名表里）：
     桌面组件 = 灵动岛主开关；AI 与对话 = 「API 列表」（域首行 = 模型与连接抬头）+
-    对话窗口（域名里「对话」那半边）；自动化与联动 = 主动识屏主开关；
-    文件识别 = 拖文件后询问解读（该域只有两行，它就是功能本体）。
+    对话窗口（域名里「对话」那半边）；自动化与联动 = 主动识屏主开关。
     """
     expected = {
         "桌面组件": ["settingRow_dynamic_island_enabled"],
@@ -342,7 +341,6 @@ def test_domain_names_land_on_their_representative_rows(tmp_path, monkeypatch):
         "自动化与联动": (
             ["settingRow_todo_reminder_enabled", "settingRow_proactive_enabled"]
             if sys.platform == "win32" else ["settingRow_todo_reminder_enabled"]),
-        "文件识别": ["settingRow_file_interpret_enabled"],
     }
     dialog = _dialog(tmp_path, monkeypatch)
     try:

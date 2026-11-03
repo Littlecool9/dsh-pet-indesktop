@@ -47,7 +47,6 @@ class ScreenHost:
         self.extras: list = []
         self.probe = None
         self.throw_egg = None
-        self.feeding = None
         # overlay 反查宿主：驱动器的分组仿真与鼠标路由都从这里取
         overlay.host = self
         overlay.behavior = self.behavior  # contextMenuEvent 查表点

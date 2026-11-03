@@ -335,8 +335,8 @@ def build_island_network_rows(dialog) -> list[SettingRow]:
     后几个开关拿不到可见的标签与可访问名（label.setBuddy 一位一控），故拆成
     四行、label 统一带「灵动岛指标」前缀（设置搜索按 label 命中）。
 
-    行随域导航每次重建（行壳随旧页 deleteLater，控件对象复用），与 island /
-    file_interpret 行的重建口径一致。**没有控件的 id 不建行**：清单可能在窗口打开
+    行随域导航每次重建（行壳随旧页 deleteLater，控件对象复用），与 island
+    行的重建口径一致。**没有控件的 id 不建行**：清单可能在窗口打开
     之后变动，那一行的开关并不存在（装配一个 ``None`` buddy 只会做出一个空行）。
 
     **每行都建在宿主上（``parent=dialog``）**：行壳建出来时还没进卡片，而

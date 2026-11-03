@@ -64,9 +64,6 @@ class _StubOverlayShell:
     def start(self):
         self.started += 1
 
-    def set_file_interpret_offer(self, offer):
-        pass
-
 
 class _RecorderWin(_StubWin):
     """legacy 主窗替身 + 冒泡记录：给 ``_wire_window`` 与"拒绝 spawn"的反馈面用。

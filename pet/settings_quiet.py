@@ -2,7 +2,7 @@
 """设置页「免打扰」：控件创建 / 行装配 / 保存。
 
 **为什么单独一个模块**：``modern_settings_dialog.py`` 的行数预算已无余量，
-本组控件与行全部在此构建（与 ``settings_file_interpret`` / ``settings_music`` 同口径）。
+本组控件与行全部在此构建（与 ``settings_music`` 同口径）。
 
 **为什么这两项进设置页**（``docs/SETTINGS-CHANGE-GATES.md`` 准入 1~6 全中）：
 它们是**偏好**（"以后默认开多久""全屏时要不要一起静音"），不是一次性命令；

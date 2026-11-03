@@ -178,20 +178,20 @@ def test_sidebar_width_tracks_a_font_change_after_construction(tmp_path, monkeyp
 
 # ------------------------------------------------------------------ 2. 导航可达
 def test_default_window_shows_every_domain_without_scrolling(tmp_path, monkeypatch):
-    """默认窗口 800×560：9 个能力域全部落在侧栏视口里。
+    """默认窗口 800×560：8 个能力域全部落在侧栏视口里。
 
     判据是 ``scrollBar.maximum() == 0``：内容只要比视口高 1px，Qt 就把它抬到 1（实测
     556 → 555 的分界），没有"差一点也算过"的余地。余量只来自侧栏纵向间距——导航行高是
     显式 ``setSizeHint(34)``（与字体无关），其余子控件的高度由 13px 字号与 QSS
     ``min-height`` 决定。CI 280 上 6px 间距留的 4px 余量被 Ubuntu runner 的字体/风格吃光，
-    第 10 行落到视口外（ubuntu-latest 红、windows/macOS 绿）；间距因此收到 3px，
+    末行落到视口外（ubuntu-latest 红、windows/macOS 绿）；间距因此收到 3px，
     本机余量 4 → 19px。别的平台再把这份余量吃掉，说明"默认尺寸真的装不下"，
     修法是继续收间距或按字体度量重算预算，不是放宽这条断言。
     """
     dialog = _dialog(tmp_path, monkeypatch)
     try:
         sidebar = dialog.sidebar
-        assert sidebar.count() >= 9, "能力域少了一个（本用例会假绿）"
+        assert sidebar.count() >= 8, "能力域少了一个（本用例会假绿）"
         assert sidebar.verticalScrollBar().maximum() == 0, (
             "默认尺寸下侧栏仍需滚动：最后一个能力域被截在视口外")
         viewport = sidebar.viewport().height()
@@ -335,7 +335,7 @@ def test_wide_window_keeps_the_form_at_a_reading_width(tmp_path, monkeypatch):
                 f"「{domain}」在 1600px 宽的窗口里内容宽 {root.width()}px，"
                 f"没有收到阅读宽度 {READING_WIDTH}px")
             checked += 1
-        assert checked >= 8, f"只量到 {checked} 个设置域，本用例会假绿"
+        assert checked >= 7, f"只量到 {checked} 个设置域，本用例会假绿"
     finally:
         dialog.close()
 
@@ -435,7 +435,7 @@ def test_save_and_exit_button_asks_for_the_save_icon(tmp_path, monkeypatch):
 #: "代表长期独立用户目标、预计包含**至少两个**稳定设置组"。下面这两个域是该判据落地之前
 #: 就在的既成事实，作为快照豁免；它们现在是 1 组就写 1 组——将来变多，这条断言会逼你更新
 #: 快照，免得豁免名单悄悄扩大成垃圾桶。
-DOMAINS_WITH_ONE_GROUP = {"文件识别", "语音"}
+DOMAINS_WITH_ONE_GROUP = {"语音"}
 
 
 def test_new_top_level_domain_must_own_at_least_two_setting_groups(tmp_path, monkeypatch):

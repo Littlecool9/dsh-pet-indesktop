@@ -813,7 +813,6 @@ class ShellOverlayWindow(OverlayWindow):
         # 按下只是点击候选，探头会话的点击拉直因此才有机会生效——按下即
         # 取消会让 on_sprite_clicked 永远遇到 mode==OFF）。
         self._drag_committed_cb = self._on_real_drag_started
-        self.setAcceptDrops(True)  # 4.1c 投喂（命中 sprite 才 accept）
 
     def _behavior_of(self, sprite):
         """该 sprite 的行为控制器（单窗：本窗口那一份）。"""
@@ -903,23 +902,6 @@ class ShellOverlayWindow(OverlayWindow):
         else:
             # 无探头世界：真拖拽松手的待机收尾同样要走到（F1）
             behavior.on_drag_released(grab)
-
-    def dragEnterEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
-        feeding = getattr(self, "_feeding", None)
-        if feeding is not None:
-            feeding.handle_drag_enter(event)
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
-        self.dragEnterEvent(event)
-
-    def dropEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
-        feeding = getattr(self, "_feeding", None)
-        if feeding is not None:
-            feeding.handle_drop(event)
-        else:
-            event.ignore()
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
         """4.1c：有全量菜单建造器（产品壳）走 facade 菜单，否则基类最小集。
@@ -1369,9 +1351,6 @@ class OverlayShell(QObject):
             self._spawn_slot(0)
         # 4.2b：按活跃宠清单复活子肥鱼（D5：依据是运行时清单，不是 slot 配置存在）
         self._restore_spawned_pets()
-        # 主宿主的投喂控制器在 ``_create_host`` 时就挂上了（那时还没有主宠，落点
-        # 兜底对象是 None）；宠复活/生成之后再挂一次，把"落点退回主宠"这一路补上。
-        self._bind_feeding(self._main_host)
         self._watcher = FullscreenCursorWatcher(self)
         self._watcher.fullscreen_changed.connect(self._on_fullscreen_changed)
         self._watcher.cursor_visibility_changed.connect(
@@ -1511,7 +1490,6 @@ class OverlayShell(QObject):
         host.extras = [host.probe, host.throw_egg]
         self._wire_host_overlay(host, host.overlay)
         self._connect_host_screen(host)
-        self._bind_feeding(host)
 
     def _wire_host_overlay(self, host, overlay) -> None:
         """把壳层的窗口回调挂到该宿主的 overlay 上（新建与换屏共用一份清单）。"""
@@ -1872,46 +1850,6 @@ class OverlayShell(QObject):
                        bounds.y() + bounds.height() - 1 - rect.height())
 
     # ---------------------------------------------------------------- 主 sprite 接线
-    def _bind_feeding(self, host=None) -> None:
-        """投喂控制器逐宿主挂，落点按 ``sprite_at`` 逐只判定（B02）：拖到哪只就
-        吃哪只、气泡也落那只。
-
-        overlay/宿主窗口更换后必须重挂，否则投喂命中判定仍打在旧窗口的几何上
-        （4.2b 主实例提升同理）；每块屏的窗口各挂一份，副屏上的宠才吃得到拖进去
-        的文件（拖放事件只送到光标下那张窗）。
-
-        ``host=None`` = 重建主宿主的控制器（旧的 ``self._feeding`` 语义）。
-        """
-        from .sprite_feeding import SpriteFeedingController
-        host = self._main_host if host is None else host
-        if host is None:
-            return
-        primary = self.sprite if host is self._main_host else None
-        feeding = SpriteFeedingController(
-            host.overlay, primary, self._config, host.behavior)
-        feeding._bubble_cb = self._say_feeding_bubble
-        # 解读询问接缝由壳持有：重建控制器时回填，否则主宠提升/屏迁移之后
-        # 拖文件解读静默失效。
-        feeding.interpret_offer = getattr(self, "_file_interpret_offer", None)
-        host.feeding = feeding
-        host.overlay._feeding = feeding
-        if host is self._main_host:
-            self._feeding = feeding
-
-    def set_file_interpret_offer(self, offer) -> None:
-        """注入拖文件解读询问回调（app 侧 ``FileInterpretController.offer``）。
-
-        overlay 拓扑下 PetWindow 不构造，``file_eater`` 的 ``interpret_offer``
-        接缝没有别的宿主：AppShell 持有解读控制器，经本方法把 ``offer(paths)``
-        挂到当前投喂控制器上（``sprite_feeding`` 吃完后调用，口径同旧
-        ``file_eater.eat_paths:183-186``）。传 None = 解除。
-        """
-        self._file_interpret_offer = offer
-        for host in self._hosts:
-            feeding = host.feeding
-            if feeding is not None:
-                feeding.interpret_offer = offer
-
     def _bind_bubble(self) -> None:
         """主 sprite 的气泡跟随器；重建前先关旧跟随器（防旧顶层气泡残留）。
 
@@ -5947,11 +5885,10 @@ class OverlayShell(QObject):
         return True
 
     def _rebind_main_sprite(self) -> None:
-        """恢复slot0后重挂其位置监听、投喂、气泡与标记。"""
+        """恢复slot0后重挂其位置监听、气泡与标记。"""
         host = self.host_for_sprite(self.sprite)
         if self.sprite is not None:
             self._bind_position_listener(self.sprite)
-        self._bind_feeding(host)
         self._sprite_hosts.pop(self.sprite, None)
         self._bind_bubble()
         # 点击气泡族：主身份提升后回调仍指本壳（overlay 未变，重挂=幂等对齐）
@@ -6551,19 +6488,6 @@ class OverlayShell(QObject):
                 if egg is not None:
                     egg.on_probe_collision_throw(
                         sprite, probe_cancelled=cancelled)
-
-    def _say_feeding_bubble(self, result: dict, sprite=None) -> None:
-        """投喂气泡（file_eater 同文案格式；B02：落命中那只自己的气泡通道）。
-
-        壳上子宠气泡既有分发靠 ``_bubble_for(sprite)``（每只一只跟随器，见
-        ``_ensure_sprite_bubble``），这里不再新造通道：落点是子宠就发子宠那只。
-        """
-        from .file_eater import FEEDING_BUBBLE_SUBTITLE, feeding_bubble_text
-        follower = self._bubble_for(sprite)
-        if follower is None:
-            return
-        follower.say(feeding_bubble_text(result),
-                     subtitle=FEEDING_BUBBLE_SUBTITLE)
 
     def switch_character(self, character_id: str, sprite=None) -> None:
         """切换角色（4.1c）：换 per-pet 库 + 行为状态重置 + 配置持久化。
