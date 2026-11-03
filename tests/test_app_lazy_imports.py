@@ -11,9 +11,7 @@
 import pet.app 不会带出它」——进程内断言不可靠，别的用例可能已经导入过。
 
 刻意不拦的模块（有实测理由，见 PR 报告「未采纳方向」）：
-``pet.window``（被 platform_win 模块级导入，overlay 拓扑也绕不开）、
-``pet.voice_chime_service``（真实配置下 click 自言自语朗读开着，
-``_chime_wanted()`` 为真，本来就需要）。
+``pet.window``（被 platform_win 模块级导入，overlay 拓扑也绕不开）。
 """
 from __future__ import annotations
 

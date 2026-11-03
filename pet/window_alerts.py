@@ -284,8 +284,7 @@ def sprite_in_flight(host, sprite=None) -> bool:
     """该 sprite 是否正在飞行（气泡门禁里的**飞行分量**，不含设置页抑制）。
 
     只有需要区分两种抑制的调用方才用它：飞行期是瞬时的（鱼飞几秒），上屏
-    推迟到落地即可；设置页抑制期是长时的用户意图，语音报时在这期间仍按既有
-    语义退到气泡位直写展示。
+    推迟到落地即可；设置页抑制期是长时的用户意图，按既有语义退到气泡位直写展示。
     无该接口的 host（PetWindow / 测试替身）恒 False。
     """
     checker = getattr(host, "_sprite_in_flight", None)
@@ -648,8 +647,8 @@ DEFAULT_IMAGE_CHANCE = 30  # 与 config.py 的 DEFAULT_SELF_TALK_IMAGE_CHANCE �
 def self_talk_image_chance(host) -> int:
     """自言自语出图概率（百分比 0~100）。
 
-    与 ``self_talk_speak_enabled`` 同样在运行时读配置、不缓存到窗口字段：概率随时
-    会改，而且读不到配置时要按默认值走——不让一次读取失败变成"点了不出图"。
+    与其它自言自语设置同样在运行时读配置、不缓存到窗口字段：概率随时会改，
+    而且读不到配置时要按默认值走——不让一次读取失败变成"点了不出图"。
     """
     cfg = getattr(host, "cfg", None)
     if cfg is None:

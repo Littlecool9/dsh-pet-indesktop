@@ -64,20 +64,6 @@ def build_click_rows(dialog) -> list[SettingRow]:
     rows.extend(
         [
             SettingRow(
-                "click_self_talk_speak",
-                "点击台词朗读",
-                "点击触发自言自语时，用语音报时的音色把这句话读出来（与报时共用音频通道，不会叠音）。",
-                dialog.click_self_talk_speak_check,
-            ),
-            SettingRow(
-                "click_self_talk_precache",
-                "台词自动预缓存",
-                "保存设置后，在后台把点击台词与点击动画绑定台词合成为本机语音文件，"
-                "点击时秒出、断网也能说（用与语音报时相同的语音后端和音色，可先在"
-                "语音报时里点一次试听确认能出声；不想占磁盘就保持关闭，新台词仍走在线合成）。",
-                dialog.self_talk_voice_precache_check,
-            ),
-            SettingRow(
                 "golden_spin_click",
                 "点击触发黄金回旋",
                 "开启后点击桌宠触发原地逆时针 360° 旋转；下方子开关可选择跳过点击动画直接回旋。",

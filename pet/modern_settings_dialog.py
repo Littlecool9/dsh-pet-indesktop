@@ -812,9 +812,6 @@ class ModernSettingsDialog(QDialog):
                     SettingRow(
                         "todo_reminder_lead_minutes", "提前提醒", "到点前提前提醒的分钟数（0~60，0 = 不提前，仅准点提醒一次）。", self.todo_reminder_lead_spin
                     ),
-                    SettingRow(
-                        "todo_reminder_speak", "语音播报", "到点时把提醒念出来；音色 / 语速 / 音量与「语音报时」共用同一套（设置 → 语音），本项只控制开与关。免打扰期间不出声，也不在结束后补播。", self.todo_reminder_speak_check
-                    ),
                 ],
                 behavior_content,
             )
@@ -951,12 +948,6 @@ class ModernSettingsDialog(QDialog):
         # widget to a QScrollArea: that creates a second Qt ownership path when
         # its rows are reparented into the shared card system.
 
-        # 语音报时设置页（行在 _rebuild_domain_navigation 中拾入「语音」总域）
-        from .voice_chime_settings import VoiceChimeSettingsPage
-
-        self.voice_chime_page = VoiceChimeSettingsPage(self.config, self)
-        self.voice_chime_page.preview_requested.connect(self._on_voice_chime_preview)
-
         self._rebuild_domain_navigation()
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
@@ -1009,13 +1000,6 @@ class ModernSettingsDialog(QDialog):
         settings_pet_controls._apply_dialogue_scope_rows(self)
         # 行全部就位后标注窗口级键的生效范围（overlay 一窗多宠：只有子宠页需要）
         settings_pet_controls._apply_window_scope_rows(self)
-        if self.standalone:
-            # 独立进程本地宿主：试听改本地播放、节日试听本地演示、无 parent 时
-            # 读 runtime 状态文件避让桌宠。逻辑全在 pet/settings_standalone.py，
-            # 这里只做接线（本文件有行数预算）。
-            from .settings_standalone import install_standalone_hooks
-
-            install_standalone_hooks(self)
         # 全部行（含域导航重建时才造出来的行）就位后再装「已修改」标记
         settings_default_marks.install(self)
 
@@ -1892,7 +1876,7 @@ class ModernSettingsDialog(QDialog):
             self.ai_page.setParent(self)
             self.ai_page.hide()
 
-        # 「主动识屏」「语音报时」「节日提醒」的旧页分区在域装配时被压平成单张卡片，这里按行键重组（行键以代码实际为准，顺序同旧页）。
+        # 「主动识屏」的旧页分区在域装配时被压平成单张卡片，这里按行键重组（行键以代码实际为准，顺序同旧页）。
         proactive_sections = [
             ("主动识屏 · 开关与节奏", claim("proactive_enabled", "proactive_preset")),
             ("主动识屏 · 什么时候看", claim("proactive_require_idle", "proactive_idle_seconds", "proactive_through", "proactive_pre_cue")),
@@ -1900,8 +1884,6 @@ class ModernSettingsDialog(QDialog):
             ("主动识屏 · 细调（高级）", claim("proactive_dry_run", "proactive_dwell", "proactive_cooldown",
                                        "proactive_min_interval", "proactive_daily_cap", "proactive_free"), True),
         ]
-        voice_chime_rows = list(self.voice_chime_page.findChildren(SettingRow))
-        claimed.update(voice_chime_rows)
         dialogue_rows = claim_prefix("dialogue_")
         # 「自定义台词」＝一个可折叠框（默认折叠）：逐事件文案行全部收进去，
         # 不用自定义台词的用户不该翻过整页文案框；搜索命中时会自动展开
@@ -1939,7 +1921,7 @@ class ModernSettingsDialog(QDialog):
         # 顶层顺序就是下表顺序（没有倒插）；折叠框是已构造好的 QWidget，直接作为表元素进布局。
         automation = page_content(
             [
-                ("待办提醒", claim("todo_reminder_enabled", "todo_reminder_lead_minutes", "todo_reminder_speak")),
+                ("待办提醒", claim("todo_reminder_enabled", "todo_reminder_lead_minutes")),
                 # 「免打扰」两行在本模块构建（settings_quiet，行数预算原因）。
                 ("免打扰", settings_quiet.build_quiet_rows(self)),
                 ("专注模式", settings_focus.build_focus_rows(self)),
@@ -1950,20 +1932,6 @@ class ModernSettingsDialog(QDialog):
                 phrases_box,
             ]
         )
-
-        # 「语音」总域（2026-09-17 定稿口径）：只收鱼开口说话（TTS）类设置。
-        # 音效类回各自功能分组：点击音效 4 行回「互动 · 点击反馈」、碰撞音效 2 行
-        # 回「桌宠」碰撞组；Agent 提示音效（agent_sound_*）留在 Agent 联动折叠框内。
-        voice = QWidget(self)
-        voice_layout = QVBoxLayout(voice)
-        voice_layout.setContentsMargins(0, 0, 0, 0)
-        voice_layout.setSpacing(18)
-        if voice_chime_rows:
-            voice_layout.addWidget(SettingsSection("语音报时", voice_chime_rows, voice))
-        voice_layout.addStretch(1)
-        # 语音报时的行刚被搬进这张平卡（容器散架、行序即创建序）：让设置页按当前
-        # 后端重新排一遍——当前后端平铺在最上面，其余后端各占一行折叠头。
-        self.voice_chime_page.refresh_backend_rows()
 
         # Preserve any newly added row until it receives an explicit domain decision.
         leftovers = [row for row in all_rows if row not in claimed and (self.ai_page is None or not self.ai_page.isAncestorOf(row))]
@@ -1982,7 +1950,6 @@ class ModernSettingsDialog(QDialog):
             "桌面组件": desktop_components,
             "AI 与对话": ai_sections,
             "自动化与联动": automation,
-            "语音": voice,
         }
         for label, icon in SETTINGS_DOMAIN_NAV:
             content = domain_content.get(label)
@@ -2046,11 +2013,8 @@ class ModernSettingsDialog(QDialog):
         self.sidebar.setCurrentRow(page_index)
         page = self.pages.widget(page_index)
         # 命中折叠里的行要先把它露出来，否则「搜索结果存在但看不见」。
-        # 折叠有两种形态，交给 settings_widgets.reveal_settings_row 一处管：
-        # ① CollapsibleGroup / 高级组 / 页内标签是 QWidget 嵌套（判祖先即可）；
-        # ② 语音报时与节日提醒的后端参数行是**行级**折叠（那批行会被搬进一张
-        #    平卡，容器活不下来，所以折叠状态落在行上的 _reveal_fold 回调里）。
-        # 只判祖先会漏掉 ②：搜索命中「豆包音色」这类行时它仍藏在折叠后端里。
+        # 折叠交给 settings_widgets.reveal_settings_row 一处管：
+        # CollapsibleGroup / 高级组 / 页内标签是 QWidget 嵌套（判祖先即可）。
         reveal_settings_row(row, page)
         scroll = page.findChild(QScrollArea, "settingsScroll")
         if scroll is not None:
@@ -2221,9 +2185,6 @@ class ModernSettingsDialog(QDialog):
         )
         if self.click_balance_check is not None:
             self.config.set("click_show_balance", self.click_balance_check.isChecked())
-        self.config.set("self_talk_speak_enabled", self.click_self_talk_speak_check.isChecked())
-        self.config.set("self_talk_voice_precache_enabled",
-                        self.self_talk_voice_precache_check.isChecked())
         self.config.set("music_sing_enabled", self.music_sing_check.isChecked())
         if getattr(self, "music_lyric_check", None) is not None:
             self.config.set("music_lyric_enabled", self.music_lyric_check.isChecked())
@@ -2305,10 +2266,6 @@ class ModernSettingsDialog(QDialog):
         self.config.set("agent_link", agent_cfg)
         self.config.set("todo_reminder_enabled", self.todo_reminder_check.isChecked())
         self.config.set("todo_reminder_lead_minutes", int(self.todo_reminder_lead_spin.value()))
-        self.config.set("todo_reminder_speak", self.todo_reminder_speak_check.isChecked())
-        # 语音报时设置页写回（voice_chime_* 平铺键 + 各后端字段键）
-        if self.voice_chime_page is not None:
-            self.voice_chime_page.apply_to_config()
         self.config.set(
             "context_menu_appearance",
             {
@@ -2390,23 +2347,6 @@ class ModernSettingsDialog(QDialog):
         # 写回之后再对齐一次标记：落盘后的配置值才是「已改过没」的现行答案
         settings_default_marks.refresh(self)
         return ok
-
-    def _on_voice_chime_preview(self, text: str) -> None:
-        """语音报时设置页「试听」：透传父级 AppShell 的手动报时入口。
-
-        父级（PetWindow / 对话框宿主）通过 on_voice_chime_now 暴露该能力；
-        未接线时静默忽略（仅设置界面无副作用）。
-        """
-        if self.standalone:
-            # 独立进程没有父级 AppShell：改走本地合成+播放通道（懒 import，
-            # 启动路径不加载 voice_chime_service/edge-tts）。
-            from .settings_standalone import preview_voice_chime
-
-            preview_voice_chime(self, text)
-            return
-        cb = getattr(self.parent(), "on_voice_chime_now", None)
-        if callable(cb):
-            cb(text)
 
     def _close_after_external_write(self) -> None:
         """关窗，但跳过关闭路径的整表写回（``_write_config``）。

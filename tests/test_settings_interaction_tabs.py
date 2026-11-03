@@ -19,7 +19,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 EXPECTED_SIDEBAR = [
-    "常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动", "语音",
+    "常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动",
 ]
 # 标签键/名：键给代码（稳定），名给用户（可读）。顺序 = 使用顺序。
 # 「快捷键」（2026-10-18）是第三个：用户怎么唤出这三个动作，同属"人宠交互"面。
@@ -30,8 +30,7 @@ ROWS_BY_TAB = {
     "hotkeys": ("hotkey_open_chat", "hotkey_look_screen", "hotkey_screen_capture"),
     "click": (
         "mouse_through", "click_sound", "click_sound_pack", "click_sound_volume",
-        "click_sound_preview", "click_balance", "click_self_talk_speak",
-        "click_self_talk_precache", "golden_spin_click",
+        "click_sound_preview", "click_balance", "golden_spin_click",
         "golden_spin_direct",
     ),
     "self_talk": (
@@ -172,16 +171,6 @@ def test_sections_keep_their_titles_inside_the_tabs(dialog):
 
     assert section_titles("click") == ["输入", "点击反馈"]
     assert section_titles("self_talk") == ["自言自语"]
-
-
-def test_click_speak_toggle_starts_unchecked_like_the_config_default(dialog):
-    """点击台词朗读默认关闭：设置页控件初始未勾选，与 Config 默认值同口径。
-
-    「配置默认值 / 规范化默认值 / 运行时缺省」三处必须同一个口径，否则会出现
-    「配置说关、界面却显示开」这种自相矛盾的默认状态。
-    """
-    assert dialog.config.get("self_talk_speak_enabled") is False
-    assert dialog.click_self_talk_speak_check.isChecked() is False
 
 
 def test_every_setting_row_still_lives_in_a_domain_page(dialog):

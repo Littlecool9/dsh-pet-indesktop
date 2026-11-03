@@ -211,7 +211,7 @@ PER_PET_SETTING_KEYS = frozenset({
     "self_talk_enabled", "self_talk_texts", "self_talk_duration_seconds",
     "self_talk_image_dir", "self_talk_image_scale", "self_talk_image_chance",
     "self_talk_min_interval", "self_talk_max_interval",
-    "self_talk_speak_enabled", "self_talk_bubble_style", "bubble_text_scale",
+    "self_talk_bubble_style", "bubble_text_scale",
     "click_show_balance",
     # 角色（per-pet 素材库）
     "character",

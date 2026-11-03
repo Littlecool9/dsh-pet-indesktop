@@ -10,7 +10,7 @@ def test_migration_cleans_source_and_normalizes(tmp_path):
     directory.mkdir()
     source = directory / 'config.json'
     source.write_text(json.dumps({'version': 1, 'scale': 2, 'character': 'cat',
-                                  'voice_chime_enabled': True}), encoding='utf8')
+                                  'network_info_menu_enabled': False}), encoding='utf8')
     result = profiles.migrate_slot0_profile(directory)
     assert result.ok
     original = source.with_name(source.name + profiles.PROFILE_MIGRATION_BACKUP_SUFFIX).read_bytes()
@@ -40,7 +40,7 @@ def test_global_save_never_resurrects_migrated_pet_keys(tmp_path):
     cfg.set('character', 'cat')
     cfg.save()
     assert profiles.migrate_slot0_profile(cfg.dir).ok
-    cfg.set('voice_chime_enabled', True)
+    cfg.set('network_info_menu_enabled', False)
     assert cfg.save()
     assert not (profiles.PER_PET_KEYS & json.loads(cfg.path.read_text(encoding='utf8')).keys())
 

@@ -38,7 +38,6 @@ from . import autostart as autostart_mod
 from . import catalog
 from . import click_sound
 from . import overlay_instance_gate as overlay_gate_mod
-from . import self_talk_voice
 from . import slot_manager as slot_manager_mod
 from . import webm_clip as webm_clip_mod
 from .config import APP_DIR_NAME, Config, _default_base
@@ -52,7 +51,6 @@ from .runtime_cleanup import cleanup_stale_runtime_dirs
 from .session_watcher import install_session_watcher
 from .decode_fanout import DecodeFanoutHub
 from .todo_reminder import TodoReminderService
-from .voice_chime_service import VoiceChimeService
 from .persona_phrases import PhrasePicker
 
 
@@ -569,10 +567,6 @@ class PetInstance:
         # 网络信息（issue #172）：右键菜单入口 → 进程级弹窗（overlay 侧由
         # SpriteMenuFacade.on_network_info 走同一方法）。
         win.on_network_info = self._slot_wrap(self.shell.open_network_info)
-        win.on_voice_chime_now = self._slot_wrap(self.shell.trigger_voice_chime_now)
-        win.on_toggle_voice_chime = self._slot_wrap(self.shell.toggle_voice_chime)
-        # 点击自言自语的朗读走同一条音频通道（AppShell 持有，进程内唯一）。
-        win.on_self_talk_speak = self._slot_wrap(self.shell.speak_self_talk)
         win.on_hidden = self._slot_wrap(self._notify_pet_hidden)
         # 4.4b：窗级「退出这只」恒注入（多窗常开化；最后一窗退出即全进程退出，
         # 与旧 flag 关时的 app.quit 分支语义等价）。
@@ -1035,11 +1029,7 @@ class PetInstance:
             shell._apply_balance_timer()
             # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
             shell._sync_todo_service()
-            shell._sync_chime_service()
             self._refresh_chat_windows()
-        # 台词可能刚被改动：把还没有本地音频的句子交给后台补齐（开关默认关闭，
-        # 关着时这里是 no-op；点了「编辑点击动画绑定」后直接 Esc 关设置也能一起收）
-        self.shell.precache_self_talk_voice("设置保存后")
 
     # ------------------------------------------------------------ 其它窗口级
     def sync_look_to_chat(self, user_text: str, reply: str) -> None:
@@ -1190,13 +1180,6 @@ class AppShell:
         self.network_info_dialog = None
         if self._todo_wanted():
             self._ensure_todo_service()
-        # 语音报时：进程级单例（多窗共用调度器）。默认关闭（2026-09-19 起，
-        # 主动打扰型功能改由用户显式开启）→ 启动不创建；开启后跑 20s tick，
-        # 设置关闭后 stop 并释放。edge-tts 合成在后台线程，
-        # 播放与气泡走 GUI 线程（QtMultimedia + win.show_bubble）。
-        self.voice_chime_service = None
-        if self._chime_wanted():
-            self._ensure_chime_service()
         # 4.4b：`experimental_single_process_spawn` 键删除——进程内多窗从
         # "实验开关"升格为**唯一**多宠形态（多进程多宠退役层已删除），
         # 原先依赖该 flag 快照的窗级逻辑（runtime 标记版本化、日志前缀、
@@ -1404,13 +1387,11 @@ class AppShell:
     def win(self):
         """主窗窗口；overlay 拓扑下退回 sprite 壳（PetWindow 形的呈现宿主）。
 
-        两个进程级提醒服务（TodoReminderService / VoiceChimeService）经
-        ``app.win`` 取气泡锚点，只读
+        进程级提醒服务（TodoReminderService）经 ``app.win`` 取气泡锚点，只读
         ``show_bubble`` / ``isVisible`` / ``cfg`` / ``_speech_bubble`` /
         ``visible_content_rect`` / ``scale``——OverlayShell 逐条提供同契约
         （见 overlay_shell「PetWindow 形宿主面」段），故 overlay 拓扑
-        （``instance.win`` 恒 None）下退回壳；不退回则三条提醒全部落到系统通知
-        （报时还不过 system_notifications_enabled 门）。
+        （``instance.win`` 恒 None）下退回壳；不退回则提醒全部落到系统通知。
 
         legacy 拓扑 ``_overlay_shell`` 为 None → 恒返回 PetWindow，逐位不变。
         """
@@ -1489,195 +1470,6 @@ class AppShell:
             if getattr(self, "todo_panel", None) is None:
                 self.todo_service = None
 
-    # ------------------------------------------------------------ 功能门控（语音报时）
-    def _self_talk_speak_wanted(self) -> bool:
-        """自言自语朗读是否开启——它同样复用报时服务的音频通道。
-
-        ``self_talk_speak_enabled`` 在 ``pet_profiles.PER_PET_KEYS`` 里（**每宠键**）：
-        真值在各自的 slot 档案，主配置那份只是 slot0 兜底。读主配置会让"设置页明明
-        打开了、运行期看不到"——音频通道根本不建，朗读静默无声。
-        """
-        for cfg in self._self_talk_voice_configs():
-            try:
-                speaks = bool(cfg.get("self_talk_speak_enabled", False))
-            except Exception:  # noqa: BLE001 - 单个视图读失败不该拖垮通道判据
-                continue
-            if speaks:
-                return True
-        return False
-
-    def _todo_speak_wanted(self) -> bool:
-        """待办语音播报是否开启——它同样复用报时服务的音频通道。
-
-        与节日语音同族：通道随报时开关一起被释放时，待办提醒就变成"有气泡没声音"
-        （开关能存、点了没声的死开关）。总开关关掉时待办服务自己也不跑，故两者都要。
-        """
-        return bool(
-            self.config.get("todo_reminder_enabled", True)
-            and self.config.get("todo_reminder_speak", False)
-        )
-
-    def _chime_wanted(self) -> bool:
-        # 报时自身开启，或自言自语朗读 / 待办语音播报需要这条音频通道（共用一套
-        # 合成与播放，因此"通道是否存在"取决于其中之一是否需要）。
-        return (
-            bool(self.config.get("voice_chime_enabled", False))
-            or self._self_talk_speak_wanted()
-            or self._todo_speak_wanted()
-        )
-
-    def _ensure_chime_service(self):
-        """懒创建语音报时服务（报时 / 手动触发 / 朗读共用）。"""
-        if getattr(self, "voice_chime_service", None) is None:
-            self.voice_chime_service = VoiceChimeService(self)
-        return self.voice_chime_service
-
-    def ensure_audio_channel(self):
-        """对外暴露的音频通道（节日提醒语音 / 每日一签复用报时服务的合成与播放）。
-
-        通道可能是**为本次调用才懒创建**的（报时、节日语音、点击朗读都关着，只有
-        抽签语音一路要用它），此时服务里的 ``_cfg`` 还是模块默认值——合成后端、
-        回退开关、音量都按默认走，用户选的本地后端与音量被无视（真事故：只开抽签
-        语音 + 选 SAPI + 关回退 + 音量 0，抽签语音照旧联网 edge 合成、按默认音量出声）。
-
-        未在运行就先补读一次用户配置（与 ``speak_self_talk`` 同一条做法），收在这一
-        处是为了不必让每个调用方各自补读。运行中的通道由 ``_sync_chime_service`` 在
-        保存时刷新，不在这里重读：重读会清掉报时那一组预合成占位。
-        """
-        channel = self._ensure_chime_service()
-        if channel is not None and not channel.is_running():
-            channel.apply_config()
-        return channel
-
-    def self_talk_voice_file(self, text: str) -> Path | None:
-        """预缓存台词音频的查找路径；没有就返回 None。
-
-        键与产出侧是**同一个实现**（``self_talk_voice.find_audio`` → ``cached_audio``
-        → ``cache_path_for`` / ``cache_path``），查找顺序：当前配置（合成后端 + 音色
-        + 语速）解析出的 flavor 缓存 → 经典文本缓存
-        ``<配置目录>/self_talk_voice/<md5(文本)[:16]>.<扩展名>``（外部产出脚本那条
-        兼容来源）。刻意放配置目录而不是仓库 assets —— 它属于用户数据（换资源包/
-        更新不该丢），与报时缓存 voice_chime_cache 同级。
-
-        分成两份实现曾经是隐患：算法漂移没有交叉测试兜着，表现只有"声音怎么变了"；
-        只按文本命键则是"试听换了新声音、点击台词还是旧声音"。
-        """
-        directory = getattr(getattr(self, "config", None), "dir", None)
-        if directory is None:
-            return None
-        return self_talk_voice.find_audio(directory, text, self.config)
-
-    def speak_self_talk(self, text: str = "") -> bool:
-        """点击自言自语朗读：把同一句话送进报时服务的音频通道。
-
-        优先播预缓存的本地文件（零延迟、断网可用）；没有缓存才回落到在线合成。
-
-        与 ``say_now`` 同理，通道可能是为本次点击才懒创建的（例如报时关着、
-        只想要点击出声），此时服务里的 ``_cfg`` 还是模块默认音色；未在运行就
-        先 ``apply_config()`` 读一次用户配置，才能用上选定的音色/语速/音量。
-
-        返回 False 仅表示文本为空或通道不可用；合成/播放失败只记日志——气泡由
-        调用方照常展示，"看得见听不见"好过"点一下什么都不发生"。
-        """
-        stripped = str(text or "").strip()
-        if not stripped:
-            return False
-        try:
-            channel = self.ensure_audio_channel()
-        except Exception:
-            logging.exception("获取音频通道失败，点击自言自语仅出气泡")
-            return False
-        if channel is None:
-            return False
-        cached = self.self_talk_voice_file(stripped)
-        if cached is not None:
-            try:
-                if channel.play_file(str(cached), log_tag="点击自言自语"):
-                    # 落一条日志：本地播报与"偷偷回落到在线合成"必须能分辨，
-                    # 否则文件名对不上时只会表现为"声音怎么变了"却查不出原因。
-                    logging.getLogger("dsh-pet-standalone").info(
-                        "点击自言自语：播放预缓存台词 %s（本地，不走网络）", cached.name)
-                    return True
-            except Exception:
-                logging.exception("本地台词播放失败，回退在线合成：%s", cached.name)
-        try:
-            # 运行中的通道配置由 _sync_chime_service 在保存时刷新；未运行才需补读。
-            if not channel.is_running():
-                channel.apply_config()
-            # 交互应答显式豁免免打扰（issue #208：点了就要有回应，与点击台词气泡
-            # 同口径）；提醒类播报用 speak() 的默认值，免打扰期间静音。
-            channel.speak(stripped, log_tag="点击自言自语", respect_quiet=False)
-        except Exception:
-            logging.exception("点击自言自语语音播报失败")
-            return False
-        return True
-
-    def precache_self_talk_voice(self, reason: str = "") -> bool:
-        """把还没有本地音频的点击台词（含点击动画绑定台词）交给后台补齐。
-
-        合成走「设置 → 语音报时」同一条链路（``pet/tts`` 注册表 + 同一音色），所以
-        试听能出声就等于这里能生成；本机可选的自建 TTS 服务只由 ``DSH_PET_TTS_URL``
-        覆盖，不在线会自动落回注册表。为什么必须后台：一句在线合成要几秒（自建服务
-        更慢），保存设置或点击那一刻同步做必然卡顿。开关
-        ``self_talk_voice_precache_enabled`` 默认关闭——开一次要在本机写几十个音频
-        文件，不开的用户不该付这笔合成开销。
-
-        返回是否真的起了新一轮。开关关着返回 False（一个请求都不发）；上一轮没跑完
-        也返回 False，但这次请求会被记为**待处理快照**，当前批结束后按它补跑一轮
-        （合成期间追加的台词不会错过这一轮）。
-        """
-        if not self_talk_voice.enabled(self.config):
-            # 关着时连每宠名单都不读：slot 档案的读取不该为关掉的功能付费。
-            return False
-        try:
-            started = self_talk_voice.start_precache(
-                self.config, configs=self._self_talk_voice_configs())
-        except Exception:
-            logging.exception("启动台词语音预缓存失败（不影响点击朗读）")
-            return False
-        if started:
-            logging.getLogger("dsh-pet-standalone").info(
-                "已开始后台预缓存台词语音%s", f"（{reason}）" if reason else "")
-        return started
-
-    def _self_talk_voice_configs(self) -> list:
-        """每只活跃宠的配置视图（台词名单 ``self_talk_texts`` 是每宠键，按 slot 读）。
-
-        两条拓扑各自的"该宠此刻真正在用的那份视图"，不另造读取口径：
-
-        - legacy：逐窗 ``PetInstance.config``（``SlotRoutedConfig``，每宠键路由到
-          该 slot 档案）；
-        - overlay：子宠是 sprite、没有 PetInstance，视图只有壳的 ``_sprite_config``
-          给得出（主 sprite 也是这条，slot0 档案）。
-
-        拿主配置统一读会让 slot≠0 的宠在别人的名单上生成，点击时命中不到缓存、
-        悄悄回退在线合成（音色变成另一个人）。
-        """
-        overlay = getattr(self, "_overlay_shell", None)
-        all_sprites = getattr(overlay, "_all_sprites", None)
-        sprite_cfg = getattr(overlay, "_sprite_config", None)
-        if callable(all_sprites) and callable(sprite_cfg):
-            return [sprite_cfg(sprite) for sprite in all_sprites()]
-        # ``_instances`` 是底层表（``instances`` 只是它的 property）：``__new__``
-        # 造出来的测试桩没有这张表，读不到时当作"没有活跃宠"。
-        return [inst.config for inst in getattr(self, "_instances", ())]
-
-    def _sync_chime_service(self) -> None:
-        """按配置启停语音报时服务；关闭时释放服务对象。"""
-        if self._chime_wanted():
-            service = self._ensure_chime_service()
-            if service.is_running():
-                # 已在运行：设置保存只刷新配置，不重置 20s tick。
-                service.apply_config()
-            else:
-                service.start()
-        elif getattr(self, "voice_chime_service", None) is not None:
-            try:
-                self.voice_chime_service.stop()
-            except Exception:
-                logging.exception("停止语音报时服务失败")
-            self.voice_chime_service = None
-
     # ------------------------------------------------------------ DSH 联动门
     def _dsh_tracker_wanted(self) -> bool:
         """DSH 联动的功能门：``agent_link.dsh``（默认关）。
@@ -1722,12 +1514,6 @@ class AppShell:
         self._apply_balance_timer()
         # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
         self._sync_todo_service()
-        self._sync_chime_service()
-        # 台词语音预缓存同样在这里收敛：设置页默认跑在独立进程
-        # （settings_process_isolation），进程内对话框那条保存链根本不会执行——
-        # 少了这一行，用户打开开关并保存后本次运行一个文件都不生成（issue #305）。
-        # 开关判定在入口内部，关着时是 no-op；重复触发是单飞的，已补齐时立刻返回。
-        self.precache_self_talk_voice("外部保存设置后")
         # 外部配置变更也可能改了 agent_link.dsh（右键菜单开关落盘后同样收敛到
         # 这里）→ 各窗 refresh_pet_settings 链里的 manager.apply_config 会按
         # 同一功能门启停 DshMonitor（桥目录唯一读方）；overlay 拓扑由上面的
@@ -2241,12 +2027,6 @@ class AppShell:
                 self.app, self.instance,
                 agent_link_manager=getattr(shared, "agent_link", None),
                 proactive_watcher=getattr(shared, "proactive", None))
-            # 点击自言自语的朗读走同一条音频通道（AppShell 持有，进程内唯一）；
-            # overlay 拓扑没有 PetWindow 可注入（app.py:481 的 legacy 落点是
-            # PetInstance._wire_window，那里用 self.shell），本类就是那个
-            # AppShell，故直接取 self.speak_self_talk——写 self.shell 会
-            # AttributeError（见 _precache 段同款注释）。
-            self._overlay_shell.on_self_talk_speak = self.speak_self_talk
             self._overlay_shell.start()
             selector = getattr(self._overlay_shell, "select_slot", None)
             if self._slot_id is not None and callable(selector):
@@ -2266,15 +2046,11 @@ class AppShell:
         self.instance._apply_spawn_offset()
         self._apply_balance_timer()
         self._sync_todo_service()
-        self._sync_chime_service()
         # 设置页进程隔离：启动即装 config 目录 watcher，独立设置进程落盘后由它
         # 合并进运行期（开关关闭时不装，完全走旧路径）。
         self._install_config_watcher()
         QTimer.singleShot(3500, self.instance._check_autostart_wanted)
         QTimer.singleShot(4000, self._maybe_autostart_harness)
-        # 启动时补一次：点击动画绑定对话框不走设置页保存信号，改动要等下次启动才被
-        # 发现（合成一句约 20 秒，放晚一点，别和首帧/动画预热抢资源）。
-        QTimer.singleShot(9000, self._precache_self_talk_voice_on_start)
         # issue #111：会话结束（Windows 关机/注销）探测器。必须在窗口就绪后安装
         # ——它要在关机窗口期到来**之前**就位，才能抢在会话拆除前关掉 ffmpeg
         # 派生（否则系统会弹 0xc0000142 阻塞关机）。
@@ -2314,20 +2090,6 @@ class AppShell:
             except Exception:
                 logging.exception("提示 slot0 档案降级失败（窗口）")
         logging.warning("slot0 档案降级提示无法上屏（无可见桌宠/托盘）：%s", diagnosis)
-
-    def _precache_self_talk_voice_on_start(self) -> None:
-        """启动后补一次台词预缓存。
-
-        单独方法而不是塞进 lambda：Qt 槽里抛的异常在 pythonw 下只进 stderr（GUI
-        程序没有控制台），表现为"什么都没发生"——本功能的第一个版本写成
-        ``lambda: self.shell.…``，而 ``start()`` 属于 AppShell 自己（没有
-        ``self.shell``），于是每次启动都静默 AttributeError，预缓存从未运行。
-        这里显式兜住并落日志，让失败一定看得见。
-        """
-        try:
-            self.precache_self_talk_voice("启动时")
-        except Exception:
-            logging.exception("启动时预缓存台词语音失败")
 
     # ------------------------------------------------------------ 全局快捷键
     def _install_global_hotkeys(self) -> None:
@@ -2731,12 +2493,6 @@ class AppShell:
         #（关掉后迟到的 queued 回调提交会被明确拒绝）。
         if self.todo_service is not None:
             self.todo_service.stop()
-        # 语音报时同为进程级懒服务，退出必须一并停：其无主 QTimer 的 timeout
-        # 连接从 Qt C++ 侧强引用住整个对象图（理由同 todo_service，见
-        # _shutdown_live_for_tests 注释）；不停则退出期仍在跑 20s tick，且
-        # 飞行中的合成线程会经信号桥回 GUI 线程回放、触碰正在析构的窗口。
-        if self.voice_chime_service is not None:
-            self.voice_chime_service.stop()
         # 退出收口：停掉本进程自拉起的 dsh web（父进程退出不带走 CREATE_NO_WINDOW
         # 的子进程，实机确认桌宠退出后 node 仍活着——只能由宿主自己收）。
         # 只杀自拉起登记表里且命令行复核通过的那个：用户手动起的实例不受影响。
@@ -2812,13 +2568,6 @@ class AppShell:
                     except Exception:
                         logging.debug("测试收口注销全局快捷键失败", exc_info=True)
                     shell._hotkeys = None
-                service = getattr(shell, "voice_chime_service", None)
-                if service is not None:
-                    try:
-                        service.stop()
-                    except Exception:
-                        logging.debug("测试收口语音报时服务失败", exc_info=True)
-                    shell.voice_chime_service = None
                 if getattr(shell, "instance", None) is not None:
                     win = getattr(shell.instance, "win", None)
                     lib = getattr(win, "lib", None)
@@ -4176,29 +3925,6 @@ class AppShell:
         """
         if getattr(self, "network_info_dialog", None) is dialog:
             self.network_info_dialog = None
-
-    def trigger_voice_chime_now(self, text: str = "") -> None:
-        """手动报时：设置页试听入口与菜单编排加回的「立即报时」共用（该菜单项默认隐藏）。
-
-        无论报时总开关是否开启都会执行（试听/手动触发语义），服务懒创建。
-        """
-        service = self._ensure_chime_service()
-        service.say_now(text=text)
-
-    def _toggle_flag(self, key: str, sync) -> None:
-        """布尔开关的统一实现：翻转配置 → 落盘 → 同步服务启停。
-
-        语音报时/节日提醒两个开关此前逐字同构（读旧值取反、save、调各自的
-        `_sync_*_service`），这里收成一处；读旧值的口径（`bool(get(...))`
-        后取反）与落盘时机逐点不变。
-        """
-        self.config.set(key, not bool(self.config.get(key, False)))
-        self.config.save()
-        sync()
-
-    def toggle_voice_chime(self) -> None:
-        """「启用/关闭语音报时」开关（默认隐藏、菜单编辑器可加回）：翻转配置并同步服务启停。"""
-        self._toggle_flag("voice_chime_enabled", self._sync_chime_service)
 
     def system_notify(self, title: str, message: str, *, on_click=None, duration_ms: int = 5000) -> None:
         """Show a bottom-right desktop notification (self-drawn, tray-independent)."""

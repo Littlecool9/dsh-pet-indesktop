@@ -157,7 +157,6 @@ def application(output):
     cfg.set("focus_mode", {"work_minutes": 1, "short_break_minutes": 1,
                            "screen_enabled": False, "check_minutes": 30})
     cfg.set("harness_autostart", False)
-    cfg.set("voice_chime_enabled", False)
     cfg.set("festival_reminder_enabled", False)
     cfg.save()
     shell = AppShell(app, cfg, enable_chat=True)

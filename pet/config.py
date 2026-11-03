@@ -841,7 +841,6 @@ def _normalize_pet_profile_values(data: dict) -> None:
     data["self_talk_image_chance"] = int(_float_or_default(data.get("self_talk_image_chance"), float(DEFAULT_SELF_TALK_IMAGE_CHANCE), 0.0, 100.0))
     data["bubble_text_scale"] = int(_float_or_default(data.get("bubble_text_scale"), 100.0, 50.0, 300.0))
     data["self_talk_enabled"] = bool(data.get("self_talk_enabled", False))
-    data["self_talk_speak_enabled"] = _bool_or_default(data.get("self_talk_speak_enabled"), False)
     data["self_talk_texts"] = _clean_self_talk_texts(data.get("self_talk_texts"))
     bubble_style = str(data.get("self_talk_bubble_style") or "")
     data["self_talk_bubble_style"] = bubble_style if bubble_style in SELF_TALK_BUBBLE_STYLES else DEFAULT_SELF_TALK_BUBBLE_STYLE
@@ -957,8 +956,6 @@ class Config:
             "slingshot_enabled": True,  # 弹弓弹射
             "throw_strength": "standard",  # gentle / standard / strong / crazy
             "click_show_balance": False,  # 点击显示 DeepSeek 余额
-            "self_talk_speak_enabled": False,  # 点击自言自语同句朗读（复用语音报时音频通道，默认关）
-            "self_talk_voice_precache_enabled": False,  # 台词/点击绑定本地语音预缓存（需本机 TTS 服务，默认关）
             "balance_refresh_minutes": 0,  # DeepSeek 余额自动刷新间隔（分钟，0=关闭）
             "balance_tier_labels_mode": "default",  # 峰谷提示文案：default / liangwen / custom
             "balance_tier_label_peak": "",  # 自定义“高峰”文本（custom 模式）
@@ -1028,37 +1025,6 @@ class Config:
             "system_notifications_enabled": True,  # 对话完成/失败/需要授权时弹桌面系统通知
             "todo_reminder_enabled": True,  # 待办提醒总开关
             "todo_reminder_lead_minutes": 5,  # 待办提前提醒分钟数（0~60，0=不提前）
-            # 待办语音播报：复用语音报时服务的音频通道（音色/语速/音调/音量同报时），
-            # 故不新增独立的语音参数键。默认关闭（主动打扰型能力）。
-            "todo_reminder_speak": False,  # 待办提醒是否语音播报
-            # 语音报时（edge-tts 在线 TTS + 台词/歌词每天整套换新、日内顺序轮换）
-            "voice_chime_enabled": False,  # 语音报时总开关（默认关闭：主动打扰型功能，用户显式开启）
-            "voice_chime_schedule": "hourly",  # hourly / every_30 / every_15 / every_5 / every_minute / custom
-            "voice_chime_custom_times": "",  # 自定义时间点（HH:MM 逗号分隔，custom 模式生效）
-            "voice_chime_voice": "zh-CN-XiaoxiaoNeural",  # edge-tts 音色
-            "voice_chime_rate": 0,  # 语速偏移（%），-100~100
-            "voice_chime_pitch": 0,  # 音调偏移（Hz），-50~50
-            "voice_chime_volume": 80,  # 播放音量（0~100）
-            "voice_chime_show_bubble": True,  # 报时气泡开关
-            "voice_chime_show_quote": True,  # 台词/歌词开关
-            "voice_chime_custom_quotes_zh": "",  # 自定义中文台词/歌词（一行一条，留空回退内置库）
-            "voice_chime_custom_quotes_en": "",  # 自定义英文台词/歌词（一行一条，留空回退内置库）
-            # 合成后端：edge（edge-tts，免 Key）/ mimo（小米 MiMo TTS，OpenAI 兼容接口，
-            # API Key 存系统钥匙串）/ sapi（Windows 本地语音）/ doubao（豆包 2.0）；
-            # 主后端失败时按 fallback 自动回退另一个。
-            # 默认 edge（2026-10-13 改，原为 mimo）：面向公众发包时，陌生人装上就要能听见
-            # 声音——mimo / doubao 都要用户自备 API Key，拿它们当默认等于新装即静音；
-            # edge 不需要任何凭据，且失败照走既有自动回退。只改仓库默认值，不动任何人
-            # 本机 config.json 里的显式取值。
-            "voice_chime_tts_backend": "edge",  # edge / mimo / sapi / doubao
-            "voice_chime_tts_fallback": True,  # 主后端失败自动回退 edge
-            "voice_chime_mimo_model": "mimo-v2.5-tts",  # 或 mimo-v2.5-tts-voicedesign
-            "voice_chime_mimo_voice": "冰糖",  # 内置音色 id（中文名即 id）
-            "voice_chime_mimo_style": "",  # 风格指令（自然语言，留空用模型默认）
-            "voice_chime_sapi_voice": "",  # SAPI5 本地音色（留空＝自动挑中文音色）
-            "voice_chime_sapi_rate": 0,  # SAPI5 语速 −10..10（0 为系统默认）
-            "voice_chime_doubao_speaker": "zh_female_peiqi_uranus_bigtts",  # 豆包 2.0 音色
-            "voice_chime_doubao_pitch": 15,  # 豆包本地变调百分比（0–30）
             # 全局快捷键（进程级，不随每宠不同）：空串 = 未绑定。
             # 三个动作见 pet/hotkeys.py 的 ACTIONS；写进来时按 hotkey_spec 收成
             # 规范形式，不认识的一律清空（配置里不存脏值）。
@@ -1238,8 +1204,6 @@ class Config:
             "slingshot_enabled",
             "throw_strength",
             "click_show_balance",
-            "self_talk_speak_enabled",
-            "self_talk_voice_precache_enabled",
             "balance_refresh_minutes",
             "autostart_wanted",
             "harness_autostart",
@@ -1277,27 +1241,6 @@ class Config:
             "system_notifications_enabled",
             "todo_reminder_enabled",
             "todo_reminder_lead_minutes",
-            "todo_reminder_speak",
-            "voice_chime_enabled",
-            "voice_chime_schedule",
-            "voice_chime_custom_times",
-            "voice_chime_voice",
-            "voice_chime_rate",
-            "voice_chime_pitch",
-            "voice_chime_volume",
-            "voice_chime_show_bubble",
-            "voice_chime_show_quote",
-            "voice_chime_custom_quotes_zh",
-            "voice_chime_custom_quotes_en",
-            "voice_chime_tts_backend",
-            "voice_chime_tts_fallback",
-            "voice_chime_mimo_model",
-            "voice_chime_mimo_voice",
-            "voice_chime_mimo_style",
-            "voice_chime_sapi_voice",
-            "voice_chime_sapi_rate",
-            "voice_chime_doubao_speaker",
-            "voice_chime_doubao_pitch",
             "character_aliases",
             "chat_always_on_top",
             "dynamic_island",
@@ -1622,7 +1565,6 @@ class Config:
         self._migrate_dialogue_phrase_fields(self.data.get("dialogue_phrases"))
         _normalize_pet_profile_values(self.data)
         self.data["animation_gap_seconds"] = _float_or_default(self.data.get("animation_gap_seconds"), DEFAULT_ANIMATION_GAP_SECONDS, 0.0, 3600.0)
-        self.data["self_talk_voice_precache_enabled"] = _bool_or_default(self.data.get("self_talk_voice_precache_enabled"), False)
         self.data["cursor_hidden_passthrough"] = _bool_or_default(self.data.get("cursor_hidden_passthrough"), True)
         self.data["allow_cross_screen"] = _bool_or_default(self.data.get("allow_cross_screen"), False)
         self.data["spawn_inherit_size"] = _bool_or_default(self.data.get("spawn_inherit_size"), True)
@@ -1671,7 +1613,6 @@ class Config:
         # 待办提醒：开关同规防字符串布尔误开；提前量钳到 [0, 60] 分钟（0=不提前）。
         self.data["todo_reminder_enabled"] = _bool_or_default(self.data.get("todo_reminder_enabled"), True)
         self.data["todo_reminder_lead_minutes"] = int(_float_or_default(self.data.get("todo_reminder_lead_minutes"), 5.0, 0.0, 60.0))
-        self.data["todo_reminder_speak"] = _bool_or_default(self.data.get("todo_reminder_speak"), False)
         # 免打扰（issue #208）：默认时长归一到一个合法档位（手改成 7 分钟不该让
         # 菜单里一个勾选项都对不上）；布尔键同族同规，防手改字符串布尔误开。
         self.data["quiet_minutes_default"] = normalize_quiet_minutes(
@@ -1802,7 +1743,6 @@ class Config:
             "self_talk_image_chance",
             "bubble_text_scale",
             "self_talk_bubble_style",
-            "self_talk_voice_precache_enabled",
             "context_menu_appearance",
             "context_menu_layout",
             "quick_launch_apps",
@@ -1826,7 +1766,6 @@ class Config:
             "todo_reminder_enabled",
             "todo_reminder_lead_minutes",
             "focus_mode",
-            "todo_reminder_speak",
             "quiet_minutes_default",
             "quiet_also_on_fullscreen",
             "music_sing_enabled",

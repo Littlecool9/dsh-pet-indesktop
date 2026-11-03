@@ -13,13 +13,6 @@ certifi>=2024.0.0
 pycaw>=0.0.13; platform_system == "Windows"
 tzdata>=2024.1
 
-# 语音报时（pet/voice_chime_service.py）的在线 TTS：edge-tts 走微软免费在线
-# 语音服务合成 mp3 后缓存播放。缺失时服务降级为仅气泡提示（不崩溃），但
-# 打包版用户无法自行 pip 安装——所以在此声明为运行时依赖，并在三个构建
-# 脚本里配 --collect-all edge_tts（它用 importlib.metadata 取版本、子模块
-# 存在动态导入，PyInstaller 静态分析收不全）。
-edge-tts>=7.3.1,<8
-
 # —— 歌词显示（可选）——
 # 「显示歌词」功能靠 Windows 系统媒体控制（SMTC）读取当前播放的曲目。
 # 不装不影响桌宠本体：歌词能力探测返回不可用，

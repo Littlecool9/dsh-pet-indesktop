@@ -7,7 +7,7 @@
 3. config 目录 watcher 触发应用链；
 4. 主进程单实例锁（已持有不再拉起）与 startDetached 失败回退进程内；
 5. 独立设置进程存活期气泡抑制；
-6. standalone 试听接线 / 无 parent 时的 runtime 避让。
+6. standalone 无 parent 时的 runtime 避让。
 
 时序纪律：watcher 测试用「有界轮询 + processEvents」而不是固定 sleep 猜时序
 （CI runner 是本地数倍慢，见 AGENTS.md 的 CI cost discipline）。
@@ -289,7 +289,6 @@ def test_apply_external_config_change_fans_out_to_all_instances(tmp_path, monkey
     shell._sync_dynamic_island = lambda: None
     shell._apply_balance_timer = lambda: None
     shell._sync_todo_service = lambda: None
-    shell._sync_chime_service = lambda: None
     shell._apply_external_config_change()
     for inst in shell._instances:
         inst.win.refresh_pet_settings.assert_called_once_with()
@@ -533,8 +532,7 @@ def test_modern_settings_finished_delegates_to_shell_apply_chain(tmp_path):
     owner = PetInstance.__new__(PetInstance)
     owner.shell = AppShell.__new__(AppShell)
     owner.shell._instances = []
-    # 真实壳恒有 config（_modern_settings_finished 末尾无条件走一次台词预缓存，
-    # 那条入口自己按开关收敛，壳上没有 config 只可能是测试桩少给了）
+    # 真实壳恒有 config（测试桩也按真实形状补齐）
     owner.shell.config = Config(base=tmp_path)
     calls = []
     owner.shell._apply_external_config_change = lambda: calls.append(1)
@@ -546,46 +544,7 @@ def test_modern_settings_finished_delegates_to_shell_apply_chain(tmp_path):
     assert owner.modern_settings_dialog is None
 
 
-# ------------------------------------------- 6. standalone 试听 / runtime 避让
-
-def test_standalone_preview_uses_local_channel(tmp_path, monkeypatch):
-    """standalone 试听改走本地通道。"""
-    import pet.modern_settings_dialog as settings_mod
-    import pet.settings_standalone as standalone_mod
-
-    _qapp()
-    seen = []
-    monkeypatch.setattr(standalone_mod, "preview_voice_chime", lambda dialog, text="": seen.append(("chime", text)))
-    dialog = settings_mod.ModernSettingsDialog(Config(base=tmp_path), include_ai=False, standalone=True)
-    inproc = settings_mod.ModernSettingsDialog(Config(base=tmp_path / "inproc"), include_ai=False)
-    try:
-        assert dialog.standalone is True
-        assert inproc.standalone is False
-        dialog.voice_chime_page.preview_requested.emit("")
-        assert seen == [("chime", "")]
-    finally:
-        dialog.deleteLater()
-        inproc.deleteLater()
-
-
-def test_frozen_standalone_missing_tts_points_to_app_update(tmp_path, monkeypatch):
-    import pet.settings_standalone as standalone_mod
-    from pet.modern_settings_dialog import ModernSettingsDialog
-
-    _qapp()
-    dialog = ModernSettingsDialog(Config(base=tmp_path), include_ai=False)
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(standalone_mod, "_edge_tts_available", lambda: False)
-    try:
-        standalone_mod.install_standalone_hooks(dialog)
-        button = dialog.voice_chime_page.preview_btn
-        assert not button.isEnabled()
-        assert "更新" in button.toolTip()
-        assert "pip install" not in button.toolTip()
-    finally:
-        dialog.deleteLater()
-
-
+# ------------------------------------------------- 6. standalone runtime 避让
 def test_standalone_runtime_marker_drives_move_away(tmp_path):
     """无 parent 时按 runtime 状态文件避让桌宠位置。"""
     from pet.modern_settings_dialog import ModernSettingsDialog
@@ -660,11 +619,7 @@ def test_settings_process_isolation_survives_reload(tmp_path):
 
 
 def test_settings_standalone_module_does_not_import_heavy_modules():
-    """pet.settings_standalone 顶层不得 import voice_chime_service / pet.app。
-
-    试听/节日服务必须留给点击时惰性 import，否则独立设置进程启动就白付
-    edge-tts/QtMultimedia 的导入成本（违反"standalone 启动只许懒加载"）。
-    """
+    """pet.settings_standalone 顶层不得 import pet.app（独立设置进程不进主程序链）。"""
     path = Path(__file__).resolve().parents[1] / "pet" / "settings_standalone.py"
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         stripped = line.strip()
@@ -672,7 +627,6 @@ def test_settings_standalone_module_does_not_import_heavy_modules():
             continue  # 函数内惰性 import 合法（这正是本用例要守的形态）
         if not (stripped.startswith("import ") or stripped.startswith("from ")):
             continue
-        assert "voice_chime_service" not in stripped, f"settings_standalone.py:{lineno} 顶层 import 回潮"
         assert "pet.app" not in stripped, f"settings_standalone.py:{lineno} 顶层 import 回潮"
 
 

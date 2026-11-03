@@ -4,8 +4,8 @@
 问题：overlay 拓扑下右键子宠 → 桌宠设置拉起的是**独立设置进程**
 （``--instance slot-N`` → ``Config(instance_id="slot-N")`` → 读写
 ``config-slot-N.json``），而运行期只有 ``PER_SLOT_SETTING_KEYS`` 里的键逐宠取源
-（``overlay_shell._SpriteConfig.get``），其余键一律读主配置。于是子宠页上「语音
-报时 / 节日 / 待办 / 灵动岛 / 菜单外观 / 窗口级 7 键 …」保存成功、回显正确、
+（``overlay_shell._SpriteConfig.get``），其余键一律读主配置。于是子宠页上「待办 /
+灵动岛 / 菜单外观 / 窗口级 7 键 …」保存成功、回显正确、
 运行期零效果——窗口级 7 行还写着「（对所有桌宠生效）」，实际对所有桌宠都不生效。
 
 本文件钉住修法的四件事（走真实 ``ModernSettingsDialog`` 这个公开 seam，不碰私有
@@ -75,7 +75,7 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
         assert dialog.pet_opacity_spin.value() == 55
         dialog.pet_opacity_spin.setValue(35)
         dialog.edge_probe_check.setChecked(True)
-        dialog.voice_chime_page.enabled_check.setChecked(True)
+        dialog.network_info_menu_check.setChecked(False)
         assert dialog._write_config() is True
     finally:
         dialog.deleteLater()
@@ -83,14 +83,14 @@ def test_child_save_routes_global_keys_to_main_config(tmp_path, app):
     on_disk = _read_json(main.path)
     assert on_disk["pet_opacity"] == 35, "窗口级键必须落主配置"
     assert on_disk["edge_probe_enabled"] is True, "拖拽探头必须落主配置"
-    assert on_disk["voice_chime_enabled"] is True, "语音报时必须落主配置"
+    assert on_disk["network_info_menu_enabled"] is False, "网络信息菜单必须落主配置"
     assert "scale" not in on_disk
     assert _read_json(_slot_path(main.dir, 0))["scale"] == 0.5
 
     slot_on_disk = _read_json(_slot_path(main.dir))
     assert slot_on_disk.get("pet_opacity") != 35, "非 per-slot 键一个字节都不该进 slot 文件"
     assert slot_on_disk.get("edge_probe_enabled") is not True
-    assert slot_on_disk.get("voice_chime_enabled") is not True
+    assert slot_on_disk.get("network_info_menu_enabled") is not False
 
 
 def test_child_save_keeps_per_slot_keys_in_the_slot_file(tmp_path, app):
@@ -126,20 +126,20 @@ def test_child_page_initial_values_come_from_main_config(tmp_path, app):
     main = Config(base=tmp_path)
     main.set("pet_opacity", 80)
     main.set("scale", 0.5)
-    main.set("voice_chime_enabled", True)
+    main.set("network_info_menu_enabled", False)
     assert main.save() is True
     # 先用主配置落种，再把 slot 文件改成**陈旧快照**（主配置改过、slot 文件没跟上，
     # 正是"上一次落种时的样子"）：子宠页以前读的就是这一份。
     Config(base=tmp_path, instance_id="slot-1")
     _slot_path(main.dir).write_text(json.dumps({"version": 4, "pet_opacity": 40,
-        "voice_chime_enabled": False, "scale": 0.85}), encoding="utf8")
+        "network_info_menu_enabled": True, "scale": 0.85}), encoding="utf8")
     cfg = Config(base=tmp_path, instance_id="slot-1")
 
     dialog = _dialog(cfg)
     try:
         assert dialog.pet_opacity_spin.value() == 80, "窗口级行必须显示主配置的真值"
-        assert dialog.voice_chime_page.enabled_check.isChecked() is True, (
-            "语音报时行必须显示主配置的真值（slot 文件里那份是陈旧副本）"
+        assert dialog.network_info_menu_check.isChecked() is False, (
+            "网络信息菜单行必须显示主配置的真值（slot 文件里那份是陈旧副本）"
         )
         assert float(dialog.scale_combo.currentData()) == pytest.approx(0.85), (
             "per-slot 行仍按这只宠自己的 slot 文件取源"
@@ -164,7 +164,7 @@ def test_child_reset_touches_slot_file_only(tmp_path, app, monkeypatch):
 
     main = Config(base=tmp_path)
     main.set("pet_opacity", 66)
-    main.set("voice_chime_enabled", True)
+    main.set("network_info_menu_enabled", False)
     assert main.save() is True
     cfg = Config(base=tmp_path, instance_id="slot-1")
     assert pet_profiles.write_profile_settings(
@@ -205,7 +205,7 @@ def test_child_reset_confirm_copy_promise_equals_actual_scope(tmp_path, app, mon
     from pet import pet_profiles, settings_reset_defaults
 
     main = Config(base=tmp_path)
-    main.set("voice_chime_enabled", True)          # 全局键：文案承诺"不受影响"
+    main.set("network_info_menu_enabled", False)    # 全局键：文案承诺"不受影响"
     main.set("self_talk_texts", ["全局台词"])
     assert main.save() is True
     cfg = Config(base=tmp_path, instance_id="slot-1")
@@ -242,7 +242,7 @@ def test_child_reset_confirm_copy_promise_equals_actual_scope(tmp_path, app, mon
     assert len(seen) == 1, "前提：子宠页确实弹了确认框"
     copy = "\n".join(seen[0])
     assert "只重置这只桌宠自己的那份设置" in copy
-    assert "语音报时、灵动岛、AI 对话等全局设置" in copy
+    assert "灵动岛、AI 对话等全局设置" in copy
     assert "当前所在位置不变" in copy, "位置保留也是承诺的一部分（G1b）"
     assert "将重置全部设置" not in copy, "主宠页承诺不得出现在子宠页"
 
@@ -483,7 +483,7 @@ def test_routed_keys_cover_the_runtime_per_slot_read_surface(tmp_path):
     assert overlay_shell.PER_SLOT_SETTING_KEYS <= settings_slot_config.SLOT_ROUTED_KEYS
     assert "collision_enabled" in settings_slot_config.SLOT_ROUTED_KEYS
     assert "user_customized" in settings_slot_config.SLOT_LOCAL_KEYS
-    for main_only in ("pet_opacity", "voice_chime_enabled", "edge_probe_enabled",
+    for main_only in ("pet_opacity", "network_info_menu_enabled", "edge_probe_enabled",
                       "dynamic_island", "context_menu_appearance"):
         assert main_only not in settings_slot_config.SLOT_ROUTED_KEYS
 

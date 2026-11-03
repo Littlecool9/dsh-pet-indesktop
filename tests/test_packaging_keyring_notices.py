@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
-"""打包面：收费 TTS 凭据要能真的存住，第三方许可要真的随包走。
+"""打包面：凭据要能真的存住，第三方许可要真的随包走。
 
 两条都是**发布阻断级**的缺陷，共同点是「产品界面看不出来」：
 
 1. **keyring 被 no-chat 变体排除**（``build_onedir.ps1`` 与两个 shell 脚本原本把
-   ``keyring`` 和 ``pet.chat`` 一起排除）。可语音报时设置页在 chat / no-chat 两条链路上
-   都注册（它刻意不依赖 ``pet.chat``），MiMo / 豆包这两个收费后端照旧出现、照旧收
-   API Key——只是那个 Key 永远只能落进**写它的进程**的内存里。设置页默认跑在独立
-   进程（``settings_process_isolation``），真正合成的 ``VoiceChimeService`` 在主宠
-   进程，于是用户填完 Key、界面报「已保存」，而收费后端永远自报「没配 Key」。
-   跨进程读不到这件事本身的行为回归在 ``tests/test_tts_secrets.py``，本文件只钉
-   **构建参数清单**：四个变体一个都不能少 keyring，且不许再排除它。
+   ``keyring`` 和 ``pet.chat`` 一起排除）。设置页默认跑在独立进程
+   （``settings_process_isolation``），少了 keyring 的变体只能把 Key 留在**写它的
+   那个进程**的内存里，于是用户填完 Key、界面报「已保存」，主程序永远读不到。
+   本文件只钉**构建参数清单**：四个变体一个都不能少 keyring，且不许再排除它。
 2. **LICENSE / THIRD_PARTY_NOTICES.md 不随包**。内置点击音
    （``assets/sounds/duck/Ya1.mp3`` + ``Ya2.mp3``，MIT，MeteorNOX）的许可正文只写在
    仓根 ``THIRD_PARTY_NOTICES.md`` 里，而构建只打 ``assets/sounds``、``--add-data``
@@ -20,11 +17,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -34,8 +28,6 @@ NOTICES = REPO / "THIRD_PARTY_NOTICES.md"
 
 #: 随包分发的两份声明（仓根）：项目自身的 MIT 许可 + 第三方素材/组件声明。
 BUNDLED_NOTICES = ("LICENSE", "THIRD_PARTY_NOTICES.md")
-#: 收费 TTS 后端（自带 API Key 字段）——它们的存在就是「keyring 必须随每个变体」的理由。
-PAID_PROVIDERS = ("doubao", "mimo")
 MIT_GRANT = "Permission is hereby granted, free of charge"
 METEORNOX_COPYRIGHT = "Copyright (c) 2025 MeteorNOX"
 
@@ -48,40 +40,15 @@ def _pyinstaller_command(text: str) -> str:
 # ==================================================== 一、keyring 必须随每个变体走
 
 
-def test_every_variant_offers_paid_backends_that_need_the_keyring():
-    """前提：收费后端与它们的凭据字段对所有变体都可见（所以 keyring 不能挑变体给）。
-
-    这条断言是上面那两条构建断言的**理由**：一旦收费后端变成 chat-only，本文件
-    第 1 节就该跟着改；反过来只要它们还在产品里，keyring 就一个变体都不能少。
-    """
-    from pet import tts
-
-    for provider_id in PAID_PROVIDERS:
-        provider = tts.get(provider_id)
-        assert provider is not None, f"注册表里没有 {provider_id}"
-        secrets = tts.secret_fields(provider)
-        assert secrets, f"{provider_id} 必须仍然带 API Key 字段（keyring 的用武之地）"
-        assert all(spec.secret_ref for spec in secrets), f"{provider_id} 的凭据缺少 secret_ref"
-
-    page = (REPO / "pet" / "voice_chime_settings.py").read_text(encoding="utf-8")
-    assert "pet.chat" not in page and "from .chat" not in page, (
-        "语音报时设置页刻意不依赖 pet.chat（no-chat 变体也要能打开），别把它接回 chat 链"
-    )
-    dialog = (REPO / "pet" / "modern_settings_dialog.py").read_text(encoding="utf-8")
-    assert "self.voice_chime_page = VoiceChimeSettingsPage(self.config, self)" in dialog, (
-        "语音报时页必须在设置对话框里无条件构造（不是 chat 分支里）"
-    )
-
-
 def test_windows_build_collects_keyring_for_every_variant():
     text = PS1.read_text(encoding="utf-8")
 
     assert "'--collect-all', 'keyring'" in text, "keyring 的收集参数不见了"
     assert "'--exclude-module', 'keyring'" not in text, (
-        "keyring 一旦被排除，no-chat 变体的收费后端凭据就只能留在设置进程内存里"
+        "keyring 一旦被排除，no-chat 变体的凭据就只能留在设置进程内存里"
     )
     assert "$keyringCollect = if ($noChat)" not in text, (
-        "keyring 不许再按变体分叉：no-chat 变体同样有收费后端"
+        "keyring 不许再按变体分叉"
     )
     assert "@keyringCollect" in _pyinstaller_command(text), "收集参数没真的交给 PyInstaller"
 
@@ -91,36 +58,6 @@ def test_windows_build_excludes_only_the_chat_subsystem():
     text = PS1.read_text(encoding="utf-8")
 
     assert "'--exclude-module', 'pet.chat'" in text
-
-
-def _load_tts_gate():
-    """按文件路径加载产物侧自检脚本（``scripts/`` 不是包，import 不进来）。"""
-    spec = importlib.util.spec_from_file_location(
-        "verify_bundle_tts", REPO / "scripts" / "verify_bundle_tts.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["verify_bundle_tts"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_the_product_gate_demands_keyring_in_every_bundle():
-    """产物侧清单（`verify_bundle_tts.MINIMUM_MODULES`）必须要求 keyring。
-
-    只钉构建脚本「写了 --collect-all keyring」不够：`--collect-all` 在包装不上的时候
-    只打一行 WARNING 就继续（这正是这个脚本存在的理由）。清单里有了它，任何变体少带
-    keyring 都会在构建期以退出码 4 中止——真产物实测（`.scratch/packaging-final-20261017`）：
-    修复后的参数 `keyring` 在包里，修复前的参数（`--exclude-module keyring`）判缺。
-    """
-    gate = _load_tts_gate()
-    assert "keyring" in gate.MINIMUM_MODULES
-
-    # 这份清单必须真的被构建调用（产物出包之后跑一次）
-    text = PS1.read_text(encoding="utf-8")
-    anchor = text.index("python -m PyInstaller")
-    call = "verify_bundle_tts.py --app-dir"
-    assert call in text, "build_onedir.ps1 没跑产物侧 TTS 清单自检"
-    assert text.index(call) > anchor, "清单自检必须在产物出来之后跑"
 
 
 # ==================================================== 二、许可与声明必须随包
@@ -199,10 +136,6 @@ def test_build_scripts_collect_keyring_windows_backend_dependency():
     assert "win32ctypes" in script, "构建脚本必须显式收集 win32ctypes"
     assert "--collect-all', 'win32ctypes'" in script, (
         "要以 --collect-all 收集（它自己的子模块也要带）")
-
-    verifier = (repo / "scripts" / "verify_bundle_tts.py").read_text(encoding="utf-8")
-    assert "WINDOWS_ONLY_MODULES" in verifier and "win32ctypes.pywin32.win32cred" in verifier, (
-        "构建期兜底清单要钉住它（按目标平台生效）：Windows 包缺了就以退出码 4 中止")
 
     requires = (repo / "requirements.txt").read_text(encoding="utf-8")
     assert "pywin32-ctypes" in requires, "运行时依赖要显式声明（不靠 keyring 带）"
