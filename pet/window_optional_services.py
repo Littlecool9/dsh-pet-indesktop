@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """PetWindow 可选后台服务/效果控制器的懒装配 mixin（Phase 1 门控）。
 
-把主动识屏 / Agent 联动 / 文件投喂 / 黄金回旋 / 边缘探头等“配置关闭就不构造”
+把主动识屏 / Agent 联动 / 黄金回旋 / 边缘探头等“配置关闭就不构造”
 的生命周期逻辑从 window.py 拆出，避免继续撑大 window.py（架构红线：行数预算）。
 """
 from __future__ import annotations
@@ -24,8 +24,6 @@ class WindowFeatureGateMixin:
     cfg: Any
     proactive_watcher: Any = None
     agent_link_manager: Any = None
-    _file_eater: Any = None
-    _file_interpret: Any = None
     # 桌宠隐藏时的气泡改道面（AppShell 注入 → 灵动岛反馈气泡），见
     # window_alerts.redirect_hidden_bubble；None = 维持原丢弃行为。
     hidden_bubble_redirect: Any = None
@@ -83,27 +81,6 @@ class WindowFeatureGateMixin:
             from .agent_link import AgentLinkManager
             self.agent_link_manager = AgentLinkManager(self, self.cfg)
         return self.agent_link_manager
-
-    # ------------------------------------------------------------ 文件投喂
-    def install_file_eater(self):
-        """挂载“吃垃圾文件”拖放处理器（幂等，只对 PetWindow 实例调用）。"""
-        if self._file_eater is None:
-            from .file_eater import FileEaterDropHandler
-            self._file_eater = FileEaterDropHandler(self)
-        return self._file_eater
-
-    # ------------------------------------------------------------ 文件解读
-    def install_file_interpreter(self):
-        """挂载拖文件解读控制器（幂等）并与投喂处理器互相接线。
-
-        启用与否不再走 sync：offer() 每次实时读 file_interpret.enabled，
-        设置页改动即时生效且无需同步钩子。
-        """
-        if self._file_interpret is None:
-            from .file_interpret import FileInterpretController
-            self._file_interpret = FileInterpretController(self)
-        self.install_file_eater().interpret_offer = self._file_interpret.offer
-        return self._file_interpret
 
     # ------------------------------------------------------------ 黄金回旋/边缘探头
     def _install_effect_services(self):

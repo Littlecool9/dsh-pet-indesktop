@@ -614,11 +614,6 @@ class PetInstance:
         win.set_profile_identity(character_id, token() if callable(token) else None)
         win.shared_fullscreen_watcher_active = shared is not None
         self._wire_window(win)
-        # 文件投喂（拖文件模拟吃掉）：PR73 引入的接线在批5.2 重构时被丢，
-        # 必须随每只窗的创建（启动/切角色/多窗）挂载，缺失则拖放无效。
-        win.install_file_eater()
-        # 拖文件解读（确认 → 新会话请求 → 进度冒泡 → 摘要），与投喂共用接缝。
-        win.install_file_interpreter()
         # 预热点击音效：首次创建 QSoundEffect/QMediaPlayer 池并等待加载完成，
         # 在显示窗口前完成，避免窗口出现后主线程被音频初始化阻塞、
         # 首次点击 Q 弹卡顿。音效关闭时不预热，避免无谓拉起 QtMultimedia 池。
@@ -2298,15 +2293,6 @@ class AppShell:
             selector = getattr(self._overlay_shell, "select_slot", None)
             if self._slot_id is not None and callable(selector):
                 selector(self._slot_id)
-            # 拖文件解读：legacy 由 PetWindow.install_file_interpreter 注入
-            # （window_optional_services.py:96-105）；overlay 无 PetWindow，
-            # 由壳作宿主（cfg/show_bubble/show_alert/resolve_alert 同名面）。
-            try:
-                from .file_interpret import FileInterpretController
-                self._overlay_shell.set_file_interpret_offer(
-                    FileInterpretController(self._overlay_shell).offer)
-            except Exception:  # noqa: BLE001 - 可选服务，缺失不阻断启动
-                logging.exception("overlay: 拖文件解读接线失败")
         else:
             if 0 in self._active_pet_slots:
                 self._create_ui_with_character_fallback(str(self.instance.config.get(

@@ -210,17 +210,16 @@ def test_balance_subtitle_stays_inside_breath_bubble(scale):
 def test_interactive_subtitle_never_widens_the_bubble_past_the_text_column():
     """交互（审批/确认）气泡的副标题不许把它撑宽——原有意图，回归面必须保住。
 
-    file_interpret 的确认气泡带 33 字副标题 + 两个按钮；「气泡文字大小」放大后
-    副标题的宽度上限仍取**未缩放**的基础文本列（与正文同口径），否则长副标题会把
-    交互气泡撑到两倍宽。
+    审批气泡带长副标题 + 两个按钮；「气泡文字大小」放大后副标题的宽度上限仍取
+    **未缩放**的基础文本列（与正文同口径），否则长副标题会把交互气泡撑到两倍宽。
     """
     _get_app()
     bubble = PetSpeechBubble(style_id="classic_top")
     bubble.set_text_scale(2.0)
     bubble.show_text(
-        "要解读刚吃掉的 报告.pdf 吗？", _anchor(), 0,
-        subtitle="内容将发送给当前配置的 AI 模型进行解读；文件本身不会被修改或上传",
-        buttons=[("解读", lambda: None), ("不用了", lambda: None)],
+        "要允许这次操作吗？", _anchor(), 0,
+        subtitle="内容将发送给当前配置的 AI 模型进行处理；这只会影响本次会话的临时设置",
+        buttons=[("允许", lambda: None), ("不用了", lambda: None)],
     )
     try:
         assert bubble.width() <= BUBBLE_TEXT_COLUMN + 26 + 2, (

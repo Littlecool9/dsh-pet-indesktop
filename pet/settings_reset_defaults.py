@@ -36,7 +36,7 @@ config watcher → ``reload()`` + ``_apply_external_config_change()`` 链应用�
   全局请求刷新服务，本宠请求CMD_PROFILE_RESET同步偏好/角色并保身体锚。
   运行消费者使用同一档案和generation，关闭目标只更新会话角色而不复活。
 
-实现拆出 ``modern_settings_dialog.py`` 的原因与 settings_music / settings_file_interpret
+实现拆出 ``modern_settings_dialog.py`` 的原因与 settings_music
 同规：主对话框只留一行接线（该文件有行数预算）。
 """
 

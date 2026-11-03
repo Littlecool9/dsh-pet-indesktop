@@ -118,9 +118,6 @@ class _OverlayShellStub:
     def start(self):
         self.started += 1
 
-    def set_file_interpret_offer(self, offer):
-        pass
-
     def refresh_settings(self):
         self.refreshed += 1
 

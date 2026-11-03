@@ -4,7 +4,7 @@
 **为什么单独一个模块**：``modern_settings_dialog.py`` 的行数预算（``tests/
 test_architecture.py``）没有余量，而本功能的主体是一张「设置行 → Config 键路径」
 映射表加一组控件值适配器，与框体结构无关——按本仓库既有口径（settings_network /
-settings_quiet / settings_music / settings_file_interpret / settings_reset_defaults
+settings_quiet / settings_music / settings_reset_defaults
 都是同一个原因拆出来的）落在这里，对话框只留三行接线。
 
 口径（主代理裁决 + ``docs/SETTINGS-CHANGE-GATES.md``）：
@@ -43,7 +43,6 @@ _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
     **{f"focus_{key}": f"focus_mode.{key}" for key in (
         "work_minutes", "short_break_minutes", "long_break_minutes", "long_break_every",
         "check_minutes", "daily_cap", "screen_enabled")},
-    "file_interpret_enabled": "file_interpret.enabled",
     # 主动识屏（嵌套 dict；preset 会在保存时按数值自动落为 custom）
     "proactive_enabled": "proactive_screen.enabled",
     "proactive_dry_run": "proactive_screen.dry_run",

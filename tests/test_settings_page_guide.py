@@ -1085,7 +1085,7 @@ def test_past_end_padding_follows_the_viewport_size(tmp_path, monkeypatch):
 def test_pages_that_already_fit_get_no_past_end_padding(tmp_path, monkeypatch):
     """本来就装得下的页面留白必须是 0：为「顶对齐」凭空造出一个滚动条是回退。
 
-    宽窗口下这两页装得下——留白一加就会挤出滚动条，页面标题与内容不再居中
+    宽窗口下这一页装得下——留白一加就会挤出滚动条，页面标题与内容不再居中
     （``test_menu_layout.test_wide_settings_title_tracks_the_centered_page_content``
     就是被这条咬到的）。
     """
@@ -1094,13 +1094,13 @@ def test_pages_that_already_fit_get_no_past_end_padding(tmp_path, monkeypatch):
         dialog.resize(1600, 900)
         dialog.show()
         app.processEvents()
-        for domain in ("常规", "文件识别"):
-            _page_widget, _bar = _select(dialog, domain)
-            scroll = _page(dialog, domain).findChild(QScrollArea, "settingsScroll")
-            assert scroll.verticalScrollBar().maximum() == 0, f"「{domain}」本该不滚动"
-            assert _past_end_padding(dialog, domain) == 0, (
-                f"「{domain}」装得下，留白却给了 {_past_end_padding(dialog, domain)}px"
-            )
+        domain = "常规"
+        _page_widget, _bar = _select(dialog, domain)
+        scroll = _page(dialog, domain).findChild(QScrollArea, "settingsScroll")
+        assert scroll.verticalScrollBar().maximum() == 0, f"「{domain}」本该不滚动"
+        assert _past_end_padding(dialog, domain) == 0, (
+            f"「{domain}」装得下，留白却给了 {_past_end_padding(dialog, domain)}px"
+        )
     finally:
         dialog.close()
 

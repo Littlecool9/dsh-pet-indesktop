@@ -170,7 +170,6 @@ from .persona_template import (
     PARAMETERS,
 )
 from . import settings_default_marks
-from . import settings_file_interpret
 from . import settings_interaction
 from . import settings_music
 from . import settings_network
@@ -353,8 +352,6 @@ class ModernSettingsDialog(QDialog):
         root.addLayout(body, 1)
 
         self._build_pet_controls()
-        # 「文件识别」域控件在本模块构建（行数预算原因），见 settings_file_interpret。
-        self._build_file_interpret_controls()
         # 「音乐播放器路径」控件同样在本模块构建（行数预算原因），见 settings_music。
         settings_music.create_music_player_controls(self)
         # 「随桌宠启动 dsh 服务」开关（origin/main #80 合入带回）：构建留在
@@ -1027,7 +1024,7 @@ class ModernSettingsDialog(QDialog):
             from .settings_standalone import install_standalone_hooks
 
             install_standalone_hooks(self)
-        # 全部行（含域导航重建时才造出来的文件识别行）就位后再装「已修改」标记
+        # 全部行（含域导航重建时才造出来的行）就位后再装「已修改」标记
         settings_default_marks.install(self)
 
     def _sync_menu_action_states(self, *_args) -> None:
@@ -1041,10 +1038,6 @@ class ModernSettingsDialog(QDialog):
     def _build_pet_controls(self) -> None:
         """Compatibility delegation (settings_pet_controls.build_pet_controls)."""
         settings_pet_controls.build_pet_controls(self)
-
-    def _build_file_interpret_controls(self) -> None:
-        """「文件识别」域控件（settings_file_interpret 构建，行数预算原因不在本文件展开）。"""
-        settings_file_interpret.create_file_interpret_controls(self)
 
     def _build_proactive_controls(self) -> None:
         """主动识屏页控件（仅 Windows + 有聊天能力时挂载）。"""
@@ -1986,10 +1979,6 @@ class ModernSettingsDialog(QDialog):
         # 后端重新排一遍——当前后端平铺在最上面，其余后端各占一行折叠头。
         self.voice_chime_page.refresh_backend_rows()
 
-        # 「文件识别」域（2026-09-19 新增）：拖文件解读的设置集中在此独立页。
-        # 行在本模块构建（settings_file_interpret，行数预算原因），不走 claim。
-        file_interpret = settings_file_interpret.build_file_interpret_page(self)
-
         # Preserve any newly added row until it receives an explicit domain decision.
         leftovers = [row for row in all_rows if row not in claimed and (self.ai_page is None or not self.ai_page.isAncestorOf(row))]
         if leftovers:
@@ -2008,7 +1997,6 @@ class ModernSettingsDialog(QDialog):
             "AI 与对话": ai_sections,
             "自动化与联动": automation,
             "语音": voice,
-            "文件识别": file_interpret,
         }
         for label, icon in SETTINGS_DOMAIN_NAV:
             content = domain_content.get(label)
@@ -2362,7 +2350,6 @@ class ModernSettingsDialog(QDialog):
         self.config.set("quick_launch_apps", self.quick_launch_editor.apps())
         if self.ai_page is not None:
             self.ai_page.save()
-        settings_file_interpret.save_file_interpret_settings(self)
         settings_network.save_network_settings(self)
         settings_music.save_music_player_settings(self)
         settings_quiet.save_quiet_settings(self)
