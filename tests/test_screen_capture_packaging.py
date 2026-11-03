@@ -42,10 +42,6 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 PS1 = REPO / "scripts" / "build_onedir.ps1"
-SHELLS = {
-    "linux": REPO / "scripts" / "build_linux.sh",
-    "macos": REPO / "scripts" / "build_macos.sh",
-}
 #: 两个静态分析摸不到、只能靠 --hidden-import 进包的模块。
 MODULE = "pet.screen_capture.ocr"
 WORKER_MODULE = "pet.screen_capture.ocr_worker"
@@ -76,19 +72,7 @@ def test_windows_script_hidden_imports_the_dynamic_engines():
     )
 
 
-@pytest.mark.parametrize("name", sorted(SHELLS))
-def test_shell_scripts_hidden_import_the_dynamic_engines(name):
-    text = SHELLS[name].read_text(encoding="utf-8")
-
-    for module in BUNDLED_MODULES:
-        assert f"--hidden-import {module}" in text, f"{module} 的 hidden-import 定义不见了"
-    assert '"${RAPIDOCR_HIDDEN[@]}"' in text, "定义必须真的被传进 PyInstaller"
-    command = text[text.index("args=("):text.index(")\n", text.index("args=("))]
-    assert '"${RAPIDOCR_HIDDEN[@]}"' in command, "hidden-import 没在 args 数组里"
-    assert '"${args[@]}" "$entry"' in text, "args 数组必须真的被交给 PyInstaller"
-
-
-@pytest.mark.parametrize("script", [PS1, *SHELLS.values()])
+@pytest.mark.parametrize("script", [PS1])
 def test_product_side_gate_reads_the_module_out_of_the_bundle(script):
     """只写 hidden-import 不够：还要有产物侧的门把"到底进没进包"读出来。
 

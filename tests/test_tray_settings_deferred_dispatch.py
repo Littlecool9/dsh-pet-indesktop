@@ -2,8 +2,8 @@
 """托盘「AI 设置 / 桌宠设置」入口：菜单先关、回调延到菜单跟踪会话之后。
 
 背景：托盘菜单此前是裸 ``menu.addAction(text, callback)``——回调在原生菜单跟踪
-会话里**内联执行**。macOS 的托盘菜单是 AppKit 原生 NSMenu，跟踪会话中新建/激活
-窗口会被 AppKit 抑制（issue #4 家族：点了没反应，再点一次才对；右键菜单路径早已
+会话里**内联执行**。托盘菜单是系统原生菜单，跟踪会话中新建/激活
+窗口会被系统抑制（issue #4 家族：点了没反应，再点一次才对；右键菜单路径早已
 用 ``close_on_trigger`` + ``exec()`` 返回后派发解决，托盘菜单没有 ``exec()``
 收口点，故走 ``shared.run_after_menu_closed``：菜单先关、等它真的不在了再执行）。
 
@@ -168,7 +168,7 @@ def test_legacy_tray_chat_entry_waits_for_menu_close(tmp_path, label, expected):
     """W4：托盘这两个开窗入口与设置入口同族，同样必须等菜单关闭后再派发。
 
     它们是裸 ``menu.addAction(text, callback)``——回调在原生菜单跟踪会话里内联
-    执行，会话中新建窗口被 AppKit 抑制（同上：点了没反应）。
+    执行，会话中新建窗口被系统抑制（同上：点了没反应）。
     """
     calls: list = []
     shell = AppShell(app, Config(tmp_path), enable_chat=True)
@@ -520,7 +520,7 @@ def test_overlay_tray_submenu_entry_waits_for_the_whole_menu_tree(tmp_path):
 
     ``add_tray_action(sub, ...)`` 此前只看 ``sub`` 自己：Windows 的 Qt popup 下关掉
     根菜单会连带各层子菜单一起消失，所以"子菜单看不见了"碰巧等价于"整棵树关了"；
-    macOS 的托盘菜单是 AppKit 原生 NSMenu 跟踪会话，判定必须落在整棵树上——任一层
+    托盘菜单是系统原生菜单跟踪会话，判定必须落在整棵树上——任一层
     还开着就仍在这个会话里，回调此时执行照样被抑制（issue #4 家族）。
 
     与其余子菜单用例的区别：这里真把 sub 也 ``show()`` 出来，断言根菜单与子菜单
@@ -594,7 +594,7 @@ def test_overlay_tray_quit_entry_stays_inline(tmp_path):
     """「退出」刻意不延迟派发：它不是窗面动作，legacy 托盘同为裸 addAction。
 
     这条把"有意不改"钉住：将来若有人顺手把它也改成延迟派发，本用例会提醒先想清楚
-    ——退出发生在原生菜单跟踪会话里不需要 AppKit 放行（会话随进程一起结束）。
+    ——退出发生在原生菜单跟踪会话里不需要系统菜单会话放行（会话随进程一起结束）。
     """
     shell, menu = _overlay_tray(tmp_path)
     quit_calls: list = []

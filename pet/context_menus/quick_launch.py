@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import os
-import sys
 
-from PySide6.QtCore import QFileInfo, QRectF, QProcess, Qt, QUrl
+from PySide6.QtCore import QFileInfo, QRectF, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import QFileIconProvider, QMenu
 
@@ -70,17 +69,11 @@ def launch_quick_app(item: dict) -> bool:
     path = os.path.abspath(os.path.expanduser(str(item.get("path") or "")))
     if not path:
         return False
-    if sys.platform == "darwin":
-        return bool(QProcess.startDetached("open", [path]))
-    if sys.platform == "win32":
-        try:
-            os.startfile(path)  # type: ignore[attr-defined]
-            return True
-        except OSError:
-            return False
-    if os.path.isdir(path):
-        return bool(QProcess.startDetached("xdg-open", [path]))
-    return bool(QProcess.startDetached(path, []))
+    try:
+        os.startfile(path)  # type: ignore[attr-defined]
+        return True
+    except OSError:
+        return False
 
 
 def add_quick_launch_menu(menu: QMenu, config) -> QMenu:

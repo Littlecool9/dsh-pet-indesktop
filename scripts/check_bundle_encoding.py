@@ -17,7 +17,7 @@
     python scripts/check_bundle_encoding.py --dir dist-onedir/dsh-pet-standalone-webm-chat
 
 退出码：0 = 通过；1 = 发现乱码（构建脚本应中止并拒绝出包）。
-无 Qt 依赖；优先使用 PyInstaller 自带的 reader 解析 onedir exe/.app 内嵌的
+无 Qt 依赖；优先使用 PyInstaller 自带的 reader 解析 onedir exe 内嵌的
 PYZ 字节码，未安装 PyInstaller 时退化为 zip/pyc/字节级扫描兜底。
 """
 from __future__ import annotations
@@ -139,16 +139,8 @@ def scan_pyc_file_constants(path: Path, literals: Iterable[str]) -> set[str]:
 def _iter_pyinstaller_executables(root: Path):
     """返回 PyInstaller onedir 产物中可能嵌入 CArchive 的主程序路径。
 
-    Windows 是根目录下的 .exe；macOS .app 是 Contents/MacOS 下的可执行文件；
-    Linux 是根目录下无扩展名的可执行文件（通常与目录同名）。
+    取根目录下的 .exe（onedir 产物）。
     """
-    if root.name.endswith(".app"):
-        macos_dir = root / "Contents" / "MacOS"
-        if macos_dir.is_dir():
-            for path in macos_dir.iterdir():
-                if path.is_file():
-                    yield path
-            return
     for path in root.iterdir():
         if not path.is_file():
             continue

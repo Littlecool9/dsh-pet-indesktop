@@ -181,17 +181,12 @@ def format_human(report: dict) -> str:
 def find_payload(app_dir: Path, relative: Path) -> Path:
     """在产物里**按存在性**找一段相对路径（不按平台猜载荷目录叫什么）。
 
-    三端落点本来就不同：Windows/Linux 的 onedir 载荷在 ``<app>/_internal/``；
-    macOS 的 ``.app`` 按 bundle 规范把**数据**放 ``Contents/Resources``、代码类放
-    ``Contents/Frameworks``（PyInstaller 6，见 ``building/osx.py`` 的注释），而我们
-    要判的三样里两样是数据。所以这里不写"macOS 一定在 X"，而是依次试候选、取真正
-    存在的那一个——找不到时返回**第一个候选**（Windows/Linux 的常规落点），让报错
-    里的路径是可读的、能直接去 ls 的那一个。
+    Windows onedir 的载荷在 ``<app>/_internal/``；也接受直接把载荷目录递进来的调用方。
+    依次试候选、取真正存在的那一个——找不到时返回**第一个候选**，让报错里的路径是
+    可读的、能直接去 ls 的那一个。
     """
     candidates = (
         app_dir / "_internal" / relative,
-        app_dir / "Contents" / "Resources" / relative,
-        app_dir / "Contents" / "Frameworks" / relative,
         app_dir / relative,
     )
     for candidate in candidates:
@@ -201,16 +196,9 @@ def find_payload(app_dir: Path, relative: Path) -> Path:
 
 
 def iter_app_executables(app_dir: Path):
-    """产物里的主程序（CArchive 的载体）。macOS .app 取 ``Contents/MacOS`` 下的可执行件。"""
-    if app_dir.name.endswith(".app") or (app_dir / "Contents" / "MacOS").is_dir():
-        macos_dir = app_dir / "Contents" / "MacOS"
-        if macos_dir.is_dir():
-            for path in sorted(macos_dir.iterdir()):
-                if path.is_file():
-                    yield path
-            return
+    """产物里的主程序（CArchive 的载体，Windows onedir 的 *.exe）。"""
     for path in sorted(app_dir.iterdir()):
-        if path.is_file() and (path.suffix.lower() == ".exe" or path.suffix == ""):
+        if path.is_file() and path.suffix.lower() == ".exe":
             yield path
 
 

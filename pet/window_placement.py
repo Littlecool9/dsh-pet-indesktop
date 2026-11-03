@@ -147,8 +147,7 @@ def move_window_towards(host, x: float, y: float,
                         *, interaction_area: DesktopArea | None = None) -> None:
     """统一位置出口：按虚拟窗口位置 (x, y) 落窗。
 
-    GNOME/mutter 会把移出工作区的窗口整体钳回（raw X11 XMoveWindow 同样
-    被钳，已实测），且钳位是异步的——请求非法位置会让窗口位置不可控。
+    工作区会把移出工作区的窗口整体钳回，且钳位是异步的——请求非法位置会让窗口位置不可控。
     这里主动把窗口钳进工作区（位置确定性），角色身体则通过绘制偏移在
     窗口内继续平移、贴到工作区边缘：
 
@@ -158,7 +157,7 @@ def move_window_towards(host, x: float, y: float,
     3. 绘制偏移 = 虚拟 - 实际，变化时 mask 与碰撞局部并集同步失效重算
        （画面/mask/碰撞体逐像素一致），并调度气泡/碰撞状态同步。
 
-    屏幕中央请求时偏移恒为 (0,0)，Windows/macOS 行为与改造前逐像素一致。
+    屏幕中央请求时偏移恒为 (0,0)，与改造前逐像素一致。
 
     ``interaction_area`` 是多屏拖拽/抛掷的活动区域快照：给定时活动范围换成该
     快照（按宠物所在屏幕带收窄），角色得以跨屏；缺省时读 host 上缓存的快照

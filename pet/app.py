@@ -10,7 +10,7 @@
 批5.1（纯重构）把原 PetApp 按「进程级 / 每窗」拆成两块，行为逐位不变；
 批5.2 spike 扩成多窗集合（AppShell 持有 ``_instances`` 列表，``self.instance``
 指主窗 = 列表头，兼容既有调用面）：
-- ``AppShell``：进程级服务（托盘、灵动岛、dock 菜单、更新、余额、系统通知、
+- ``AppShell``：进程级服务（托盘、灵动岛、更新、余额、系统通知、
   broker、aboutToQuit 收口），持有 ``PetInstance`` 集合。
 - ``PetInstance``：每窗容器（config/lib/win/聊天窗/设置窗/气泡），持 backref
   到 ``AppShell``，窗口级操作都从这里路由，``self.win`` 主窗单窗假设据此收敛。
@@ -948,9 +948,9 @@ class PetInstance:
     def _present_dialog(self, dialog, before_present=None, attempt: int = 0) -> None:
         """延迟呈现非模态窗口，直到任何弹出菜单关闭。
 
-        macOS 的右键/托盘菜单是原生 NSMenu 跟踪会话（menu.exec 阻塞期间），
+        右键/托盘菜单在原生弹出期间（menu.exec 阻塞期间），
         菜单项动作触发时会话尚未结束，此时新建窗口的 show/raise/activate
-        会被 AppKit 抑制——表现为首次点击「AI 设置 / 桌宠设置」无反应，
+        会被系统原生菜单会话抑制——表现为首次点击「AI 设置 / 桌宠设置」无反应，
         需要再点一次（此时窗口实例已存在，直接 show 成功）。
         延迟到菜单关闭后再呈现即可稳定弹出；Qt 自绘菜单（Windows）同样
         覆盖：弹窗仍显示时重试等待。重试 60 次（约 3.6 秒）后放弃，
@@ -1028,7 +1028,6 @@ class PetInstance:
             return
         from .modern_settings_dialog import ModernSettingsDialog
         if self.modern_settings_dialog is None:
-            self._dock_icon_before_settings = bool(self.config.get("show_dock_icon", True))
             dialog = ModernSettingsDialog(
                 self.config,
                 self.win,
@@ -1094,38 +1093,9 @@ class PetInstance:
             shell._sync_divination_service()
             self._sync_animation_prewarm()
             self._refresh_chat_windows()
-            _mac_set_dock_icon_visible(bool(self.config.get("show_dock_icon", True)))
         # 台词可能刚被改动：把还没有本地音频的句子交给后台补齐（开关默认关闭，
         # 关着时这里是 no-op；点了「编辑点击动画绑定」后直接 Esc 关设置也能一起收）
         self.shell.precache_self_talk_voice("设置保存后")
-        if (
-            getattr(self, "_dock_icon_before_settings", None) is True
-            and not bool(self.config.get("show_dock_icon", True))
-        ):
-            self._hint_dock_hidden_recovery()
-
-
-    def _dock_hidden_recovery_message(self) -> str:
-        return (
-            "已隐藏 Dock 图标，桌宠仍会常驻。需要恢复时：点菜单栏托盘图标 → "
-            "「桌宠设置」→ 重新勾选「显示 Dock 图标」；找不到桌宠也从托盘菜单「显示 / 隐藏」恢复。"
-        )
-
-    def _hint_dock_hidden_recovery(self) -> None:
-        if sys.platform != "darwin":
-            return
-        win = self.win
-        if win is not None and callable(getattr(win, "show_bubble", None)) and win.isVisible():
-            win.show_bubble(self._dock_hidden_recovery_message(), duration_ms=7000)
-            return
-        tray = getattr(self.shell, "tray", None)
-        if tray is not None and callable(getattr(tray, "showMessage", None)):
-            tray.showMessage(
-                "桌宠设置",
-                self._dock_hidden_recovery_message(),
-                QSystemTrayIcon.MessageIcon.Information,
-                7000,
-            )
 
     def _sync_animation_prewarm(self) -> None:
         """设置保存后把预热状态同步到当前素材库（幂等）。
@@ -1229,10 +1199,7 @@ class PetInstance:
         if self is not self.shell.instance:
             message = "点击托盘菜单中该窗口的「显示 / 隐藏」即可恢复。"
         else:
-            if sys.platform == "darwin" and not bool(self.config.get("show_dock_icon", True)):
-                message = "点击托盘菜单「显示 / 隐藏」即可恢复。"
-            else:
-                message = "点击托盘图标或 Dock 图标即可恢复。"
+            message = "点击托盘图标即可恢复。"
         self.shell.tray.showMessage(
             "桌宠已隐藏",
             message,
@@ -1248,7 +1215,7 @@ class PetInstance:
 
 
 class AppShell:
-    """进程级外壳 —— 托盘、灵动岛、dock 菜单、更新、余额、系统通知、碰撞会话、broker。
+    """进程级外壳 —— 托盘、灵动岛、更新、余额、系统通知、碰撞会话、broker。
 
     批5.1（纯重构）拆自原 PetApp 的「进程级」半边，行为逐位不变；批5.2
     spike 扩成多窗集合（``self.instances``），``self.instance`` 仍是主窗
@@ -1277,7 +1244,6 @@ class AppShell:
         self._tray_menu: QMenu | None = None
         self._tray_submenus: list[QMenu] = []
         self._tray_actions: list = []
-        self.dock_menu: QMenu | None = None
         self._notification_click_callback = None
         self._toast_windows: list[DesktopNotification] = []
         self.island = None
@@ -1568,7 +1534,7 @@ class AppShell:
         """托盘对象：legacy = 本进程建的 QSystemTrayIcon；overlay = 壳的托盘。
 
         overlay 拓扑进程级托盘由 OverlayShell 持有（``self.tray`` 恒 None），
-        不看向壳则「隐藏桌宠 → 点托盘恢复」提示与 Dock 隐藏指路都读不到托盘。
+        不看向壳则「隐藏桌宠 → 点托盘恢复」提示读不到托盘。
         """
         tray = getattr(self, '_tray', None)
         if tray is not None:
@@ -1958,7 +1924,6 @@ class AppShell:
             refresh = getattr(inst, "_refresh_chat_windows", None)
             if callable(refresh):
                 refresh()
-        _mac_set_dock_icon_visible(bool(self.config.get("show_dock_icon", True)))
 
     def _sync_shared_optional_services(self) -> None:
         """按配置重应用进程级共享子系统（联动读方 / 主动识屏）。
@@ -2484,7 +2449,6 @@ class AppShell:
         # 无需窗——环则空转）；flag 关时 _shared 为 None，no-op。
         if self._shared is not None:
             self._shared.start()
-        self._install_macos_dock_menu()
         self._sync_dynamic_island()
         self.instance._apply_spawn_offset()
         self._apply_balance_timer()
@@ -3838,7 +3802,7 @@ class AppShell:
             return
         self._balance_busy = True
         # 延迟到事件循环空闲再冒泡：macOS 菜单跟踪会话内新建/显示窗口会被
-        # AppKit 抑制（与设置对话框首次点击无反应同源），singleShot 在 macOS
+        # 系统原生菜单会话抑制（与设置对话框首次点击无反应同源），singleShot 在 macOS
         # 上要等菜单关闭后才派发，Windows 上立即派发也无害。
         QTimer.singleShot(0, lambda: win.show_bubble('让我看看余额…', duration_ms=6000))
         bridge = _BalanceBridge(win, owner=self)
@@ -4440,42 +4404,6 @@ class AppShell:
         if getattr(self, "island", None) is not None:
             self.island.set_pet_visible(self._aggregate_pet_visible())
 
-    def _install_macos_dock_menu(self) -> QMenu | None:
-        """Install the native Dock context menu as an independent recovery path."""
-        if sys.platform != "darwin":
-            self.dock_menu = None
-            return None
-        menu = QMenu()
-
-        def show_pet() -> None:
-            if self.instance is None:
-                return
-            win = self.instance.win
-            if win is None:
-                return
-            win.show()
-            win.raise_()
-            if getattr(self, "island", None) is not None:
-                self.island.set_pet_visible(True)
-
-        # N-2：Dock 菜单只装一次，动作必须动态解析当前主窗实例——
-        # 主窗经「退出这只」退掉并提升新主窗后，绑旧实例会把死窗复活。
-        menu.addAction("显示桌宠", show_pet)
-        menu.addAction("桌宠设置", lambda: self.instance is not None and self.instance.open_modern_settings())
-        if self.enable_chat:
-            menu.addAction("AI 对话", lambda: self.instance is not None and self.instance.open_chat())
-        menu.addSeparator()
-        quit_callback = getattr(self.app, "quit", None)
-        if callable(quit_callback):
-            menu.addAction("退出", quit_callback)
-        install_dock_menu = getattr(menu, "setAsDockMenu", None)
-        dock_menu_installed = callable(install_dock_menu)
-        if dock_menu_installed:
-            install_dock_menu()
-        menu.setProperty("dockMenuInstalled", dock_menu_installed)
-        self.dock_menu = menu
-        return menu
-
     def open_todo_panel(self) -> None:
         """打开待办管理面板（非模态单例；条目增删改即时落盘）。"""
         from .todo_panel import TodoPanelDialog
@@ -4716,8 +4644,8 @@ class AppShell:
             return action
 
         # 本段全部条目都会动窗口面（显示/激活桌宠窗、重建角色窗面、开关岛窗）或
-        # 冒泡/系统登录项：托盘菜单是原生弹出（macOS 上是 NSMenu 跟踪会话），
-        # 会话中做这些会被 AppKit 抑制（首次点击无反应，issue #4 家族），故一律
+        # 冒泡/系统登录项：托盘菜单是原生弹出（macOS 上是 原生菜单跟踪会话），
+        # 会话中做这些会被系统原生菜单会话抑制（首次点击无反应，issue #4 家族），故一律
         # 走 add_tray_action——菜单先关，回调延到菜单真的不在之后再执行。
         add_tray_action(menu, '显示 / 隐藏', toggle_visible)
         add_tray_action(menu, '回到右下角', lambda: win.go_default_corner())
@@ -4855,72 +4783,11 @@ class AppShell:
         self._tray_actions = snapshot
 
 
-def _mac_set_dock_icon_visible(visible: bool) -> None:
-    """Switch the macOS application policy without restarting the pet.
-
-    The speech bubble itself owns the non-activating window flags; application
-    activation policy must not be used as a focus workaround because Accessory
-    Regular (0) displays a Dock item; Accessory (1) keeps the application out
-    of the Dock. Pet tool windows own their independent visibility/focus flags.
-    """
-    if sys.platform != 'darwin':
-        return
-    try:
-        import ctypes
-        import ctypes.util
-
-        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library('objc') or '/usr/lib/libobjc.A.dylib')
-        objc.sel_registerName.restype = ctypes.c_void_p
-        objc.objc_getClass.restype = ctypes.c_void_p
-        msg = objc.objc_msgSend
-        msg.restype = ctypes.c_void_p
-        msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-        shared = msg(
-            objc.objc_getClass(b'NSApplication'),
-            objc.sel_registerName(b'sharedApplication'),
-        )
-        # NSApplicationActivationPolicyRegular = 0; Accessory = 1
-        msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
-        msg(shared, objc.sel_registerName(b'setActivationPolicy:'), 0 if visible else 1)
-    except Exception:
-        pass
-
-
-def _default_xcb_platform_on_wayland() -> None:
-    """Linux Wayland 会话下把 Qt 平台插件默认设为 xcb（XWayland）。
-
-    Wayland 协议不允许客户端自行移动顶层窗口，桌宠拖动依赖的
-    QWidget.move() 会被合成器静默忽略（表现为无法拖动）；透明无边框
-    窗口在原生 wayland 插件下还存在重绘残留（拖影）。须在创建
-    QApplication 之前调用。用户显式设置 QT_QPA_PLATFORM 时尊重其选择。
-    """
-    if not sys.platform.startswith("linux"):
-        return
-    if "QT_QPA_PLATFORM" in os.environ:
-        return
-    if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland":
-        os.environ["QT_QPA_PLATFORM"] = "xcb"
-
-
-def _configure_linux_fcitx_input_method() -> None:
-    """为 PySide6 冻结版选择与内置 Qt ABI 兼容的 Fcitx 输入法前端。"""
-    # Linux 成品随包携带按 PySide6 Qt ABI 编译的 Fcitx 插件；未指定时默认选中 fcitx 上下文。
-    if not sys.platform.startswith("linux"):
-        return
-    if os.environ.get("XMODIFIERS", "").strip() != "@im=fcitx":
-        return
-    if not os.environ.get("QT_IM_MODULE", "").strip():
-        os.environ["QT_IM_MODULE"] = "fcitx"
-
-
 # Historical public name retained for integrations and older tests.
 PetApp = AppShell
 
 
 def main(argv: list[str] | None = None, enable_chat: bool = True) -> int:
-    _default_xcb_platform_on_wayland()
-    # 必须在 QApplication 构造前设置，Qt 才会按随包 Fcitx 插件创建输入法上下文。
-    _configure_linux_fcitx_input_method()
     argv = list(argv if argv is not None else sys.argv)
     preferred_slot = None
 
@@ -4979,7 +4846,6 @@ def main(argv: list[str] | None = None, enable_chat: bool = True) -> int:
         os.environ["DSH_PET_INSTANCE"] = ""
         slot_manager_mod.migrate_legacy_spawns(config_dir)
         config = Config(instance_id="")
-        _mac_set_dock_icon_visible(bool(config.get("show_dock_icon", True)))
         _setup_logging(config)
 
         logging.info("dsh-pet-standalone 启动 (slot: %s, instance: %s)", slot_id, instance_id)

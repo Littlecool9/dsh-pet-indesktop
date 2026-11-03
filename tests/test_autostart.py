@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""开机自启模块测试（Linux XDG autostart 分支 + Windows 变体隔离）。"""
-
-from pathlib import Path
+"""开机自启模块测试（Windows 变体隔离）。"""
 
 from pet import autostart as autostart_mod
 
@@ -40,12 +38,8 @@ class FakeWinreg:
 
 
 def _force_win(monkeypatch):
-    monkeypatch.setattr(autostart_mod, "_IS_WIN", True)
-    monkeypatch.setattr(autostart_mod, "_IS_MAC", False)
-    monkeypatch.setattr(autostart_mod, "_IS_LINUX", False)
     fake = FakeWinreg()
-    # Linux/macOS 模块不会自动 import winreg，用 raising=False 补挂测试替身。
-    monkeypatch.setattr(autostart_mod, "winreg", fake, raising=False)
+    monkeypatch.setattr(autostart_mod, "winreg", fake)
     return fake
 
 
@@ -97,35 +91,3 @@ def test_cleanup_stale_entries_removes_only_missing_paths(monkeypatch, tmp_path)
     assert removed == 1
     assert "dsh-pet-standalone-webm" in fake.values
     assert "dsh-pet-standalone-webm-chat" not in fake.values
-
-
-def _force_linux(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(autostart_mod, "_IS_WIN", False)
-    monkeypatch.setattr(autostart_mod, "_IS_MAC", False)
-    monkeypatch.setattr(autostart_mod, "_IS_LINUX", True)
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-
-def test_linux_enable_writes_desktop_file(monkeypatch, tmp_path: Path):
-    _force_linux(monkeypatch, tmp_path)
-    desktop = tmp_path / "autostart" / f"{autostart_mod.PLIST_LABEL}.desktop"
-    assert not desktop.exists()
-    assert autostart_mod.is_enabled() is False
-
-    assert autostart_mod.enable() is True
-    assert desktop.exists()
-    assert autostart_mod.is_enabled() is True
-    content = desktop.read_text(encoding="utf-8")
-    assert "[Desktop Entry]" in content
-    assert "Type=Application" in content
-    assert content.startswith("Exec=") or "\nExec=" in content
-    assert "Terminal=false" in content
-
-
-def test_linux_disable_removes_desktop_file(monkeypatch, tmp_path: Path):
-    _force_linux(monkeypatch, tmp_path)
-    assert autostart_mod.enable() is True
-    assert autostart_mod.disable() is True
-    assert autostart_mod.is_enabled() is False
-    desktop = tmp_path / "autostart" / f"{autostart_mod.PLIST_LABEL}.desktop"
-    assert not desktop.exists()

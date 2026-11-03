@@ -6,10 +6,8 @@ Windows 合成器上是结构性税负（move() 1.5-4.3ms/次 + DWM 多窗竞争
 overlay 内合成后，宠物移动 = 改 sprite 坐标 + update(脏矩形)，完全不经过
 WM/DWM 的窗口移动路径。Phase 0 实测（同目录 probe_report）该路线 GO。
 
-本阶段（1b/2）：逐像素穿透两端都已接通——Windows 复用 platform_win 的
-WS_EX_TRANSPARENT 轮询，非 Windows（X11/macOS）复用 platform_passthrough 的
-Qt 属性 + 原生输入穿透标志轮询，两边同一套判定/档位协议（见 showEvent）；
-多屏由壳按屏开宿主窗口（pet/screen_host.py）。
+本阶段（1b/2）：逐像素穿透复用 platform_win 的 WS_EX_TRANSPARENT 轮询
+（见 showEvent）；多屏由壳按屏开宿主窗口（pet/screen_host.py）。
 Phase 3a：右键菜单最小集（contextMenuEvent → sprite_menu.build_sprite_menu）；
 鼠标路由只让左键进拖拽 grab，右键只弹菜单（PetWindow 旧语义）。
 Phase 3b：sprite 位置监听（add_position_listener）——sprite 不产生 moveEvent，
@@ -46,12 +44,6 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from . import catalog
 from . import overlay_peripherals
-from .platform_mac import (
-    _keep_macos_tool_window_visible,
-    _mac_no_window_shadow_flag,
-    _mac_set_hides_on_deactivate,
-)
-from .platform_passthrough import QtPerPixelInputController
 from .sprite_menu import build_sprite_menu
 from .sprite_slingshot import SlingshotController
 from .tick_driver import TickDriver
@@ -73,21 +65,11 @@ class OverlayWindow(QWidget):
     def __init__(self, screen: QScreen | None = None, parent: QWidget | None = None,
                  *, driver: TickDriver | None = None) -> None:
         super().__init__(parent)
-        # macOS 关窗口系统阴影（issue #229：外圈黑边，普通模式与直播捕获模式都要关）：
-        # 标志只能在 flags 构造处给（见 platform_mac._mac_no_window_shadow_flag）。
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint
                             | Qt.WindowType.Tool
-                            | Qt.WindowType.WindowStaysOnTopHint
-                            | _mac_no_window_shadow_flag())
+                            | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        # macOS：本窗带 Qt.Tool，Cocoa 在应用失活时会自动把它 order out。真机表现是
-        # 「切到别的应用后整只桌宠从桌面消失，点 Dock 图标把应用激活回来才重现」——
-        # 窗口只是被移出屏幕，进程并没有退出，所以 Dock 图标还在（真机实测：切到
-        # Finder 时本进程在屏窗口 2→0，切回 →1）。
-        # legacy ``PetWindow`` 一直带着这条修复（pet/window.py，同一 helper），overlay
-        # 单合成窗新架构落成时漏了它。只设 native 属性、不动 flags，不会重建原生窗口。
-        _keep_macos_tool_window_visible(self)
         # 合成窗：默认主屏，调用方（壳的宿主）注入该窗所属的 QScreen。窗口矩形默认
         # 取该屏几何；壳注入 ``_desktop_bounds``（各屏可用工作区的并集）后由它接管
         # ——并集要排除每屏任务栏，按窗口矩形自判全屏的第三方软件（壁纸引擎、
@@ -120,8 +102,7 @@ class OverlayWindow(QWidget):
         # 变化的 sprite 触发其 listeners（cb(sprite)）；外围小窗（气泡等）的
         # 跟随源——sprite 不是窗口，没有 moveEvent 可挂。
         self._position_listeners: dict = {}
-        # 逐像素穿透协议字段（platform_win 的 Windows 控制器与
-        # platform_passthrough 的 Qt 控制器共用同一套判定，见 showEvent 平台分派）：
+        # 逐像素穿透协议字段（见 showEvent 的 platform_win 控制器）：
         # mouse_through = 用户手动"鼠标穿透"开关（恒穿透）；_press_global 非 None
         # = 拖拽中（穿透轮询据此降频并强制不穿透）。
         self.mouse_through = False
@@ -237,12 +218,6 @@ class OverlayWindow(QWidget):
         # showEvent 重放（与下面 _set_windows_no_activate 同一条先例）。
         if sys.platform == "win32":
             _set_windows_non_rude_hwnd(int(self.winId()))
-        # macOS：原生关掉 hidesOnDeactivate（issue #262 / #273）。Cocoa 失活时
-        # order out 窗口的**真正判据**就是这个原生属性；Qt 属性
-        # （__init__ 里已下发的 WA_MacAlwaysShowToolWindow）在部分系统版本上被
-        # 反馈为不再生效，故两条路并存。必须在这里调用：showEvent 时 winId()
-        # 才指向就绪的 NSView，构造期拿不到。非 cocoa 平台本函数是安全 no-op。
-        _mac_set_hides_on_deactivate(int(self.winId()))
         self._refresh_tick_interval()  # V-6：显示时重读刷新率（电池 DRR）
         self._feed_dpr()               # V-11：DPR 由 overlay 统一喂
         self._arm_dpr_change_watch()   # D2/P1：屏 DPR 变化 → 重喂 + 重建
@@ -270,18 +245,6 @@ class OverlayWindow(QWidget):
             # 点击宠物不夺前台焦点（issue #98 语义沿用）。每次显示都补一次：
             # on_top 开关会重建原生窗口，新句柄不带 WS_EX_NOACTIVATE。
             _set_windows_no_activate(int(self.winId()))
-        else:
-            # 非 Windows（X11/macOS）同一条逐像素穿透：落点是 Qt 属性
-            # WA_TransparentForMouseEvents + 原生输入穿透标志，判定与档位协议
-            # 与 Windows 控制器逐条相同（见 platform_passthrough 模块 docstring）。
-            # 这里此前没有任何穿透落点，整屏 overlay 就是一个整屏输入区——
-            # 桌面点击被整块吞掉（发布阻断项）。
-            if self._input_controller is None:
-                self._input_controller = QtPerPixelInputController(self)
-            # 首次创建与隐藏后恢复统一走 resume：同步收敛一次穿透态（首拍定时器
-            # 之前不留「整屏吞点击」窗口）+ 重开轮询表 + 排一次延迟对账（平台显示
-            # 阶段可能又重建了原生窗口，见 platform_passthrough._reconcile_after_show）。
-            self._input_controller.resume()
 
     def hideEvent(self, event) -> None:
         """隐藏期不轮询（O2）：不可见窗口不收输入，两条探测链路都是空转。

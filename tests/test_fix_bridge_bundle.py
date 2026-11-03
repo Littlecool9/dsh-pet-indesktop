@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-"""fix_bridge_bundle.py 的冒烟路径回归（Build Linux/macOS CI 红）。
+"""fix_bridge_bundle.py 的冒烟路径回归。
 
-故障：CI 工作流以 `--dist dist`（相对路径）调 scripts/build_linux.sh /
-build_macos.sh，透传到 fix_bridge_bundle.py --app-dir dist/<name>；
+故障：构建/测试以相对路径调 fix_bridge_bundle.py --app-dir dist/<name>；
 脚本随后 subprocess.run([node, smoke], cwd=dst_bridge) 把**相对** smoke
 路径交给 node，node 相对自己的 cwd（= dst_bridge）再拼一次，路径双重嵌套：
   dist/<app>/_internal/integrations/dsh-pet-bridge/dist/<app>/_internal/...
   integrations/dsh-pet-bridge/verify_import.mjs
-→ "Cannot find module"，Linux/macOS 构建红（Windows 走 build_onedir.ps1
-的绝对路径实现，不受影响）。
+→ "Cannot find module"。
 
 修复：main() 入口把 --app-dir 归一为绝对路径（其下游 dst_bridge/smoke/
 node_modules 清理路径全部随之绝对化）。

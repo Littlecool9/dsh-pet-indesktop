@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import threading
 import time
 import weakref
@@ -13,7 +12,6 @@ import shiboken6
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QActionGroup, QDesktopServices, QIcon, QPixmap
-from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import QMenu
 
 from .. import autostart as autostart_mod
@@ -266,8 +264,8 @@ def _menu_tree(menu: QMenu) -> list:
     """菜单所在的**整棵** popup 树：根菜单 + 各级子菜单。
 
     传入子菜单时必须回到根：子菜单关掉不等于菜单会话结束——根菜单还开着就仍处于
-    同一个原生跟踪会话里（macOS 的 AppKit NSMenu 尤其如此；Windows 的 Qt popup 下
-    根菜单关闭会顺带收掉子菜单，所以那条路径只是**碰巧**等价）。``QMenu.addMenu``
+    同一个原生跟踪会话里（Qt popup 下根菜单关闭会顺带收掉子菜单，所以只关子菜单
+    只是**碰巧**等价）。``QMenu.addMenu``
     建的子菜单以父菜单为 parent，``findChildren`` 递归拿到全部层级。
     """
     root = _root_menu(menu)
@@ -282,9 +280,9 @@ def run_after_menu_closed(menu: QMenu, callback) -> None:
     1. 那条路依赖 ``menu.exec()`` 返回后的 ``take_deferred_menu_callbacks``
        派发点，而托盘菜单由 ``QSystemTrayIcon`` 原生弹出，进程里没有这个收口点；
     2. 它用 ``menu.isVisible()`` 判断"是否在菜单里"，而 macOS 的托盘菜单是
-       AppKit 原生 NSMenu（Qt 侧 QMenu 从未 ``show()``，``isVisible()`` 恒为
+       系统原生菜单（Qt 侧 QMenu 从未 ``show()``，``isVisible()`` 恒为
        False）——判定会直接退回内联执行，正是要避开的：原生菜单跟踪会话中
-       新建/激活窗口会被 AppKit 抑制，表现为「点了没反应」（issue #4 同族，
+       新建/激活窗口会被系统原生菜单会话抑制，表现为「点了没反应」（issue #4 同族，
        右键菜单路径已在 window.py / overlay_shell 用 deferred 队列解决）。
 
     因此托盘路径的规则是"菜单先关、等它真的不在了再执行"：先按既有
@@ -295,7 +293,7 @@ def run_after_menu_closed(menu: QMenu, callback) -> None:
     **关闭与观测的对象是整棵树，不是传进来的那一个菜单**（``_menu_tree``）：
     子菜单条目（``add_tray_action(sub, ...)``）以前只看 ``sub`` 自己，而子菜单
     关闭并不等于会话结束——根菜单还开着就还在同一次原生跟踪里，回调此时执行照样
-    会被 AppKit 抑制。逐只子菜单的三条动作正是这么接的。
+    会被系统原生菜单会话抑制。逐只子菜单的三条动作正是这么接的。
 
     定时器不绑 context（``AppShell`` 不是 QObject）；轮询链由闭包持有菜单树与
     回调，最长 3 秒，不会长期吊住对象。
@@ -1048,7 +1046,7 @@ def confirm_destructive_action(pet, *, title: str, text: str, informative: str =
     在取消上，误触的代价是一次多余的点击。
 
     调用方必须让菜单项 ``close_on_trigger``（回调延迟到菜单关闭后执行）：macOS
-    原生菜单跟踪会话里模态框会被 AppKit 抑制，与"设置对话框首次点击无反应"同源。
+    原生菜单跟踪会话里模态框会被系统原生菜单会话抑制，与"设置对话框首次点击无反应"同源。
     """
     from PySide6.QtWidgets import QMessageBox
 
@@ -1085,8 +1083,8 @@ def add_harness(menu: QMenu, pet, *, icons: bool = True):
         launch_harness_gui(_dialog_parent(pet), action=action, target=target)
 
     # 所有动作都 close_on_trigger：菜单先关闭、回调延迟到菜单关闭后执行——
-    # 重启/停止的确认框是模态框，macOS 原生菜单跟踪会话中弹模态框会被
-    # AppKit 抑制（与设置对话框首次点击无反应同源）。
+    # 重启/停止的确认框是模态框，系统原生菜单跟踪会话中弹模态框会被
+    # 系统原生菜单会话抑制（与设置对话框首次点击无反应同源）。
     # 启动分双目标（2026-10）：web 界面 / 桌面端界面；重启/停止只作用于
     # web 服务进程（桌面端是用户的主力应用，桌宠绝不终止它）。
     add_action(submenu, "启动 dsh web 界面", start_icon,
@@ -1235,10 +1233,7 @@ def _launch_player_and_play(player_key: str, pet) -> None:
                 return
             # 没在跑：启动它，然后轮询等它出现在 SMTC 里。
             try:
-                if sys.platform == "win32":
-                    os.startfile(exe)  # noqa: S606 - 路径来自受控的播放器搜索
-                else:
-                    QProcess.startDetached(exe, [])
+                os.startfile(exe)  # noqa: S606 - 路径来自受控的播放器搜索
             except Exception:
                 return
             for _ in range(10):          # 最多等 10 秒

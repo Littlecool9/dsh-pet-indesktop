@@ -543,9 +543,3 @@ def test_one_frame_sleep_is_clamped_and_survives_a_bogus_refresh_rate(monkeypatc
     assert controller_mod._refresh_hz(_Negative()) == controller_mod._DEFAULT_REFRESH_HZ
 
 
-def test_dwm_flush_is_a_noop_off_windows(monkeypatch):
-    from pet.screen_capture import controller as controller_mod
-
-    monkeypatch.setattr(controller_mod.sys, "platform", "linux")
-
-    assert controller_mod._flush_dwm() is False

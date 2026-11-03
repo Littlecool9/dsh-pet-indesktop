@@ -45,7 +45,6 @@ def test_field_default_factory_and_individual_memory(tmp_path):
 
     master = Config(base=tmp_path)
     master.set("on_top", False)
-    master.set("show_dock_icon", False)
     master.set("chat_follow_pet", True)
     master.set("autostart_wanted", True)
     assert master.save() is True
@@ -63,7 +62,6 @@ def test_field_default_factory_and_individual_memory(tmp_path):
     assert slot1.get("playback_speed") == 1.0
     assert slot1.get("click_sound_volume") == 0.7
     assert slot1.get("on_top") is False
-    assert slot1.get("show_dock_icon") is False
     assert slot1.get("chat_follow_pet") is True
     assert slot1.get("autostart_wanted") is True
     assert slot1.get("rx") is None

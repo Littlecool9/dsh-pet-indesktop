@@ -108,7 +108,7 @@ def _make_mem_reader():
 
     def _read_posix():
         usage = resource.getrusage(resource.RUSAGE_SELF)
-        mb = usage.ru_maxrss / 1024.0 if sys.platform == 'darwin' else usage.ru_maxrss / 1024.0
+        mb = usage.ru_maxrss / 1024.0
         return {'ws_mb': mb, 'peak_ws_mb': mb, 'private_mb': 0.0}
 
     return _read_posix

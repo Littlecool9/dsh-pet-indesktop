@@ -4370,7 +4370,7 @@ class OverlayShell(QObject):
 
         **派发契约**（与 legacy 托盘 `3356d67` 同口径）：会动窗面/冒泡/系统登录项
         的条目一律走 ``add_tray_action`` / ``add_tray_toggle``——菜单先关，回调延到
-        菜单真的不在之后再执行。macOS 的托盘菜单是 AppKit 原生 NSMenu 跟踪会话，
+        菜单真的不在之后再执行。macOS 的托盘菜单是 系统原生菜单 跟踪会话，
         会话中新建/激活窗口会被抑制（issue #4 家族：点了没反应）；勾选项的副作用
         挂 ``triggered`` 而不是 ``toggled``，弹出前那次程序化 ``setChecked`` 就不会
         顺手重写配置/登录项。本壳是 overlay 拓扑下用户**实际看到**的托盘。
@@ -4444,7 +4444,7 @@ class OverlayShell(QObject):
         self._pet_visible_actions = visible_actions
         menu.addSeparator()
         # 与 legacy 托盘同口径：菜单先关、回调延到菜单关闭后执行（原生菜单跟踪
-        # 会话里开窗/冒泡会被 AppKit 抑制，见 shared.run_after_menu_closed）。
+        # 会话里开窗/冒泡会被系统原生菜单会话抑制，见 shared.run_after_menu_closed）。
         add_tray_action(menu, "桌宠设置",
                         lambda: self.open_settings_for(self.sprite))
         # legacy 托盘两项（app.py:3333-3343）：鼠标穿透的取消入口只有托盘/设置页，
@@ -6224,8 +6224,7 @@ class OverlayShell(QObject):
 
         **为什么是气泡而不是"菜单项置灰 + tooltip"**：``settings_process_isolation``
         在设置界面没有任何入口，置灰只说明"不可用"、说不出原因，用户也没有补救
-        路径；tooltip 在 macOS 原生菜单上根本不显示，而 mac 正是这条缺陷家族的
-        主战场（legacy 拓扑有进程内设置窗兜底，只有 overlay 会走到这里）。反馈收
+        路径；tooltip 在 系统原生菜单上根本不显示（legacy 拓扑有进程内设置窗兜底，只有 overlay 会走到这里）。反馈收
         在 ``open_settings_for``（唯一路由点）→ 托盘、右键 facade 的
         ``on_open_modern_settings`` / ``on_open_settings`` 三条入口自动都有；置灰
         得在每个菜单构建处各写一遍，且构建期冻结的状态在用户改完 config.json 后

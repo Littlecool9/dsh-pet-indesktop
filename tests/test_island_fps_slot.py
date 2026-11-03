@@ -365,7 +365,7 @@ def test_a_platform_without_the_capability_builds_nothing(monkeypatch):
     monkeypatch.setattr(gf, "platform_problem", lambda: gf.PLATFORM_UNSUPPORTED_REASON)
     calls: list[int] = []
     hub = island_fps.FpsHub(monitor_factory=lambda: calls.append(1) or _StubMonitor())
-    slot = island_fps.FpsSlot(key="linux", hub=hub, platform_supported=lambda: False)
+    slot = island_fps.FpsSlot(key="unsupported", hub=hub, platform_supported=lambda: False)
     slot.sync(enabled=True, visible=True)
     assert calls == [] and hub.keys == set()
     assert slot.unavailable_reason() == gf.PLATFORM_UNSUPPORTED_REASON

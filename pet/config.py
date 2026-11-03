@@ -11,7 +11,6 @@ import math
 import os
 import re
 import shutil
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -518,11 +517,7 @@ def chat_secret_carryover(chat: Any) -> dict[str, dict]:
 
 
 def _default_base():
-    if sys.platform == "win32":
-        return Path(os.environ.get("APPDATA") or Path.home())
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support"
-    return Path.home() / ".config"
+    return Path(os.environ.get("APPDATA") or Path.home())
 
 
 def _app_dir_name() -> str:
@@ -1102,7 +1097,6 @@ class Config:
             "spawn_inherit_dynamic_island": False,  # 生小肥鱼继承主肥鱼灵动岛（默认关=不开灵动岛）
             "user_customized": False,  # 批 C：仅当用户在该子肥鱼自己的设置界面保存过才置真
             "on_top": True,
-            "show_dock_icon": True,
             "no_move": False,
             "character": catalog.DEFAULT_CHARACTER,
             "playback_speed": 1.0,
@@ -1467,7 +1461,6 @@ class Config:
             "facing",
             "scale",
             "on_top",
-            "show_dock_icon",
             "no_move",
             "character",
             "spawn_inherit_size",
@@ -1934,7 +1927,6 @@ class Config:
         self.data["spawn_inherit_size"] = _bool_or_default(self.data.get("spawn_inherit_size"), True)
         self.data["spawn_scale"] = _float_or_default(self.data.get("spawn_scale"), catalog.DEFAULT_SCALE, 0.1, 4.0)
         self.data["spawn_inherit_dynamic_island"] = _bool_or_default(self.data.get("spawn_inherit_dynamic_island"), False)
-        self.data["show_dock_icon"] = bool(self.data.get("show_dock_icon", True))
         self.data["context_menu_layout"] = _clean_menu_layout_override(self.data.get("context_menu_layout"))
         self.data["context_menu_appearance"] = _clean_menu_appearance(self.data.get("context_menu_appearance"))
         self.data["menu_easter_egg"] = _clean_menu_easter_egg(self.data.get("menu_easter_egg"))

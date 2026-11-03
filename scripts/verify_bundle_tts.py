@@ -67,10 +67,7 @@ MINIMUM_MODULES = (
 
 # **平台专用**兜底：只在"目标平台就是它"时要求。
 #
-# 三端共用一个 `verify()`：`build_linux.sh` / `build_macos.sh` 调的就是这个函数。
-# 干净的 Linux/macOS 构建不会安装下面这些 Windows-only 依赖，无条件要求会把本来
-# 正确的产物判红（astra 第 13 轮指出的跨平台回归）。要修的是"条件"，不是给另外两个
-# 平台也补一份收集参数。
+# Windows 构建的 `verify()` 只要求下面这些 Windows-only 依赖。
 #
 # `win32ctypes`（pywin32-ctypes）是**本项目选定的** keyring Windows 后端依赖——不是
 # "不显式收就必然不可用"：PyInstaller 自带的 hook 通常收得到它（实测 4.3.3 与 4.3.4 的
@@ -83,10 +80,9 @@ WINDOWS_ONLY_MODULES = (
 )
 
 
-def platform_modules(platform: str | None = None) -> tuple[str, ...]:
-    """目标平台必须随包的平台专用模块（纯函数，便于按平台直接断言）。"""
-    target = sys.platform if platform is None else platform
-    return WINDOWS_ONLY_MODULES if target.startswith("win") else ()
+def platform_modules() -> tuple[str, ...]:
+    """Windows 构建必须随包的平台专用模块。"""
+    return WINDOWS_ONLY_MODULES
 
 
 def required_version() -> str:
@@ -116,8 +112,6 @@ def verify_environment() -> tuple[int, dict]:
 
 def bundle_versions(exe: Path) -> set[str]:
     roots = [exe.parent / "_internal"]
-    if exe.parent.name == "MacOS" and exe.parent.parent.name == "Contents":
-        roots = [exe.parent.parent / "Resources", exe.parent.parent / "Frameworks"]
     versions = set()
     for root in roots:
         for metadata in root.glob("*.dist-info/METADATA"):
@@ -246,22 +240,10 @@ def missing_modules(present: set[str], required: set[str]) -> list[str]:
 
 
 def find_exe(app_dir: Path) -> Path | None:
-    """按平台产物布局找主程序：*.app（macOS）/ *.exe（Windows）/ 无后缀（Linux）。"""
-    if app_dir.suffix.lower() == ".app":
-        macos = app_dir / "Contents" / "MacOS"
-        if macos.is_dir():
-            candidates = [p for p in sorted(macos.iterdir()) if p.is_file()]
-            if candidates:
-                return candidates[0]
-        return None
+    """在 Windows onedir 产物里找主程序（*.exe）。"""
     exes = sorted(app_dir.glob("*.exe"))
     if exes:
         return exes[0]
-    # Linux onedir：主程序与 _internal 同级，取唯一一个无后缀的普通文件。
-    if (app_dir / "_internal").is_dir():
-        candidates = [p for p in sorted(app_dir.iterdir()) if p.is_file() and not p.suffix]
-        if candidates:
-            return candidates[0]
     return None
 
 
@@ -318,7 +300,7 @@ def verify(app_dir: Path | None, exe: Path | None) -> tuple[int, dict]:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Verify the bundled edge-tts stack.")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--app-dir", help="onedir 产物目录（或 macOS 的 .app）")
+    group.add_argument("--app-dir", help="onedir 产物目录")
     group.add_argument("--exe", help="产物主程序路径")
     group.add_argument("--environment", action="store_true", help="只检查打包环境依赖版本")
     args = parser.parse_args(argv)

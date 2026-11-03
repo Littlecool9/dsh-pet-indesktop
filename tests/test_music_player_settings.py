@@ -362,31 +362,6 @@ def test_no_chat_variant_builds_and_saves_all_four_paths(tmp_path, monkeypatch):
         _qapp().processEvents()
 
 
-def test_path_rows_are_not_platform_gated(tmp_path, monkeypatch):
-    """平台：路径是交给右键菜单启动的，三方平台都建行（不做"永久不支持就不建控件"处理）。
-
-    非 Windows 上``music_players`` 自己会拒服务（``_search_filesystem`` 直接返回 None），
-    设置页不该跟着消失——否则跨平台用户连"手动指定"的入口都没有。
-    """
-    import sys
-
-    import pet.modern_settings_dialog as settings_mod
-    from pet.config import Config
-
-    _qapp()
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(sys, "platform", "linux")
-    dialog = settings_mod.ModernSettingsDialog(Config(tmp_path), include_ai=False)
-    try:
-        for key in PLAYER_ORDER:
-            assert _picker(dialog, key).isEnabled() is True
-            assert _row(dialog, PLAYER_ROWS[key]) is not None
-        assert dialog.music_player_detect_btn.isEnabled() is True
-    finally:
-        dialog.close()
-        _qapp().processEvents()
-
-
 def test_empty_paths_drop_the_key_and_restore_auto_search(dialog, monkeypatch):
     from pet.config import Config
     from pet import settings_music as module
@@ -578,23 +553,13 @@ def test_detected_path_is_written_to_config_on_save(dialog, monkeypatch):
 # 都只在 Windows 创建——与 cursor_hidden_passthrough 的处置一致。
 
 
-def test_browser_media_row_is_absent_on_non_windows(monkeypatch):
-    """非 Windows 平台：即使控件存在，设置行也不出现（平台闸门优先）。"""
-    import sys
-
+def test_browser_media_row_is_present_on_windows():
+    """Windows：控件存在时设置行出现。"""
     from pet.settings_widgets import ToggleSwitch
 
     _qapp()
     host = type("H", (), {"music_browser_media_check": ToggleSwitch()})()
 
-    monkeypatch.setattr(sys, "platform", "linux")
-    assert settings_music.browser_media_supported() is False
-    assert settings_music.browser_media_rows(host) == []
-
-    monkeypatch.setattr(sys, "platform", "darwin")
-    assert settings_music.browser_media_rows(host) == []
-
-    monkeypatch.setattr(sys, "platform", "win32")
     assert settings_music.browser_media_supported() is True
     rows = settings_music.browser_media_rows(host)
     assert [row.objectName() for row in rows] == ["settingRow_music_browser_media"]
@@ -608,34 +573,14 @@ def test_browser_media_row_is_absent_when_widget_missing():
     assert settings_music.browser_media_rows(host) == []
 
 
-def test_browser_media_widget_is_windows_only(monkeypatch, tmp_path):
-    """控件本体同样只在 Windows 创建（设置页构造路径）。"""
-    import sys
-
-    from pet import settings_pet_controls
-    from pet.config import Config
-    from pet.modern_settings_dialog import ModernSettingsDialog
-
-    app = _qapp()
-    monkeypatch.setattr(settings_pet_controls.sys, "platform", "linux")
-    dialog = ModernSettingsDialog(Config(tmp_path), include_ai=False)
-    assert dialog.music_browser_media_check is None, "非 Windows 不该建这个控件"
-    # 缺控件时保存路径要安全跳过（不许抛，也不许把它写成 False）
-    dialog._save()
-    dialog.reject()
-    app.processEvents()
-
-
 # ------------------------------------------------------------------ #228
 #
 # foobar2000 歌词（窗口标题源）。平台闸门与 browser_media 同规：控件与设置行都只在
 # Windows 创建，非 Windows 连控件都不建（免得出现"控件在、行不在"的游离开关）。
 
 
-def test_foobar_lyrics_rows_are_absent_on_non_windows(monkeypatch):
-    """非 Windows 平台：即使控件存在，两行也不出现（平台闸门优先）。"""
-    import sys
-
+def test_foobar_lyrics_rows_are_present_on_windows():
+    """Windows：控件存在时两行出现。"""
     from pet.settings_widgets import ToggleSwitch
 
     _qapp()
@@ -648,12 +593,6 @@ def test_foobar_lyrics_rows_are_absent_on_non_windows(monkeypatch):
         },
     )()
 
-    for platform in ("linux", "darwin"):
-        monkeypatch.setattr(sys, "platform", platform)
-        assert settings_music.foobar_lyrics_supported() is False
-        assert settings_music.foobar_lyrics_rows(host) == []
-
-    monkeypatch.setattr(sys, "platform", "win32")
     assert settings_music.foobar_lyrics_supported() is True
     rows = settings_music.foobar_lyrics_rows(host)
     assert [row.objectName() for row in rows] == [
@@ -667,24 +606,6 @@ def test_foobar_lyrics_rows_are_absent_when_widgets_missing():
     _qapp()
     host = type("H", (), {"foobar_lyrics_check": None, "foobar_title_format_edit": None})()
     assert settings_music.foobar_lyrics_rows(host) == []
-
-
-def test_foobar_lyrics_widgets_are_windows_only(monkeypatch, tmp_path):
-    """控件本体同样只在 Windows 创建；缺控件时保存路径安全跳过。"""
-    import sys
-
-    from pet import settings_pet_controls
-    from pet.config import Config
-    from pet.modern_settings_dialog import ModernSettingsDialog
-
-    app = _qapp()
-    monkeypatch.setattr(settings_pet_controls.sys, "platform", "linux")
-    dialog = ModernSettingsDialog(Config(tmp_path), include_ai=False)
-    assert dialog.foobar_lyrics_check is None, "非 Windows 不该建这个控件"
-    assert dialog.foobar_title_format_edit is None
-    dialog._save()
-    dialog.reject()
-    app.processEvents()
 
 
 def test_save_source_settings_writes_both_switches_and_format(tmp_path):

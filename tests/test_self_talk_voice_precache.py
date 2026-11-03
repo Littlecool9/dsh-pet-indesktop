@@ -764,7 +764,6 @@ def test_external_settings_save_starts_the_precache(tmp_path, monkeypatch):
     shell._sync_festival_service = lambda: None
     shell._sync_divination_service = lambda: None
     shell._stop_harness_if_still_unwanted = lambda: None
-    monkeypatch.setattr(app_mod, "_mac_set_dock_icon_visible", lambda *a, **k: None)
     seen: list = []
     monkeypatch.setattr(stv, "start_precache",
                         lambda config, **kwargs: seen.append((config, kwargs)) or True)

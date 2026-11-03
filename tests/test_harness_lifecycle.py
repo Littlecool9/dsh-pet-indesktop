@@ -518,7 +518,7 @@ def test_lite_build_hides_the_harness_submenu(tmp_path, monkeypatch):
 # ------------------------------------------------------------ GUI 线程模型（复审 P1-3/P1-4）
 def test_harness_submenu_actions_close_on_trigger(tmp_path, monkeypatch):
     """四个 Harness 入口都必须 close_on_trigger：菜单先关闭、回调延迟执行，
-    确认框才不会在 macOS 原生菜单跟踪会话里被 AppKit 抑制。"""
+    确认框才不会在 原生菜单跟踪会话里被系统抑制。"""
     from PySide6.QtWidgets import QApplication, QMenu
 
     app = QApplication.instance() or QApplication([])

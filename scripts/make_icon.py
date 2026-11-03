@@ -3,17 +3,14 @@
 
 用法：
     python scripts/make_icon.py           # 生成 Windows ICO + 预览
-    python scripts/make_icon.py --icns    # 额外生成 macOS .icns（需要 macOS 的 iconutil）
 
 产物：
     assets/icon.ico          多尺寸（16/24/32/48/64/128/256）ICO
     assets/icon-preview.png  256px 预览图（便于人工确认）
-    assets/icon.icns         macOS 图标（--icns 时生成，CI 构建 macOS .app 使用）
 """
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -30,26 +27,11 @@ except StopIteration:
     IDLE_WEBM = _IDLE_DIR / "待机呼吸休闲.webm"  # 报错信息用（main 里会检查存在性）
 OUT_ICO = ROOT / "assets" / "icon.ico"
 OUT_PREVIEW = ROOT / "assets" / "icon-preview.png"
-OUT_ICONSET = ROOT / "assets" / "icon.iconset"
-OUT_ICNS = ROOT / "assets" / "icon.icns"
 # Windows 标准档位：16/20/24/32/40/48/64/96/128/256
 # 40 是 125% DPI 缩放下桌面/任务栏快捷方式的常用尺寸，缺失会被放大而发虚。
 # 注意顺序：PIL 按此顺序写入 ICO 文件，看图软件/资源管理器预览取“第一帧”，
 # 大尺寸在前可避免预览显示成 16x16。
 ICON_SIZES = (256, 128, 96, 64, 48, 40, 32, 24, 20, 16)
-# macOS iconset 规范：<name>_<w>x<h>[(@2x)].png
-_ICONSET_ENTRIES = (
-    ("icon_16x16.png", 16),
-    ("icon_16x16@2x.png", 32),
-    ("icon_32x32.png", 32),
-    ("icon_32x32@2x.png", 64),
-    ("icon_128x128.png", 128),
-    ("icon_128x128@2x.png", 256),
-    ("icon_256x256.png", 256),
-    ("icon_256x256@2x.png", 512),
-    ("icon_512x512.png", 512),
-    ("icon_512x512@2x.png", 1024),
-)
 
 def extract_frame(path: Path) -> tuple[bytes, int, int]:
     """读取 RGBA 首帧原始字节，返回 (frame, width, height)。"""
@@ -100,8 +82,7 @@ def prepare_icon_image(source_img, side: int = 256):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="生成应用图标")
-    parser.add_argument("--icns", action="store_true", help="额外生成 macOS .icns（需 iconutil）")
-    args = parser.parse_args()
+    parser.parse_args()
 
     if not IDLE_WEBM.is_file():
         print(f"未找到待机动画: {IDLE_WEBM}")
@@ -136,11 +117,6 @@ def main() -> int:
     preview = img.resize((256, 256), Image.Resampling.LANCZOS)
     preview.save(OUT_PREVIEW)
     print(f"预览图: {OUT_PREVIEW}")
-
-    if args.icns:
-        rc = build_icns(img)
-        if rc != 0:
-            return rc
     return 0
 
 
@@ -179,37 +155,6 @@ def _save_ico_ordered(path: Path, source_img, sizes) -> None:
             offset += size
         for blob in blobs:
             f.write(blob)
-
-
-def build_icns(source_img) -> int:
-    """由方形 RGBA 图生成 macOS iconset 并编译为 .icns（依赖 iconutil）。"""
-    from PIL import Image
-
-    OUT_ICONSET.mkdir(exist_ok=True)
-    for name, size in _ICONSET_ENTRIES:
-        resized = source_img.resize((size, size), Image.Resampling.LANCZOS)
-        resized.save(OUT_ICONSET / name)
-    print(f"已生成 iconset: {OUT_ICONSET}（{len(_ICONSET_ENTRIES)} 个尺寸）")
-
-    if sys.platform != "darwin":
-        print("非 macOS 环境，跳过 iconutil（.icns 由 CI 的 macOS 步骤生成）")
-        return 0
-    result = subprocess.run(
-        ["iconutil", "-c", "icns", str(OUT_ICONSET), "-o", str(OUT_ICNS)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        # macOS 26 的 iconutil 可能拒绝尺寸/命名均合法的 Pillow PNG iconset。
-        # Pillow 自身支持写 ICNS，作为等价回退保证本机构建不中断。
-        print(f"iconutil 失败，改用 Pillow ICNS 回退: {result.stderr.strip()}")
-        try:
-            source_img.save(OUT_ICNS, format="ICNS")
-        except Exception as exc:
-            print(f"Pillow ICNS 回退失败: {exc}")
-            return 1
-    print(f"已生成: {OUT_ICNS}")
-    return 0
 
 
 if __name__ == "__main__":

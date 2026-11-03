@@ -31,7 +31,7 @@ from pet.settings_widgets import CollapsibleGroup
 app = QApplication.instance() or QApplication([])
 
 #: 全大写缩写（≥2 字母）。左界只排 ASCII 字母：``macOS`` 里的 ``OS`` 是产品名的一部分，
-#: 不是缩写（mac 专属的 ``dock_icon`` 行文案就是 ``在 macOS Dock 中…``，旧写法把整行判成黑话）。
+#: 不是缩写（旧写法把含该产品名的文案整行判成黑话）。
 #: **不许改用 ``\b``**：``\b`` 按 ``\w`` 判词界，而 Python 的 ``\w`` 含 CJK——``CPU使用率``
 #: 这种紧贴中文的缩写会被判成没有词界而漏检，等于把这条 lint 的判据削掉一半。
 _ABBREV = re.compile(r"(?<![A-Za-z])[A-Z]{2,}")
@@ -152,17 +152,15 @@ def test_no_jargon_outside_advanced_groups(tmp_path, monkeypatch):
 def test_abbrev_criteria_lets_product_names_through_but_keeps_chinese_adjacency():
     """缩写判据的两条边界：产品名 ``macOS`` 不算黑话，紧贴中文的缩写仍必须命中。
 
-    回归背景：``[A-Z]{2,}`` 会把 ``macOS`` 里的 ``OS`` 抓成缩写。mac 上唯一的 ``dock_icon``
-    行（``sys.platform == "darwin"`` 才建）文案写着「在 macOS Dock 中显示桌宠应用」，于是
-    这行被判黑话——而 Windows/Linux 根本不建这一行，本地与那两个平台全绿，只有 mac CI 红。
+    回归背景：``[A-Z]{2,}`` 会把 ``macOS`` 里的 ``OS`` 抓成缩写。
     修法是**只加左界** ``(?<![A-Za-z])``：``macOS`` 里的 ``OS`` 前面是 ASCII 字母 ``c``，
     不算缩写；``CPU使用率检测`` 里的 ``CPU`` 前面没有字母，照旧命中。
 
     为什么不能用 ``\\b``：Python 的 ``\\w`` 含 CJK，``CPU`` 后面紧贴中文时 ``\\b`` 判不出
     词界，``CPU使用率检测`` 会被整条漏掉——那是把判据削掉，不是修误报。
     """
-    # 产品名不算缩写（mac 那行的真实文案）。
-    assert _tokens("在 macOS Dock 中显示桌宠应用；关闭后仍可通过桌宠和托盘操作。") == frozenset()
+    # 产品名不算缩写。
+    assert _tokens("在 macOS 中显示桌宠应用；关闭后仍可通过桌宠和托盘操作。") == frozenset()
     # 紧贴中文的缩写照旧命中（左右两侧都试）。
     assert "CPU" in _tokens("CPU使用率检测")
     assert "CPU" in _tokens("检测使用率CPU")

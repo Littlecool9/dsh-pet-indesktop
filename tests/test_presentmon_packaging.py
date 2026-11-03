@@ -13,7 +13,7 @@
    副本（截断 / 把 PE 头改成 ARM64 / 改名）必须非零退出——真跑子进程看退出码，
    不看代码（门是否"真的会拦"只能由被拦住的运行证明）；
 3. **构建接线**：``build_onedir.ps1`` 在 PyInstaller 之前校验、把 ``resources\\presentmon``
-   打成 ``--add-data``、并在**产物里**再验一次；``build_linux.sh`` / ``build_macos.sh``
+   打成 ``--add-data``、并在**产物里**再验一次；
    一个字节都不捆它（源码文本断言——行为测试看不到"有没有接上"）；
 4. **冻结布局契约**：``--add-data`` 的目标目录 == ``pet/game_fps.py`` 的
    ``BACKEND_RELATIVE_DIR``，且 ``sys._MEIPASS`` 指向那个布局时
@@ -39,11 +39,6 @@ NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 PACKAGING_DOC = ROOT / "docs" / "ONEDIR_PACKAGING.md"
 RESOURCE_DIR = ROOT / "resources" / "presentmon"
 LICENSE_FILE = RESOURCE_DIR / "LICENSE.txt"
-
-SHELL_SCRIPTS = {
-    "macos": ROOT / "scripts" / "build_macos.sh",
-    "linux": ROOT / "scripts" / "build_linux.sh",
-}
 
 #: 上游 v2.6.0 release 资产的字节数（与 sha256 互为交叉证据：GitHub release API
 #: 的 ``size`` 字段）。它不是从 ``pet/game_fps.py`` 抄来的第二份真值。
@@ -246,25 +241,6 @@ class TestWindowsBuildWiring:
         assert "game_fps.BACKEND_EXE_NAME" in text
 
 
-class TestOtherPlatformsDoNotBundleIt:
-    """macOS / Linux 不加载也不捆这个 Windows 后端（非 Windows 整段按不支持呈现）。"""
-
-    @pytest.mark.parametrize("name", sorted(SHELL_SCRIPTS))
-    def test_shell_builds_never_mention_the_backend(self, name):
-        text = SHELL_SCRIPTS[name].read_text(encoding="utf-8")
-        assert "presentmon" not in text.lower()
-        assert "PresentMon" not in text
-
-    def test_ci_builds_go_through_the_gated_script(self):
-        """CI 的 Windows 构建走 ``build_onedir.ps1``，因此上面两道门对 CI 同样生效。"""
-        workflow = (ROOT / ".github" / "workflows" / "build-windows.yml").read_text(
-            encoding="utf-8")
-        assert "build_onedir.ps1" in workflow
-
-
-# --------------------------------------------------------------------------- 四、冻结布局契约
-
-
 class TestFrozenLayoutContract:
     """``--add-data resources\\presentmon;resources\\presentmon`` ↔ 运行期解析路径。
 
@@ -283,11 +259,7 @@ class TestFrozenLayoutContract:
         assert game_fps.bundled_backend_path() == bundled
         assert game_fps.backend_problem() == "", "冻结布局里那一份应被判为可用"
         state, reason = game_fps.backend_state()
-        if sys.platform == "win32":
-            assert (state, reason) == ("", "")
-        else:
-            # 非 Windows：平台不支持优先于"文件在不在"（这一段整段不占位）
-            assert state == "unsupported" and reason
+        assert (state, reason) == ("", "")
 
     def test_source_tree_layout_is_the_same_relative_dir(self, tmp_path, monkeypatch):
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)

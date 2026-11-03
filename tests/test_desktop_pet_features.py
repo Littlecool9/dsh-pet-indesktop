@@ -1974,25 +1974,6 @@ def test_quick_launch_checkbox_can_be_selected_with_a_pointer_click():
     app.processEvents()
 
 
-def test_macos_tool_window_stays_visible_when_application_deactivates(monkeypatch):
-    from PySide6.QtCore import Qt
-
-    import pet.window as window_mod
-
-    attributes = []
-
-    class FakeWindow:
-        def setAttribute(self, attribute, enabled=True):
-            attributes.append((attribute, enabled))
-
-    monkeypatch.setattr(window_mod.sys, "platform", "darwin")
-    window_mod._keep_macos_tool_window_visible(FakeWindow())
-    assert attributes == [(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)]
-    source = Path("pet/window.py").read_text(encoding="utf-8")
-    set_on_top_source = source.split("def set_on_top", 1)[1].split("def showEvent", 1)[0]
-    assert "WA_MacAlwaysShowToolWindow, on" not in set_on_top_source
-
-
 def test_config_defaults_and_normalizes_menu_appearance_and_quick_launch(tmp_path):
     from pet.config import Config
 
@@ -2186,9 +2167,6 @@ def test_windows_build_regenerates_the_icon_before_pyinstaller():
     assert make_icon < pyinstaller
     assert "assets\\big_blue_fat_fish;assets\\big_blue_fat_fish" in build_script
     assert "pet\\menu_templates;pet\\menu_templates" in build_script
-    mac_build_script = Path("scripts/build_macos.sh").read_text(encoding="utf-8")
-    assert 'assets/big_blue_fat_fish:assets/big_blue_fat_fish' in mac_build_script
-    assert "pet/menu_templates:pet/menu_templates" in mac_build_script
 
 
 def test_modern_animation_leaf_icons_are_loaded_only_when_category_opens(monkeypatch):
@@ -2470,53 +2448,6 @@ def test_animation_hover_only_dispatches_bounded_background_work():
     app.processEvents()
 
 
-def test_on_top_pet_reasserts_native_level_after_context_menu_hides():
-    from PySide6.QtWidgets import QApplication
-
-    from pet.window import PetWindow
-
-    class Config(dict):
-        def get(self, key, default=None):
-            return super().get(key, default)
-
-    class Pet:
-        cfg = Config(on_top=True)
-
-        def __init__(self):
-            self.levels = []
-
-        def _schedule_macos_window_level(self, enabled):
-            self.levels.append(enabled)
-
-        def setAttribute(self, *_args):
-            pass
-
-    QApplication.instance() or QApplication([])
-    pet = Pet()
-    PetWindow._restore_on_top_after_context_menu(pet)
-    assert pet.levels == [True]
-
-
-def test_disabled_on_top_does_not_raise_after_context_menu_hides():
-    from PySide6.QtWidgets import QApplication
-
-    from pet.window import PetWindow
-
-    class Pet:
-        cfg = {"on_top": False}
-
-        def __init__(self):
-            self.levels = []
-
-        def _schedule_macos_window_level(self, enabled):
-            self.levels.append(enabled)
-
-    QApplication.instance() or QApplication([])
-    pet = Pet()
-    PetWindow._restore_on_top_after_context_menu(pet)
-    assert pet.levels == []
-
-
 def test_representative_animation_frame_uses_the_later_middle():
     from pet.animation_thumbnail import representative_frame_index
 
@@ -2742,25 +2673,6 @@ def test_color_picker_uses_stable_painted_swatch_instead_of_border_hack():
     app.processEvents()
 
 
-def test_dock_icon_visibility_defaults_on_and_is_saved_by_modern_settings(tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QApplication
-
-    import pet.modern_settings_dialog as settings_mod
-    from pet.config import Config
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.sys, "platform", "darwin")
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    config = Config(tmp_path)
-    assert config.get("show_dock_icon") is True
-    dialog = settings_mod.ModernSettingsDialog(config, include_ai=False)
-    dialog.dock_icon_check.setChecked(False)
-    dialog._save()
-    config.reload()  # #271：写盘经路由视图自己的主配置对象，原对象需 reload 才可见
-    assert config.get("show_dock_icon") is False
-    app.processEvents()
-
-
 def test_product_copy_has_no_external_brand_reference():
     forbidden = ("co" + "dex").lower()
     roots = [Path("pet"), Path("tests"), Path("docs"), Path("README.md")]
@@ -2825,16 +2737,6 @@ def test_return_corner_cancels_all_position_writers_before_move():
     assert (855, 519) in calls
 
 
-def test_macos_on_top_reapplies_native_level_without_stale_window_id():
-    source = Path("pet/window.py").read_text(encoding="utf-8")
-    method = source.split("def set_on_top", 1)[1].split("def showEvent", 1)[0]
-    assert "_schedule_macos_window_level" in method
-    assert "int(self.winId())" not in method
-    helper = source.split("def _schedule_macos_window_level", 1)[1].split("def set_on_top", 1)[0]
-    assert "self.winId()" in helper
-    assert "40" in helper
-
-
 def test_context_menu_leaf_actions_stay_open_until_focus_is_lost():
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtGui import QMouseEvent
@@ -2874,16 +2776,6 @@ def test_window_opening_menu_action_uses_native_close_path():
     assert action.property("closeOnTrigger") is True
     menu.close()
     app.processEvents()
-
-
-def test_macos_dock_icon_policy_tracks_the_saved_visibility_setting():
-    source = Path("pet/app.py").read_text(encoding="utf-8")
-    helper = source.split("def _mac_set_dock_icon_visible", 1)[1].split("def main", 1)[0]
-    assert "NSApplicationActivationPolicyRegular = 0" in helper
-    assert "Accessory = 1" in helper
-    assert "setActivationPolicy:" in helper
-    main = source.split("def main", 1)[1]
-    assert '_mac_set_dock_icon_visible(bool(config.get("show_dock_icon", True)))' in main
 
 
 def test_pet_app_binds_about_to_quit_once_to_current_window(tmp_path, monkeypatch):
@@ -3000,16 +2892,8 @@ def test_external_character_dirs_uses_variant_then_legacy_fallback(tmp_path, mon
     from pet import config as config_mod
 
     monkeypatch.setattr(config_mod, "APP_DIR_NAME", "dsh-pet-standalone-webm-chat")
-    # 数据目录按平台走 APPDATA / Library/Application Support / XDG_CONFIG_HOME
-    if sys.platform == "win32":
-        root = tmp_path
-        monkeypatch.setenv("APPDATA", str(tmp_path))
-    elif sys.platform == "darwin":
-        root = tmp_path / "Library" / "Application Support"
-        monkeypatch.setenv("HOME", str(tmp_path))
-    else:
-        root = tmp_path
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    root = tmp_path
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     dirs = catalog_mod.external_character_dirs()
     variant = root / "dsh-pet-standalone-webm-chat" / "characters"
     legacy = root / "dsh-pet-standalone" / "characters"
@@ -3026,15 +2910,8 @@ def test_external_character_dirs_dedupes_base_dir(tmp_path, monkeypatch):
     from pet import config as config_mod
 
     monkeypatch.setattr(config_mod, "APP_DIR_NAME", "dsh-pet-standalone")
-    if sys.platform == "win32":
-        root = tmp_path
-        monkeypatch.setenv("APPDATA", str(tmp_path))
-    elif sys.platform == "darwin":
-        root = tmp_path / "Library" / "Application Support"
-        monkeypatch.setenv("HOME", str(tmp_path))
-    else:
-        root = tmp_path
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    root = tmp_path
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     dirs = catalog_mod.external_character_dirs()
     base = root / "dsh-pet-standalone" / "characters"
     assert dirs.count(base) == 1

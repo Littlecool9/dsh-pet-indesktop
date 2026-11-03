@@ -88,11 +88,9 @@ def _isolate_visibility_gate():
         gate._visible.add(widget)
 
 # ---------------------------------------------------------------- 穿透轮询表
-# 逐像素穿透控制器由 showEvent 按平台创建（Windows → platform_win 的
-# WindowsPerPixelInputController，非 Windows → platform_passthrough 的
-# QtPerPixelInputController）。下面三条穿透轮询用例的替身打的是 Windows 控制器
-# 的模块级入口（platform_win.QCursor / _set_windows_click_through），故仅 Windows
-# 可跑；非 Windows 的同形用例见 tests/test_platform_passthrough.py。
+# 逐像素穿透控制器由 showEvent 创建（platform_win 的
+# WindowsPerPixelInputController）。下面三条穿透轮询用例的替身打的是 Windows 控制器
+# 的模块级入口（platform_win.QCursor / _set_windows_click_through）。
 @pytest.mark.skipif(os.name != "nt", reason="本组用例的替身打的是 Windows 控制器入口")
 def test_hide_stops_through_polling_and_show_resumes():
     overlay = _overlay()
@@ -222,19 +220,12 @@ def test_tray_hide_and_screen_migration_stay_paired(tmp_path):
         assert overlay_peripherals.visible_overlay_count() == base + 1, (
             "窗口没变，闸门计数不变")
         assert shell._watcher._cursor_timer.isActive()
-        # 逐像素穿透轮询由 showEvent 按平台创建（见文件头注释），两个平台都要钉：
+        # 逐像素穿透轮询由 showEvent 创建（见文件头注释）：
         # 换家不重建窗口 ⇒ 控制器还是同一个、仍在轮询（不产生新的空转/重复表）。
         ctl = shell.overlay._input_controller
         assert ctl is old_ctl and ctl is not None and ctl._timer.isActive()
-        # 平台判据用 ``sys.platform``——与产品分派（overlay_window.showEvent 的
-        # win32 门）同一个键，避免测试用了另一个键而给出错误期望。
-        if sys.platform == "win32":
-            from pet.platform_win import WindowsPerPixelInputController
-            assert isinstance(ctl, WindowsPerPixelInputController)
-        else:
-            from pet.platform_passthrough import QtPerPixelInputController
-            assert isinstance(ctl, QtPerPixelInputController), (
-                "posix 由 Qt 控制器接管穿透（此前 posix 无任何穿透落点）")
+        from pet.platform_win import WindowsPerPixelInputController
+        assert isinstance(ctl, WindowsPerPixelInputController)
     finally:
         shell.stop()
         shell._delete_runtime_marker()

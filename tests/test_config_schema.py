@@ -147,7 +147,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "self_talk_voice_precache_enabled",
         "settings_process_isolation",
         "shift_drag",
-        "show_dock_icon",
         "slingshot_enabled",
         "spawn_inherit_dynamic_island",
         "spawn_inherit_size",

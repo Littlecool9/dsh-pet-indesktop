@@ -929,11 +929,11 @@ def test_discard_keeps_the_half_that_already_landed(tmp_path, app, monkeypatch):
         assert shared.get("pet_opacity") == 35, "已经写成功的那一半必须留在运行视图里"
         assert shared.get("scale") == pytest.approx(0.8), "没写成的草稿必须被作废"
         # 后续无关保存（全局键）：不撤回已写成的，也不写回被放弃的
-        shared.set("show_dock_icon", False)
+        shared.set("on_top", False)
         assert shared.save() is True
         disk = json.loads(Path(_main.path).read_text(encoding="utf-8"))
         assert disk["pet_opacity"] == 35, "已落盘的那一半不许被撤回"
-        assert disk["show_dock_icon"] is False
+        assert disk["on_top"] is False
         assert pet_profiles.read_slot_profile(_config_dir(tmp_path), SLOT).value("scale") == pytest.approx(0.8)
     finally:
         _drop(dialog)
@@ -1014,7 +1014,7 @@ def test_discard_does_not_revert_an_external_newer_profile_value(tmp_path, app, 
         assert shared.get("scale") == pytest.approx(0.9), "运行视图必须回到盘上那份（外部新值）"
 
         # 后续无关的全局保存：只动主配置，与档案代次无关 → 照常成功；外部的档案值不动
-        shared.set("show_dock_icon", False)
+        shared.set("on_top", False)
         assert shared.save() is True
         assert pet_profiles.read_slot_profile(config_dir, SLOT).value("scale") == pytest.approx(0.9)
 
@@ -1149,7 +1149,7 @@ def test_discard_does_not_revert_an_external_reset(tmp_path, app, monkeypatch):
         assert shared.get("scale") == pytest.approx(default_scale), "运行视图回到盘上那份"
 
         # 后续无关保存照常成功，且不回滚档案
-        shared.set("show_dock_icon", False)
+        shared.set("on_top", False)
         assert shared.save() is True
         assert pet_profiles.read_slot_profile(config_dir, SLOT).value("scale") == pytest.approx(default_scale)
     finally:
@@ -1198,11 +1198,11 @@ def test_discard_reports_when_the_disk_could_not_be_re_read(tmp_path, app, monke
 
         # 修好文件之后：被放弃的值不许借"下一次无关保存"复活
         main_path.write_text(good_config, encoding="utf-8")
-        shared.set("show_dock_icon", False)
+        shared.set("on_top", False)
         assert shared.save() is True
         disk = json.loads(main_path.read_text(encoding="utf-8"))
         assert disk["pet_opacity"] == 55, "被放弃的 35 不许被后续无关保存写回"
-        assert disk["show_dock_icon"] is False
+        assert disk["on_top"] is False
     finally:
         _drop(dialog)
 

@@ -119,10 +119,6 @@ def test_main_exit_codes_and_json(verifier, tmp_path, capsys):
 # 的「构建接线」口径），以及文档面（打包文档 + 许可登记）。
 
 PS1 = REPO / "scripts" / "build_onedir.ps1"
-SHELLS = {
-    "linux": REPO / "scripts" / "build_linux.sh",
-    "macos": REPO / "scripts" / "build_macos.sh",
-}
 MODELS_ADD_DATA = "resources/rapidocr_models"
 PACKAGING_DOC = REPO / "docs" / "ONEDIR_PACKAGING.md"
 NOTICES = REPO / "THIRD_PARTY_NOTICES.md"
@@ -196,16 +192,10 @@ def test_missing_bundle_modules_is_a_pure_set_difference(verifier):
 
 
 def test_payload_paths_are_found_by_existence_not_by_platform_guess(verifier, tmp_path):
-    """三端落点不同（Windows/Linux ``_internal``、macOS ``Contents/Resources``），
-    而这条门是三端共用的**阻塞式**门——所以按"在不在"找，不按平台猜目录名。"""
+    """Windows onedir 载荷在 ``_internal`` —— 按"在不在"找，不按目录名猜。"""
     win = tmp_path / "app"
     (win / "_internal" / "rapidocr").mkdir(parents=True)
     assert verifier.find_payload(win, Path("rapidocr")) == win / "_internal" / "rapidocr"
-
-    mac = tmp_path / "app.app"
-    (mac / "Contents" / "Resources" / "resources" / "rapidocr_models").mkdir(parents=True)
-    assert (verifier.find_payload(mac, Path("resources") / "rapidocr_models")
-            == mac / "Contents" / "Resources" / "resources" / "rapidocr_models")
 
     # 直接把载荷目录递进来（``<app>/_internal`` 本身）时也要认
     payload = tmp_path / "payload"
@@ -235,21 +225,6 @@ def test_windows_script_no_longer_excludes_the_ocr_runtime_deps():
 
     for module in ("'cv2'", "'numpy'"):
         assert module not in text, f"{module} 仍在 --exclude-module 清单里"
-
-
-@pytest.mark.parametrize("name", sorted(SHELLS))
-def test_shell_scripts_gate_and_ship_the_models(name):
-    text = SHELLS[name].read_text(encoding="utf-8")
-
-    assert "scripts/verify_rapidocr_models.py" in text
-    assert (text.index("scripts/verify_rapidocr_models.py")
-            < text.index("-m PyInstaller")), "构建期门必须排在 PyInstaller 之前"
-    assert f"{MODELS_ADD_DATA}:{MODELS_ADD_DATA}" in text
-    assert "$RAPIDOCR_DIR/config.yaml:rapidocr" in text
-    assert "$RAPIDOCR_DIR/default_models.yaml:rapidocr" in text
-    # 产物侧也要判（与 Windows 同口径）：模块 + 模型 + 配置一次判完
-    assert (text.index('verify_rapidocr_models.py --app-dir "$DIST_DIR/$name')
-            > text.index("-m PyInstaller")), "产物里的那次校验必须排在 PyInstaller 之后"
 
 
 def test_slim_lists_no_longer_treat_numpy_as_pollution():

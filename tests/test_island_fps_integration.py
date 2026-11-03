@@ -1008,9 +1008,8 @@ def test_a_slow_session_stop_proves_running_false_is_not_stop_completed(
             "用例收尾后不得遗留采集线程"
 
 
-@pytest.mark.parametrize("platform", ["win32", "linux"])
-def test_platform_gate_is_read_at_sync_time_not_at_import(monkeypatch, platform):
-    """平台闸门读的是当刻判定：同一个段在两种平台下都能自洽（不 import 期定死）。"""
-    monkeypatch.setattr(sys, "platform", platform)
-    slot = island_fps.FpsSlot(key=f"gate-{platform}", hub=island_fps.FpsHub())
-    assert bool(slot.unavailable_reason()) == (platform != "win32")
+def test_platform_gate_is_read_at_sync_time_not_at_import(monkeypatch):
+    """平台闸门读的是当刻判定（不 import 期定死）。"""
+    monkeypatch.setattr(sys, "platform", "win32")
+    slot = island_fps.FpsSlot(key="gate", hub=island_fps.FpsHub())
+    assert bool(slot.unavailable_reason()) is False
