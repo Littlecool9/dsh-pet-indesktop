@@ -138,7 +138,6 @@ def test_window_level_injection_is_not_lost_on_a_pet_page(tmp_path, monkeypatch)
     """窗口级原注入（overlay 一窗多宠）不许漏：七行都挂上标注。"""
     from pet.settings_pet_controls import OVERLAY_WINDOW_SCOPE_IDS
 
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
     dialog = _dialog(tmp_path, monkeypatch, instance_id="slot-1")
     try:
         for key in OVERLAY_WINDOW_SCOPE_IDS:
@@ -149,24 +148,6 @@ def test_window_level_injection_is_not_lost_on_a_pet_page(tmp_path, monkeypatch)
             assert row.scope_note.isHidden() is False, key
             assert ALL_PETS_SCOPE_NOTE not in row.hint_label.text(), key
             assert row.control.accessibleDescription().endswith(ALL_PETS_SCOPE_NOTE), key
-    finally:
-        dialog.close()
-
-
-def test_the_scope_pass_leaves_rows_alone_when_it_is_not_applicable(tmp_path, monkeypatch):
-    """legacy 拓扑：窗口级键不加（每宠独立窗口，键确实只作用于自己）——重跑也不加。"""
-    from pet.settings_pet_controls import OVERLAY_WINDOW_SCOPE_IDS
-
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
-    dialog = _dialog(tmp_path, monkeypatch, instance_id="slot-1")
-    try:
-        _apply_window_scope_rows(dialog)  # 再跑一遍：必须仍是无声无息
-        for key in OVERLAY_WINDOW_SCOPE_IDS:
-            row = dialog.findChild(SettingRow, f"settingRow_{key}")
-            if row is None:
-                continue
-            assert row.scope_note.text() == "", key
-            assert ALL_PETS_SCOPE_NOTE not in row.control.accessibleDescription(), key
     finally:
         dialog.close()
 

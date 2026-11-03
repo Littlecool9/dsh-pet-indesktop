@@ -68,8 +68,6 @@ _ROW_WHITELIST: dict[str, frozenset[str]] = {
     "network_info_menu": frozenset({"IP", "KB"}),
     # 键盘按键名：用户要按的就是它。
     "shift_drag": frozenset({"SHIFT"}),
-    # 直播软件名（用户自己的工具）。
-    "stream_capture": frozenset({"OBS"}),
 }
 
 

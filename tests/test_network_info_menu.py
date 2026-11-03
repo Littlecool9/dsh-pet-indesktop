@@ -216,19 +216,6 @@ def quiet_dialog(monkeypatch):
     monkeypatch.setattr(dialog_mod, "NetworkInfoDialog", _QuietDialog)
 
 
-def test_wire_window_injects_network_info_callback(tmp_path, quiet_dialog):
-    from pet.app import AppShell
-
-    shell = AppShell(app, Config(tmp_path))
-
-    class _Win:
-        pass
-
-    win = _Win()
-    shell.instance._wire_window(win)
-    assert callable(getattr(win, "on_network_info", None))
-
-
 def test_open_network_info_is_single_process_level_dialog(tmp_path, quiet_dialog):
     from pet.app import AppShell
 

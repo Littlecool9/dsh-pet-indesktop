@@ -367,7 +367,7 @@ def test_harness_target_hint_helper_keeps_both_platform_copies_verbatim():
     """自启目标说明的逐字文案住在 ``settings_pet_controls.harness_target_hint``。
 
     搬迁原因（2026-10-10）：``modern_settings_dialog`` 撞了行数预算，两句纯文案
-    选择挪到 ``settings_pet_controls``（``stream_capture_hint`` 同一先例）。两支
+    选择挪到 ``settings_pet_controls``。两支
     共用首句与末句，差别只在桌面端能不能自动拉起——本用例逐字钉住，搬迁不许
     顺手改字（改字会同时骗过「暂不支持」的存在性断言）。
     """
@@ -857,9 +857,6 @@ def test_windows_settings_has_no_orphan_toggles(tmp_path, monkeypatch):
     ), "所有开关都必须被设置行接管，不能游离在窗口左上角"
     assert dialog.findChild(
         settings_mod.SettingRow, "settingRow_auto_hide_fullscreen"
-    ) is not None
-    assert dialog.findChild(
-        settings_mod.SettingRow, "settingRow_stream_capture"
     ) is not None
 
     dialog._save()

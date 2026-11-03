@@ -1173,7 +1173,7 @@ def test_every_group_has_a_description(tmp_path, monkeypatch):
     dialog = _dialog(tmp_path, monkeypatch)
     try:
         groups = _all_groups(dialog)
-        assert len(groups) > 40, f"只扫到 {len(groups)} 个组，装配可能变了，本用例会假绿"
+        assert len(groups) > 35, f"只扫到 {len(groups)} 个组，装配可能变了，本用例会假绿"
         missing = [title for title, widget in groups if not widget.description_label.text().strip()]
         assert not missing, f"这些组没有描述（请在 SECTION_GUIDE 里补一行）：{missing}"
     finally:

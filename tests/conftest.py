@@ -128,31 +128,6 @@ def _no_real_dsh_profile_write(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_topology_config(tmp_path, monkeypatch):
-    """拓扑判定的**配置输入**每测隔离到临时目录（T4 Phase A）。
-
-    渲染拓扑自 T4 起会读主配置 ``stream_capture_mode``（``overlay_settings_command``
-    的 ``_default_base()/APP_DIR_NAME/config.json``）。测试进程若真去读，结果就
-    取决于跑测试这台机器上的用户配置：开发机勾过捕获模式 ⇒ 所有"默认 overlay"
-    的断言在这种机器上变红，而 CI 上永远绿——测试失去意义。故把目录解析这一层
-    钉到 ``tmp_path``（空目录 ⇒ 配置缺失 ⇒ 默认 overlay），并清掉快照缓存。
-
-    钉的是 ``overlay_settings_command`` 复用的那个 seam（``pet.config._default_base``
-    经本模块的模块级绑定），所以用例仍可自行覆盖：测试体内再
-    ``monkeypatch.setattr(cmd, "_default_base", ...)`` 或直接替换
-    ``cmd.topology_config_path``（后打的补丁生效）。
-    """
-    try:
-        from pet import overlay_settings_command as cmd_mod
-    except Exception:
-        return
-    monkeypatch.setattr(cmd_mod, "_default_base", lambda: tmp_path)
-    cmd_mod.reset_topology_snapshot()
-    yield
-    cmd_mod.reset_topology_snapshot()
-
-
-@pytest.fixture(autouse=True)
 def _close_session_writers():
     """会话异步写盘（B8）：每个测试结束后关闭所有后台 writer，
     避免守护线程在 tmp_path 已清理后继续写盘（WinError 145 之类的 teardown 竞态）。"""

@@ -61,7 +61,6 @@ def test_petapp_start_disabled_services_stay_stopped(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod.QTimer, "singleShot", lambda *a, **k: None)
     cfg = _disabled_config(tmp_path)
     shell = AppShell(app, cfg, enable_chat=False)
-    shell.instance._create_ui = lambda cid: None
     shell.instance._apply_spawn_offset = lambda: None
     shell._apply_balance_timer = lambda: None
     shell.start()

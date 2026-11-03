@@ -7,7 +7,7 @@
 
 零活跃宠物本身是合法状态（点过托盘「退出这只」、``overlay-active-pets.json`` 损坏或
 版本不认识、slot0 档案降级被剥出活跃集），所以不改变它是否合法，只要求它**可观测**：
-overlay 与 legacy 两条路径都必须留下 WARN，并把事实说给用户（托盘 tooltip / 恢复窗）。
+零宠物启动必须留下 WARN，并把事实说给用户（托盘 tooltip / 恢复窗）。
 
 纪律：offscreen；真 OverlayShell + 假屏；legacy 侧用绑定真方法的替身（同
 ``test_multi_screen_interaction.FakePet`` 的做法），不伪造产品逻辑。
@@ -138,64 +138,3 @@ def test_overlay_with_a_pet_keeps_quiet(tmp_path, caplog):
     assert shell._all_sprites(), "前提：默认档案下 slot0 应当建起来"
     warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert not any("没有任何宠物" in message for message in warnings), warnings
-
-
-# ---------------------------------------------------------------- legacy 拓扑
-
-
-class _TrayStub:
-    """绑定真 ``AppShell`` 方法的替身：只补齐托盘路径真正用到的面。"""
-
-    _build_empty_pet_tray = app_mod.AppShell._build_empty_pet_tray
-    _install_tray_menu = app_mod.AppShell._install_tray_menu
-    _tray_placeholder_icon = app_mod.AppShell._tray_placeholder_icon
-
-    def __init__(self):
-        self.tray = None
-        self._tray_menu = None
-        self._tray_submenus = []
-        self._active_pet_slots = ()
-        self.spawn_calls = 0
-
-        class _Config:
-            dir = "CONFIG-DIR-SENTINEL"
-
-        class _Instance:
-            config = _Config()
-
-            def open_modern_settings(self):
-                pass
-
-        self.instance = _Instance()
-
-    def spawn_pet(self):
-        self.spawn_calls += 1
-
-    def request_app_quit(self):
-        pass
-
-
-def test_legacy_empty_pet_tray_warns(caplog):
-    """legacy 零宠物（只剩托盘、没有捕获窗）同样必须留 WARN 并点名配置目录。"""
-    stub = _TrayStub()
-
-    with caplog.at_level(logging.WARNING, logger="pet.app"):
-        stub._build_empty_pet_tray()
-
-    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("slot0 未活跃" in message for message in warnings), warnings
-    assert any("CONFIG-DIR-SENTINEL" in message for message in warnings), \
-        "诊断必须点名配置目录"
-
-
-def test_legacy_empty_pet_tray_keeps_recovery_entry(caplog):
-    """可见入口不许被日志改动挤掉：菜单里仍有「生成 / 恢复 slot0」。"""
-    stub = _TrayStub()
-
-    with caplog.at_level(logging.WARNING, logger="pet.app"):
-        stub._build_empty_pet_tray()
-
-    menu = stub._tray_menu
-    assert menu is not None
-    labels = [action.text() for action in menu.actions()]
-    assert "生成 / 恢复 slot0" in labels, labels

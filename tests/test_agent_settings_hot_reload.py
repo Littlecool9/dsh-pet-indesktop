@@ -176,16 +176,14 @@ class _LegacyWindowStub:
         pass
 
 
-def _start_shell(tmp_path, monkeypatch, *, dsh=True, topology="overlay", win=None):
+def _start_shell(tmp_path, monkeypatch, *, dsh=True, win=None):
     """真 ``AppShell.start()``，只有「起桌宠」那一层置空。"""
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", topology)
     config = Config(base=tmp_path)
     agent_cfg = dict(config.get("agent_link") or {})
     agent_cfg["dsh"] = bool(dsh)
     config.set("agent_link", agent_cfg)
     assert config.save(), "落盘：外部变更监视的前提"
     shell = AppShell(app, config)
-    shell.instance._create_ui = lambda cid: None
     shell.instance._apply_spawn_offset = lambda: None
     shell.instance._refresh_chat_windows = lambda: None
     shell._apply_balance_timer = lambda: None
@@ -394,15 +392,3 @@ def test_late_duplicate_notification_does_not_restop_harness(overlay_shell):
     assert_no_process_side_effects(env)
 
 
-def test_legacy_external_change_applies_shared_manager_once(tmp_path, monkeypatch, out_of_box):
-    """legacy 逐位不变：窗链照旧应用一次，应用级不得再补一次（无重复副作用）。"""
-    shell, config = _start_shell(tmp_path, monkeypatch,
-                                 dsh=True, topology="legacy")
-    win = _LegacyWindowStub(config, shell._shared.agent_link)
-    shell.instance.win = win
-    assert _dsh_monitor(shell)._running is True, "用例前置：联动开着时读方在跑"
-
-    _set_link(config, False)
-    _wait_until(lambda: _dsh_monitor(shell)._running is False, what="legacy 关读方")
-    assert len(win.applies) == 1, f"legacy 窗链应恰好应用一次，实为 {len(win.applies)}"
-    assert_no_process_side_effects(out_of_box)

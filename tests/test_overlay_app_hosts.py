@@ -176,97 +176,6 @@ def test_overlay_switch_character_syncs_island_chat_bubble(tmp_path):
         _teardown(overlay)
 
 
-# ---------------------------------------------------------------- R03 捕获模式：快速/岛气泡同步
-class _CaptureWin:
-    """捕获模式（legacy 单窗）的窗口替身：只提供热切换要用的两面。"""
-
-    def __init__(self, config) -> None:
-        self.cfg = config
-        self.agent_link_manager = None
-        self.detach_calls = 0
-
-    def detach_decode_sessions(self) -> None:
-        self.detach_calls += 1
-
-
-class _RecordingChatSurface:
-    """记录 ``set_pet_window`` / ``switch_character`` 的聊天面替身。"""
-
-    def __init__(self) -> None:
-        self.pet_windows: list = []
-        self.switched: list[str] = []
-
-    def set_pet_window(self, window) -> None:
-        self.pet_windows.append(window)
-
-    def switch_character(self, character_id) -> None:
-        self.switched.append(character_id)
-
-
-def _make_capture_app(tmp_path, monkeypatch):
-    """真 AppShell + 真 PetInstance + 捕获模式窗替身（窗口构造是素材库边界，用替身）。"""
-    config = Config(base=tmp_path)
-    config.save()
-    shell = AppShell(app, config)
-    inst = _HostInstance(shell, config)
-    shell.instance = inst
-    shell._instances = [inst]
-    inst.win = _CaptureWin(config)
-
-    def fake_build_window(self, character_id, lib=None, build_tray=True):
-        win = _CaptureWin(self.config)
-        self.win = win
-        return win
-
-    monkeypatch.setattr(app_mod.PetInstance, "_build_window", fake_build_window)
-    return shell, inst
-
-
-def test_capture_mode_switch_character_syncs_quick_and_island_bubbles(
-        tmp_path, monkeypatch):
-    """R03-B：捕获模式切角色，快速对话气泡与岛对话气泡必须一并同步。
-
-    ``PetInstance.switch_character`` 此前只同步完整聊天窗（legacy/modern），
-    快速气泡（``_show_quick_chat`` 复用时只刷 settings/session，身份仍是构造期
-    快照，按旧 ``character_id`` 取会话）与岛气泡（桌宠隐藏时的对话面）留在旧
-    角色上——切完在这两面开口还是旧角色的会话与系统提示。
-    """
-    shell, inst = _make_capture_app(tmp_path, monkeypatch)
-    old_win = inst.win
-    quick = _RecordingChatSurface()
-    inst.quick_chat = quick
-    island = _RecordingChatSurface()
-    shell.island_chat = island
-    legacy = _RecordingChatSurface()
-    modern = _RecordingChatSurface()
-    inst.legacy_chat_window = legacy
-    inst.modern_chat_window = modern
-
-    inst.switch_character("nova")
-
-    assert old_win.detach_calls == 1, "前提：走的是真热切换链路（旧窗解码会话已收尾）"
-    assert shell.config.get("character") == "nova"
-    for window in (legacy, modern):
-        assert window.pet_windows == [inst.win], "热切换后聊天窗要指回新窗"
-        assert window.switched == ["nova"]
-    assert quick.switched == ["nova"], "快速对话气泡必须跟着切角色"
-    assert island.switched == ["nova"], "岛对话气泡必须跟着切角色"
-
-
-def test_capture_mode_switch_character_without_bubbles_is_quiet(
-        tmp_path, monkeypatch):
-    """未创建的气泡（``quick_chat``/``island_chat`` 恒 None）不许掀掉切角色。"""
-    shell, inst = _make_capture_app(tmp_path, monkeypatch)
-    assert inst.quick_chat is None and shell.island_chat is None
-    legacy = _RecordingChatSurface()
-    inst.legacy_chat_window = legacy
-
-    inst.switch_character("nova")
-
-    assert shell.config.get("character") == "nova"
-    assert legacy.switched == ["nova"]
-
-
 def test_overlay_promotion_switches_open_chat_window_to_promoted_character(tmp_path):
     """R03-A 端到端：主宠退出提升子宠后，已开着的聊天窗与它取的会话换成提升者的。
 
@@ -415,24 +324,6 @@ def test_show_balance_uses_overlay_host(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- A5 隐藏指路
-def test_hidden_hint_uses_overlay_tray(tmp_path, monkeypatch):
-    """隐藏桌宠后的「点托盘恢复」提示：overlay 下托盘挂在壳上。"""
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        assert overlay.tray is not None, "测试环境应能建出托盘对象"
-        assert shell.tray is overlay.tray, "AppShell.tray 在 overlay 下必须看向壳的托盘"
-        messages: list[tuple] = []
-        monkeypatch.setattr(overlay.tray, "showMessage",
-                            lambda *args, **kwargs: messages.append(args))
-
-        inst._notify_pet_hidden()
-
-        assert messages, "隐藏后必须给出恢复入口提示"
-        assert "托盘" in messages[0][1]
-    finally:
-        _teardown(overlay)
-
-
 # ---------------------------------------------------------------- A6 设置页占用
 def test_settings_already_open_hints_user(tmp_path, monkeypatch):
     """设置页已开着时不许静默 return True：同一只 / 另一只都要有可见提示。"""
@@ -538,4 +429,22 @@ def test_settings_command_belongs_to_overlay_host_not_app(tmp_path):
         assert overlay._spawned == []
     finally:
         shell._teardown_config_watcher()
+        _teardown(overlay)
+
+
+def test_hidden_hint_uses_overlay_tray(tmp_path, monkeypatch):
+    """隐藏桌宠后的「点托盘恢复」提示：overlay 下托盘挂在壳上。"""
+    shell, inst, overlay = _make_overlay_app(tmp_path)
+    try:
+        assert overlay.tray is not None, "测试环境应能建出托盘对象"
+        assert shell.tray is overlay.tray, "AppShell.tray 在 overlay 下必须看向壳的托盘"
+        messages: list[tuple] = []
+        monkeypatch.setattr(overlay.tray, "showMessage",
+                            lambda *args, **kwargs: messages.append(args))
+
+        inst._notify_pet_hidden()
+
+        assert messages, "隐藏后必须给出恢复入口提示"
+        assert "托盘" in messages[0][1]
+    finally:
         _teardown(overlay)

@@ -31,7 +31,6 @@ from . import quiet_mode
 from . import vision as vision_mod
 from . import window_alerts
 from .agent_link import AgentLinkManager
-from .overlay_settings_command import is_overlay_topology
 from .proactive import ProactiveScreenWatcher
 
 log = logging.getLogger("dsh-pet-standalone")
@@ -577,14 +576,12 @@ class SharedSubsystems:
             state.ack_report()
 
     def start(self) -> None:
-        # overlay 拓扑不启共享全屏 watcher：sprite 世界的壳自持
+        # 共享全屏 watcher 不启动：sprite 世界的壳自持
         # ``FullscreenCursorWatcher``（4.1b），且刻意不暴露 ``_watch_required``
         # / ``_cursor_hidden_passthrough_enabled`` / ``auto_hide_fullscreen``
         # → 本线程的 ``_any_wants()`` 恒 False，只会 1s 一醒地空转到进程退出；
-        # 广播目标 ``instances[].win`` 在 overlay 下也恒为 None（扇出无接收方）。
-        # legacy 拓扑逐位不变（各窗 ``_watch_required`` 自省决定是否真探测）。
-        if not is_overlay_topology():
-            self.fs.start()
+        # 广播目标 ``instances[].win`` 也恒为 None（扇出无接收方）。
+        pass
 
     def stop_all(self) -> None:
         """进程级收口：停共享定时器/探测线程 + 释放 Qt 生命周期引用。

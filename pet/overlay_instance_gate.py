@@ -7,13 +7,9 @@ QLockFile（与 ``pet/__main__.py`` 的 ``settings.lock``、frameseq 的
 ``.converting.lock`` 同一套语义）做进程级互斥：第二个实例在**任何配置目录副作用
 之前**（不抢 slot-1、不落种 config-slot-N.json）拒绝启动。
 
-作用域（T4 Phase A 扩到两个拓扑）：**不再按拓扑分流**——默认 overlay 拓扑与
-捕获模式的 legacy 单窗拓扑都抢同一把门。捕获模式下的桌宠也是完整实例（建
-PetWindow、恢复位置、落盘配置），双开同样互踩，且第二条启动在用户看来就是"又
-起了一只完整桌宠"，与「重启时多只桌宠先收拢为主宠物」的单窗口径直接冲突。锁名
-仍叫 ``overlay-instance.lock``（历史名，跨版本稳定，改名只会留下孤儿锁文件），
-语义已是"桌宠进程单实例门"。拓扑判定入口仍是 ``overlay_shell.is_overlay_topology``，
-本模块不再消费它（见 ``tests/test_overlay_instance_gate.py`` 的双拓扑用例）。
+作用域：桌宠进程只有一种渲染拓扑，所有启动都抢同一把门——两个实例各自恢复
+全部 sprite、位置回写互踩。锁名仍叫 ``overlay-instance.lock``（历史名，跨版本
+稳定，改名只会留下孤儿锁文件），语义是"桌宠进程单实例门"。
 
 崩溃残留（stale lock）完全交给 QLockFile 既有判定，不自己猜：
 - 残留文件里的持有者 pid 已死（同主机）→ 立刻接管（实测 Qt 6.11.2：kill 掉

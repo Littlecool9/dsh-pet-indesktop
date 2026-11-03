@@ -200,37 +200,3 @@ def set_cursor_hidden_passthrough(host, on: bool) -> None:
         host._start_fs_watch()
     elif not host._auto_hidden:
         host._stop_fs_watch()
-
-
-def set_stream_capture_mode(host, on: bool) -> None:
-    """直播捕获兼容模式：Tool → 普通顶层窗口 + 标题。
-
-    直播姬/OBS 的窗口捕获会过滤 Tool 窗口（WS_EX_TOOLWINDOW），
-    开启后改为普通窗口并设置可见标题，捕获列表即可看到桌宠；
-    代价是任务栏出现图标。setWindowFlags 会重建原生窗口，随后
-    showEvent 会自动重新应用置顶。
-    """
-    from .window import STREAM_CAPTURE_TITLE, build_window_flags
-    on = bool(on)
-    if on == host._stream_capture_mode:
-        return
-    host._stream_capture_mode = on
-    host.cfg.set('stream_capture_mode', on)
-    host.cfg.save()
-    was_visible = host.isVisible()  # setWindowFlags 重建原生窗口会先隐藏
-    host.setWindowFlags(build_window_flags(host.cfg, host.mouse_through, on))
-    host.setWindowTitle(STREAM_CAPTURE_TITLE if on else '')
-    if was_visible:
-        host.show()  # 只在原本可见时恢复：手动/自动隐藏的桌宠不被意外唤出
-    host._speech_bubble.set_capture_compat(on, host=host)
-    if getattr(host, "_quick_chat_capture_widget", None) is not None and shiboken6.isValid(host._quick_chat_capture_widget):
-        host._quick_chat_capture_widget.set_capture_compat(on, host=host)
-    if not on:
-        host.set_capture_headroom(0)
-
-
-def set_quick_chat_capture_widget(host, widget) -> None:
-    """注册/清空快速对话气泡的捕获子控件引用并同步当前捕获模式。"""
-    host._quick_chat_capture_widget = widget
-    if widget is not None and callable(getattr(widget, "set_capture_compat", None)):
-        widget.set_capture_compat(host._stream_capture_mode, host=host)

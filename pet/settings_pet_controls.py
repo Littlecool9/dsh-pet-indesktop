@@ -58,25 +58,6 @@ from .speech_bubble import BUBBLE_STYLE_PRESETS
 #: （"改了影响所有桌宠"）。两句话的适用对象不同，不合并成一句。
 GLOBAL_SCOPE_NOTE = "（影响所有桌宠）"
 
-#: 「直播捕获兼容」基础文案（描述能力本身）；显式 env legacy（运行期即时切换）
-#: 逐字用它。
-STREAM_CAPTURE_HINT = "让 OBS 等工具能够枚举并捕获桌宠窗口；OBS 捕获方式请选 Windows 10（1903 及以上），BitBlt 会是黑屏。"
-#: 默认（非显式 env legacy）路径的补充说明（T4：重启级切换）。
-#:
-#: 该键是**拓扑输入**（见 ``overlay_settings_command.is_overlay_topology``）：
-#: 勾选后重启走 legacy 单窗 PetWindow 路径，overlay 单合成窗没有可枚举的窗口；
-#: 重启时按 T4 口径多只桌宠先收拢为主宠物（活跃宠清单保留，不删档）。
-#: 已勾选未重启、以及 overlay 未勾选两种状态共用这句：省略"勾选后"这类前提，
-#: 免得用户在已勾选状态下看到「勾选后生效」而以为还要再勾一次。
-#:
-#: F03：末尾按规范 §五「任意宠可以编辑全局设置，但界面必须说明影响所有桌宠」
-#: 补上范围声明——这个键在**每个**身份的设置页上都能编辑（``SlotRoutedConfig``
-#: 把它路由进主配置），旧的"子宠页置灰只归主宠页"判据已被推翻。
-STREAM_CAPTURE_RESTART_HINT = (
-    STREAM_CAPTURE_HINT + "重启后生效；重启时多只桌宠会先收拢为主宠物。"
-    + GLOBAL_SCOPE_NOTE
-)
-
 #: 子宠设置页对这些键的补充说明（窗口级键：一窗多宠里作用于整窗）。
 ALL_PETS_SCOPE_NOTE = "（对所有桌宠生效）"
 
@@ -105,13 +86,11 @@ CROSS_SCREEN_HINT = (
 #: 也是"标注显示什么"。行本身照着这张表补标注（见 ``_apply_window_scope_rows``），
 #: 因此文案仍然只有说明表一份来源，这里一个字的文案都不新写。
 #:
-#: - ``stream_capture`` 只 Windows 有行（非 Windows 找不到就跳过）；
 #: - harness 两行在任何身份下都影响全局（dsh 服务与登录项都只有一份）；
 #: - 全部行的说明末尾都逐字带着这句原文（``STREAM_CAPTURE_RESTART_HINT`` /
 #:   ``HARNESS_TARGET_HINT_*`` / 主文件里「开机自启」那一行），所以削得掉、不用另抄。
 GLOBAL_SCOPE_ROWS: tuple[tuple[str, str], ...] = (
     ("autostart", GLOBAL_SCOPE_NOTE),
-    ("stream_capture", GLOBAL_SCOPE_NOTE),
     ("cross_screen", GLOBAL_SCOPE_NOTE),
     ("harness_autostart", ALL_PETS_SCOPE_SENTENCE),
     ("harness_launch_target", ALL_PETS_SCOPE_SENTENCE),
@@ -150,34 +129,6 @@ OVERLAY_WINDOW_SCOPE_IDS = (
 )
 
 
-def _is_overlay_topology() -> bool:
-    """拓扑判定（懒 import：设置进程禁止导入重量级模块，见模块 docstring）。"""
-    from . import overlay_settings_command
-
-    return overlay_settings_command.is_overlay_topology()
-
-
-def stream_capture_hint() -> str:
-    """「直播捕获兼容」说明文案（T4 / PHASE4_DESIGN.md:80-82）。
-
-    文案按**当前进程的拓扑输入**分流：
-
-    - 显式 ``PET_RENDER_TOPOLOGY=legacy``（dev 逃生门）：本进程就是 legacy，
-      PetWindow 运行期即时生效（``window_screen.py`` 的
-      set_stream_capture_mode），逐字原提示、不提示重启；
-    - 其余（默认 overlay，或已勾选捕获模式 = 重启后走 legacy）：该键是**重启级
-      切换**——勾选只落配置，本进程不会翻拓扑，故如实说明重启与多宠收拢。
-
-    文案落在本模块（控件本体也在这里）而不是 ``modern_settings_dialog``：
-    后者的行数预算只随实测校准，能不加行就不加。
-    """
-    from . import overlay_settings_command
-
-    if overlay_settings_command.env_forces_legacy():
-        return STREAM_CAPTURE_HINT
-    return STREAM_CAPTURE_RESTART_HINT
-
-
 def harness_target_hint(desktop_available: bool) -> str:
     """「自启目标」说明文案（按桌面端能力分流）。
 
@@ -185,8 +136,8 @@ def harness_target_hint(desktop_available: bool) -> str:
     （该常量是桌面端能力的唯一平台口径，设置页不另写一份判定）：本函数只做文案
     选择，不自己探平台，两个分支都能脱离真实平台直接测。
 
-    文案落在本模块（与 ``stream_capture_hint`` 同一先例）而不是
-    ``modern_settings_dialog``：后者的行数预算只随实测校准，能不加行就不加。
+    文案落在本模块而不是 ``modern_settings_dialog``：后者的行数预算只随实测校准，
+    能不加行就不加。
     """
     if desktop_available:
         return HARNESS_TARGET_HINT_DESKTOP
@@ -216,8 +167,6 @@ def _apply_window_scope_rows(host) -> None:
         if row.scope_note.text() != note:
             row.set_scope_note(note)
     if not getattr(getattr(host, "config", None), "instance_id", None):
-        return
-    if not _is_overlay_topology():
         return
     for setting_id in OVERLAY_WINDOW_SCOPE_IDS:
         row = host.findChild(SettingRow, f"settingRow_{setting_id}")
@@ -271,9 +220,6 @@ def build_pet_controls(host) -> None:
     # 如实置灰 + 说明，不留"改了没反应"的活开关。
     host.cross_screen_check = ToggleSwitch(host)
     host.cross_screen_check.setChecked(bool(host.config.get("allow_cross_screen", False)))
-    if not _is_overlay_topology():
-        host.cross_screen_check.setEnabled(False)
-        host.cross_screen_check.setToolTip("仅单合成窗（overlay）拓扑生效")
     host.no_move_check = ToggleSwitch(host)
     host.no_move_check.setChecked(bool(host.config.get("no_move", False)))
     host.mouse_through_check = ToggleSwitch(host)
@@ -289,12 +235,6 @@ def build_pet_controls(host) -> None:
     # 拖动物理关时低速松手同样是「原地放下」，用户要的下落不该被那个开关挡住。
     host.drop_gravity_check = ToggleSwitch(host)
     host.drop_gravity_check.setChecked(bool(host.config.get("drop_gravity", False)))
-    if not _is_overlay_topology():
-        # 静止放手下落只被 sprite 路径消费（pet_sprite；legacy 的 PetWindow 没有
-        # 对应行为）。捕获模式接通后 legacy 已是真实用户路径，开关摆在那里改了
-        # 没反应 ⇒ 如实置灰 + 说明（同节其它行 legacy 真的消费，保持可用）。
-        host.drop_gravity_check.setEnabled(False)
-        host.drop_gravity_check.setToolTip("仅单合成窗（overlay）拓扑生效")
     # 「单进程多开」开关不再创建（拓扑收口 Phase A：设置页隐藏；
     # 游离 ToggleSwitch 会被孤儿开关测试拦截）。
 
@@ -419,19 +359,9 @@ def build_pet_controls(host) -> None:
         host.balance_tier_color_check = ToggleSwitch(host)
         host.balance_tier_color_check.setChecked(bool(host.config.get("balance_tier_color_enabled", True)))
     host.auto_hide_fullscreen_check = None
-    host.stream_capture_check = None
     if sys.platform == "win32":
         host.auto_hide_fullscreen_check = ToggleSwitch(host)
         host.auto_hide_fullscreen_check.setChecked(bool(host.config.get("auto_hide_fullscreen", True)))
-        host.stream_capture_check = ToggleSwitch(host)
-        host.stream_capture_check.setChecked(bool(host.config.get("stream_capture_mode", False)))
-        # F03（2026-10-10 终审）：这里**不**按身份置灰。旧实现的理由是"子宠页保存只写
-        # config-slot-N.json、拓扑判定只读主配置 ⇒ 点什么都不生效"，但这条理由已被
-        # ``SlotRoutedConfig`` 的全局路由推翻：非每宠键一律落主 config.json，
-        # 而正常 UI 入口**只有** slot 身份（``--instance slot-0`` / ``slot-N``），
-        # 按"身份非空"判会把 slot0 自己的页面也拒掉，连已开捕获模式的用户都关不掉它。
-        # 规范 §五：任意宠可以编辑全局设置，界面说清"影响所有桌宠"即可（文案在
-        # ``stream_capture_hint``）。
 
     host.speed_select = ModernSelect(host, width=112)
     current_speed = float(host.config.get("playback_speed", 1.0))

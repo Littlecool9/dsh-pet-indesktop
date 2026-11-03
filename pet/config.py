@@ -954,7 +954,6 @@ class Config:
             # 默认空 = 走内置的自动发现（PATH/注册表/各版本管理器/多布局）；
             # 面向"环境特殊又不想改环境变量"的用户，属于开发者向高级键，不进设置页。
             "pnpm_bin": "",
-            "stream_capture_mode": False,  # 直播捕获兼容模式（Windows：Tool 窗口直播姬/OBS 枚举不到）
             "chat_background": "",  # 肥鱼牌小手机背景：空=纯色；builtin:* = 内置主题；否则为图片路径
             "modern_chat_background": "",  # 肥鱼版 DeepSeek 背景：空=纯色；否则为自定义图片路径
             "chat_background_opacity": 100,
@@ -1164,7 +1163,6 @@ class Config:
             "autostart_wanted",
             "harness_autostart",
             "harness_launch_target",
-            "stream_capture_mode",
             "allow_cross_screen",
             "pnpm_bin",
             "agent_cost_enabled",

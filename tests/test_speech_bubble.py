@@ -496,33 +496,6 @@ def test_long_text_bubble_uses_wider_column():
         short.dismiss()
 
 
-def test_wide_bubble_column_clamped_to_narrow_capture_host():
-    """直播捕获子模式：可用区=主窗矩形，长文本列宽必须收进主窗。
-
-    列宽上限 360px + 左右内边距会让气泡比 320px 宽的主窗还宽，子控件越界
-    会被裁掉；_column_for_text 按可用区收敛列宽后，气泡仍完整落在主窗内。
-    """
-    _get_app()
-    host = QWidget()
-    host.setGeometry(0, 0, 320, 320)
-    bubble = PetSpeechBubble(style_id="classic_top")
-    try:
-        bubble.set_capture_compat(True, host)
-        text = "主人～DSH开始干活啦，人家会帮您盯着它的～" * 10
-        bubble.show_text(text, host.geometry(), 40000)
-        assert bubble.width() <= host.width()
-        assert host.rect().contains(bubble.geometry())
-        for page in bubble._pages:
-            assert _overflow_lines(bubble, page.split("\n")) == [], page
-    finally:
-        bubble.dismiss()
-        bubble.set_capture_compat(False)
-        host.close()
-        bubble.deleteLater()
-        host.deleteLater()
-        _get_app().processEvents()
-
-
 def test_bubble_label_stays_inside_painted_surface():
     """文本 label 必须落在气泡绘制区内（右侧留白足够，字不会被边框压住）。"""
     _get_app()

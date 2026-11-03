@@ -926,7 +926,7 @@ def test_write_profile_settings_rejects_global_keys(tmp_path):
     path = pp.slot_profile_path(tmp_path, 0)
     _dump(path, {"version": 4})
     before = path.read_bytes()
-    for key in ("pet_opacity", "on_top", "stream_capture_mode", "chat"):
+    for key in ("pet_opacity", "on_top", "allow_cross_screen", "chat"):
         result = pp.write_profile_settings(tmp_path, 0, {key: 1})
         assert result.status == "refused-key", key
         assert path.read_bytes() == before

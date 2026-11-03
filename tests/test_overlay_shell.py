@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """Phase 4.1a overlay 产品壳 offscreen 单测（QT_QPA_PLATFORM=offscreen 可跑）。
 
-覆盖：is_overlay_topology env 契约；OverlayShell 构建期 dpr/bounds/默认右下
-角落位；tick 顺序协议（行为→碰撞→物理，装桩记录调用序）；start/stop 幂等；
+覆盖：OverlayShell 构建期 dpr/bounds/默认右下角落位；tick 顺序协议（行为→碰撞→物理，装桩记录调用序）；start/stop 幂等；
 音效预热接线（首次可见前预热一次、开关关闭零调用）；geometryChanged 的 rx/ry
 比例迁移；屏拔除的 overlay 重建与拖拽收尾；会话结束与退出收口；app.py 拓扑
-分支（默认路径不构造 OverlayShell）。
+启动只构造 OverlayShell。
 纪律：同步直调 handler / _on_tick(dt=...)，不 sleep 赌时序（AGENTS.md 时序
 测试纪律）；sprite/库/屏用纯假实现，不碰 webm 素材与 ffmpeg。
 """
@@ -25,7 +24,7 @@ import pet.overlay_shell as overlay_shell_mod
 from pet import click_sound
 from pet.app import AppShell
 from pet.config import Config
-from pet.overlay_shell import OverlayShell, is_overlay_topology
+from pet.overlay_shell import OverlayShell
 
 app = QApplication.instance() or QApplication([])
 
@@ -167,45 +166,6 @@ def _make_shell(screen=None, instance=None):
         app, instance, screen=screen,
         sprite_factory=lambda lib, pos, scale: _BodySprite(lib, pos, scale))
     return shell, screen, instance
-
-
-# ---------------------------------------------------------------- env flag 契约
-def test_is_overlay_topology_env_contract(monkeypatch):
-    # T5 默认化：默认 overlay；PET_RENDER_TOPOLOGY=legacy 是唯一逃生门
-    # （配置侧输入为空 = 默认 overlay，见下面的隔离用例）
-    monkeypatch.delenv("PET_RENDER_TOPOLOGY", raising=False)
-    assert is_overlay_topology() is True
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
-    assert is_overlay_topology() is True
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
-    assert is_overlay_topology() is False
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "")
-    assert is_overlay_topology() is True
-
-
-def test_topology_config_input_is_isolated_to_tmp(tmp_path, monkeypatch):
-    """拓扑门的配置输入必须钉在本用例临时目录（审查修复 5）。
-
-    拓扑自 T4 起还读主配置 ``stream_capture_mode``。若测试进程真去读，上面那条
-    「清 env ⇒ 默认 overlay」在**开发机勾过捕获模式**时会假红（判定读到真实
-    ``<APPDATA>/dsh-pet-standalone/config.json``），CI 上却永远绿——断言失去意义。
-    conftest 的 ``_isolate_topology_config`` 夹具把目录解析钉到 ``tmp_path``；
-    本用例锁死这件事（并在同一份路径上写 true 证明读的确实是它）。
-    """
-    from pet import overlay_settings_command as cmd_mod
-
-    monkeypatch.delenv(cmd_mod.ENV_TOPOLOGY, raising=False)
-    path = cmd_mod.topology_config_path()
-    assert str(path).startswith(str(tmp_path)), "门的配置路径必须在本用例临时目录内"
-    assert cmd_mod.is_overlay_topology() is True     # 空目录 = 默认 overlay
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{"stream_capture_mode": true}', encoding="utf-8")
-    cmd_mod.reset_topology_snapshot()
-    try:
-        assert cmd_mod.is_overlay_topology() is False, "钉的这份文件必须就是判定输入"
-    finally:
-        cmd_mod.reset_topology_snapshot()
 
 
 # ---------------------------------------------------------------- 构建期：dpr/bounds/右下角
@@ -550,27 +510,7 @@ def _stub_shell_start(shell, monkeypatch):
     monkeypatch.setattr(AppShell, "_sync_dynamic_island", lambda self: None)
 
 
-def test_app_start_default_path_does_not_touch_overlay_shell(tmp_path, monkeypatch):
-    # legacy 逃生门路径不构造 OverlayShell（默认路径见下方 overlay 用例）
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "legacy")
-    constructed = []
-    monkeypatch.setattr(overlay_shell_mod, "OverlayShell",
-                        lambda *a, **kw: constructed.append((a, kw)))
-    ui_calls = []
-    monkeypatch.setattr(AppShell, "_create_ui_with_character_fallback",
-                        lambda self, cid: ui_calls.append(cid))
-
-    shell = AppShell(app, Config(tmp_path))
-    _stub_shell_start(shell, monkeypatch)
-    shell.start()
-
-    assert constructed == []                           # 默认路径不构造 OverlayShell
-    assert ui_calls == ["shenshen"]                    # 旧路径主窗创建照常
-    assert getattr(shell, "_overlay_shell", None) is None
-
-
-def test_app_start_overlay_topology_takes_overlay_shell(tmp_path, monkeypatch):
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
+def test_app_start_takes_overlay_shell(tmp_path, monkeypatch):
     created = []
 
     class FakeOverlayShell:
@@ -585,9 +525,6 @@ def test_app_start_overlay_topology_takes_overlay_shell(tmp_path, monkeypatch):
             self.started += 1
 
     monkeypatch.setattr(overlay_shell_mod, "OverlayShell", FakeOverlayShell)
-    ui_calls = []
-    monkeypatch.setattr(AppShell, "_create_ui_with_character_fallback",
-                        lambda self, cid: ui_calls.append(cid))
 
     shell = AppShell(app, Config(tmp_path))
     _stub_shell_start(shell, monkeypatch)
@@ -598,7 +535,6 @@ def test_app_start_overlay_topology_takes_overlay_shell(tmp_path, monkeypatch):
     assert created[0].instance is shell.instance
     assert created[0].started == 1
     assert shell._overlay_shell is created[0]
-    assert ui_calls == []                              # overlay 路径不建 PetWindow
     # 4.3 后半：D0 常建的共享子系统注入 sprite 世界的壳（扇出目标）
     assert shell._shared is not None
     assert created[0].kwargs["agent_link_manager"] is shell._shared.agent_link
@@ -611,9 +547,7 @@ def test_hub_and_shared_subsystems_are_always_on(tmp_path, monkeypatch):
 
     契约来源 PHASE4_DESIGN T3/D0：多 sprite/多窗同角色若各建解码链会退化成
     N 路独立 ffmpeg；共享子系统缺位则是静默缺失。4.4b 起 spawn 开关键已删除，
-    拓扑差异只剩 OverlayShell 与 PetWindow 两条渲染面。
     """
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
     shell = AppShell(app, Config(tmp_path))
     try:
         assert shell._decode_hub.enabled is True       # hub 常开
@@ -624,27 +558,12 @@ def test_hub_and_shared_subsystems_are_always_on(tmp_path, monkeypatch):
 
 def test_overlay_topology_hub_respects_shared_decode_off(tmp_path, monkeypatch):
     """用户级总闸 `experimental_shared_decode` 仍然生效。"""
-    monkeypatch.setenv("PET_RENDER_TOPOLOGY", "overlay")
     cfg = Config(tmp_path)
     cfg.set("experimental_shared_decode", False)
     shell = AppShell(app, cfg)
     try:
         assert shell._decode_hub.enabled is False
         assert shell._shared is not None               # 两项门控彼此独立
-    finally:
-        shell._shared.stop_all()
-
-
-def test_legacy_topology_also_builds_shared_subsystems(tmp_path, monkeypatch):
-    """4.4b 回归护栏：legacy 拓扑同样常建共享子系统（T6 常开化）。
-
-    hub 的开关收敛为用户级 `experimental_shared_decode`（默认开）。
-    """
-    monkeypatch.delenv("PET_RENDER_TOPOLOGY", raising=False)
-    shell = AppShell(app, Config(tmp_path))
-    try:
-        assert shell._decode_hub.enabled is True
-        assert shell._shared is not None
     finally:
         shell._shared.stop_all()
 
