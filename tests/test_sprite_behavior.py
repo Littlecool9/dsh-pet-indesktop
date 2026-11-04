@@ -179,11 +179,14 @@ def test_first_tick_enters_idle():
 
 
 def test_focus_stops_existing_walk_without_saving_no_move_and_restores_on_break():
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
+    from pet.modules.focus.state import FocusService
     state = shared_focus_session()
+    service = FocusService(state)
     lib = _make_library()
     sprite = _make_sprite(lib, facing="right")
-    controller = BehaviorController(BOUNDS, rng=ScriptedRng())
+    controller = BehaviorController(
+        BOUNDS, rng=ScriptedRng(), focus_provider=lambda: service)
     _roll_into_move(controller, sprite, lib)
     assert controller.state_of(sprite) == STATE_MOVE
     position = QPointF(sprite.pos)
@@ -253,11 +256,13 @@ def test_turn_before_reverse_move():
 
 
 def test_focus_cancels_walk_already_queued_behind_a_turn():
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
+    from pet.modules.focus.state import FocusService
     state = shared_focus_session()
+    service = FocusService(state)
     lib = _make_library()
     sprite = _make_sprite(lib, facing="left")
-    c = BehaviorController(BOUNDS, rng=ScriptedRng())
+    c = BehaviorController(BOUNDS, rng=ScriptedRng(), focus_provider=lambda: service)
     c.predict_enabled = False
     _roll_into_move(c, sprite, lib, choices=(1,))
     assert c.state_of(sprite) == STATE_TURN
@@ -272,11 +277,13 @@ def test_focus_cancels_walk_already_queued_behind_a_turn():
 
 
 def test_focus_does_not_cancel_velocity_while_dragging():
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
+    from pet.modules.focus.state import FocusService
     state = shared_focus_session()
+    service = FocusService(state)
     lib = _make_library()
     sprite = _make_sprite(lib, facing="right")
-    c = BehaviorController(BOUNDS, rng=ScriptedRng())
+    c = BehaviorController(BOUNDS, rng=ScriptedRng(), focus_provider=lambda: service)
     _roll_into_move(c, sprite, lib)
     assert c.state_of(sprite) == STATE_MOVE
     sprite.interaction_state = INTERACTION_DRAG

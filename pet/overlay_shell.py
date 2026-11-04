@@ -551,8 +551,8 @@ class _SpriteSelfTalkHost:
         抽样/出图概率复用 ``window_alerts`` 的纯逻辑函数；配图只走壳的预热缓存
         （GUI 线程绝不付磁盘/解码税——冷缓存回退文本，与主宠同口径）。
         """
-        from .focus_mode import shared_focus_session
-        if shared_focus_session().focusing:
+        service = self._shell.focus_service()
+        if service is not None and service.focusing:
             return False
         if self._bubble_blocked():
             return False
@@ -1077,6 +1077,12 @@ class OverlayShell(QObject):
         host = self._main_host
         return host.probe if host is not None else None
 
+    def focus_service(self):
+        """当前专注模块服务（只读）；模块缺失 = 专注关闭。"""
+        from .module_host import module_service
+
+        return module_service(getattr(self._instance, "shell", None), "focus")
+
     def hosts(self) -> list:
         """当前全部宿主（只读副本；单窗下恒为一个元素）。"""
         return list(self._hosts)
@@ -1262,7 +1268,7 @@ class OverlayShell(QObject):
             lambda screen=screen: self._host_window_rect(screen))
         overlay._screen_of_sprite = self._screen_of_sprite  # noqa: SLF001
         overlay.setGeometry(desktop)
-        host = ScreenHost(screen, overlay, bounds)
+        host = ScreenHost(screen, overlay, bounds, focus_provider=self.focus_service)
         self._hosts.append(host)
         # 活动区要在宿主进表之后算：家那块屏（关闭跨屏时唯一活动区）从宿主读
         host.set_activity(self._host_activity(host))
@@ -2659,8 +2665,8 @@ class OverlayShell(QObject):
         落地走 sprite 版气泡面（配图 = 刀 1 的 ``SpriteBubbleFollower.show_image``），
         不触碰 window 私面。
         """
-        from .focus_mode import shared_focus_session
-        if shared_focus_session().focusing:
+        service = self.focus_service()
+        if service is not None and service.focusing:
             return False
         if self._bubble_blocked():
             return False

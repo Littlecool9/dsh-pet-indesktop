@@ -1,7 +1,7 @@
 """Local smoke checks for elapsed focus time, end greeting and bounded notes."""
 import json
 
-from pet.focus_mode import FocusSession
+from pet.modules.focus.session import FocusSession
 
 
 def test_elapsed_focus_excludes_pauses_and_breaks_and_survives_stop():
@@ -29,7 +29,7 @@ def test_elapsed_focus_excludes_pauses_and_breaks_and_survives_stop():
 
 
 def test_memory_rejects_uncertain_claims_and_uses_literal_duration():
-    from pet.focus_notes import FocusNotes, parse_work_memory
+    from pet.modules.focus.notes import FocusNotes, parse_work_memory
     notes = FocusNotes()
     notes.remember("on_task", "阅读 QTimer 文档", "这{focus_duration}也太费鱼脑袋啦，辛苦啦！", "shenshen")
     assert notes.closing(125, "shenshen") == "这2分5秒也太费鱼脑袋啦，辛苦啦！"
@@ -54,7 +54,7 @@ def test_a_complete_phase_counts_the_full_duration_with_a_real_advancing_clock()
 
 
 def test_finished_history_is_small_and_preserves_a_broken_file(tmp_path):
-    from pet.focus_notes import FocusHistory
+    from pet.modules.focus.notes import FocusHistory
     history = FocusHistory(tmp_path / "focus_sessions.json")
     for index in range(15):
         history.record({"focus_seconds": index, "completed": 0, "work_context": "写代码",
@@ -77,7 +77,7 @@ def test_stop_uses_seen_work_without_an_extra_request_and_starts_fresh(tmp_path,
     now = [0.0]
     cfg, state, target, controller = setup_controller(tmp_path, clock=lambda: now[0])
     calls = []
-    monkeypatch.setattr("pet.focus_service.foreground_observation_available", lambda: True)
+    monkeypatch.setattr("pet.modules.focus.controller.foreground_observation_available", lambda: True)
     monkeypatch.setattr(vision, "foreground_window_info", lambda: {"rect": (0, 0, 20, 20)})
     monkeypatch.setattr(vision, "capture_window_rect", lambda rect: Image.new("RGB", (20, 20)))
     def request(*args, **kwargs):

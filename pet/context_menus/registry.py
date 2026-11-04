@@ -9,7 +9,6 @@ from typing import Callable
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMenu, QWidgetAction
 
-from ..focus_ui import build_focus_menu
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
 from .shared import (
@@ -48,7 +47,7 @@ ACTION_LABELS = {
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
     "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
-    "quiet_mode": "免打扰", "focus_mode": "专注模式",
+    "quiet_mode": "免打扰",
     "modern_settings": "桌宠设置", "quit": "退出",
 }
 
@@ -69,7 +68,7 @@ ACTION_ICONS = {
     "agent_cost": "balance",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
     "proactive_screen": "screen", "todo_panel": "todo",
-    "quiet_mode": "pause", "focus_mode": "pause",
+    "quiet_mode": "pause",
     "modern_settings": "settings", "quit": "quit",
 }
 
@@ -158,7 +157,6 @@ class MenuActionRegistry:
             # 免打扰：进程级状态，任何宿主（PetWindow / SpriteMenuFacade）都可用，
             # 不做能力判定——菜单里永远给得出入口，用户不必先找开关。
             "quiet_mode": MenuActionSpec(add_quiet_mode_menu),
-            "focus_mode": MenuActionSpec(build_focus_menu),
             "modern_settings": MenuActionSpec(
                 _build_settings, _callback_available("on_open_modern_settings")
             ),

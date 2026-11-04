@@ -1,30 +1,27 @@
+# -*- coding: utf-8 -*-
 """Pomodoro commands shared by the island card and recovery context menu."""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
-from .focus_mode import PHASE_NAMES, shared_focus_session
+from .session import PHASE_NAMES
 
 
-def toggle_focus(config):
-    state = shared_focus_session()
-    if state.status == "running":
-        state.pause()
-    else:
-        state.start(config.get("focus_mode"))
+def toggle_focus(config, service):
+    service.toggle(config)
 
 
-def command_label():
-    state = shared_focus_session()
-    if state.status == "running":
+def command_label(service):
+    if service.status == "running":
         return "暂停"
-    if state.status == "paused":
+    if service.status == "paused":
         return "继续"
     return "开始专注"
 
 
 class FocusControls(QWidget):
-    def __init__(self, config, parent=None):
+    def __init__(self, service, config, parent=None):
         super().__init__(parent)
+        self.service = service
         self.config = config
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
@@ -42,10 +39,10 @@ class FocusControls(QWidget):
         buttons = QHBoxLayout()
         self.toggle = QPushButton(self)
         self.toggle.setObjectName("focusStartPause")
-        self.toggle.clicked.connect(lambda: toggle_focus(config))
+        self.toggle.clicked.connect(lambda: toggle_focus(config, service))
         self.end = QPushButton("结束", self)
         self.end.setObjectName("focusEnd")
-        self.end.clicked.connect(shared_focus_session().stop)
+        self.end.clicked.connect(service.stop)
         buttons.addWidget(self.toggle)
         buttons.addWidget(self.end)
         layout.addLayout(buttons)
@@ -55,7 +52,7 @@ class FocusControls(QWidget):
         return max(self.minimumSizeHint().height(), self.layout().totalHeightForWidth(width))
 
     def refresh(self):
-        state = shared_focus_session()
+        state = self.service
         text = "专注模式" if not state.engaged else PHASE_NAMES[state.phase]
         if state.engaged:
             if state.status == "paused":
@@ -64,18 +61,17 @@ class FocusControls(QWidget):
         self.status.setText(text)
         self.detail.setText(state.observation or "工作背景与时长在设置中修改。")
         self.status.setToolTip(state.observation or "工作背景与时长在设置 → 自动化与联动 → 专注模式中修改。")
-        self.toggle.setText(command_label())
-        self.toggle.setAccessibleName(f"专注模式：{command_label()}")
+        self.toggle.setText(command_label(state))
+        self.toggle.setAccessibleName(f"专注模式：{command_label(state)}")
         self.end.setAccessibleName("结束专注模式")
         self.end.setEnabled(state.engaged)
 
 
-def build_focus_menu(menu, pet):
+def build_focus_menu(menu, pet, service):
     sub = menu.addMenu("专注模式")
-    state = shared_focus_session()
-    label = sub.addAction(state.label())
+    label = sub.addAction(service.label())
     label.setEnabled(False)
-    sub.addAction(command_label(), lambda: toggle_focus(pet.cfg))
-    end = sub.addAction("结束专注", state.stop)
-    end.setEnabled(state.engaged)
+    sub.addAction(command_label(service), lambda: toggle_focus(getattr(pet, "cfg", None), service))
+    end = sub.addAction("结束专注", service.stop)
+    end.setEnabled(service.engaged)
     return sub

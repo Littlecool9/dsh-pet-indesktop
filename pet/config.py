@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from . import catalog, module_config
-from .focus_mode import normalize_focus_config
 
 
 DEFAULT_ANIMATION_GAP_SECONDS = 0.0
@@ -929,7 +928,6 @@ class Config:
             # （``_clean_island_metrics`` 是准入口径）。默认空 = 只要主信息。
             "island_metrics": [],
             "proactive_screen": _default_proactive_screen_data(),
-            "focus_mode": normalize_focus_config(None),
             "agent_link": _default_agent_link_data(),
             "chat_ui_style": "modern",  # modern / classic（仅聊天窗口保留双实现）
             "chat_follow_pet": False,  # 聊天窗口是否跟随桌宠移动
@@ -1102,7 +1100,6 @@ class Config:
             "anim_menu_stay_open",
             "auto_hide_fullscreen",
             "quiet_minutes_default",
-            "focus_mode",
             "quiet_also_on_fullscreen",
             "click_sound_enabled",
             "click_sound_pack",
@@ -1419,7 +1416,6 @@ class Config:
                     stack.append(value)
 
     def _normalize_pet_settings(self):
-        self.data["focus_mode"] = normalize_focus_config(self.data.get("focus_mode"))
         target = str(self.data.get("harness_launch_target") or "auto").strip().lower()
         self.data["harness_launch_target"] = target if target in ("auto", "service", "web", "desktop") else "auto"
         dialogue_mode = str(self.data.get("dialogue_mode") or "legacy").lower()
@@ -1575,7 +1571,6 @@ class Config:
             "ffmpeg_recycle_minutes",
             "todo_reminder_enabled",
             "todo_reminder_lead_minutes",
-            "focus_mode",
             "quiet_minutes_default",
             "quiet_also_on_fullscreen",
             "agent_cost_enabled",

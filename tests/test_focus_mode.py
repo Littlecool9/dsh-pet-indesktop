@@ -5,7 +5,9 @@ import json
 
 import pytest
 
-from pet.focus_mode import FocusSession, focus_prompt, normalize_focus_config, parse_observation
+from pet.modules.focus.session import (
+    FocusSession, focus_prompt, normalize_focus_config, parse_observation,
+)
 
 
 def test_full_cycle_automatically_alternates_and_long_break_after_four_focuses():
@@ -121,14 +123,15 @@ def test_focus_settings_and_island_controls_are_real_widgets(tmp_path, monkeypat
     from pet.config import Config
     import pet.modern_settings_dialog as settings_mod
     from pet.dynamic_island import DynamicIsland
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
+    from pet.modules.focus.state import FocusService
 
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
     cfg = Config(base=tmp_path)
     dialog = settings_mod.ModernSettingsDialog(cfg, include_ai=True)
-    island = DynamicIsland(cfg)
     state = shared_focus_session()
+    island = DynamicIsland(cfg, focus=FocusService(state, cfg))
     try:
         editor = dialog.findChild(QPlainTextEdit, "focusWorkContext")
         assert editor is not None
@@ -182,14 +185,16 @@ def test_destroyed_island_does_not_keep_a_focus_listener(tmp_path):
     import shiboken6
     from pet.config import Config
     from pet.dynamic_island import DynamicIsland
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
+    from pet.modules.focus.state import FocusService
 
     app = QApplication.instance() or QApplication([])
-    island = DynamicIsland(Config(base=tmp_path))
+    state = shared_focus_session()
+    island = DynamicIsland(Config(base=tmp_path), focus=FocusService(state))
     island.deleteLater()  # Native deletion can bypass closeEvent.
     QCoreApplication.sendPostedEvents(island, QEvent.Type.DeferredDelete)
     assert not shiboken6.isValid(island)
-    state = shared_focus_session()
+    assert island.refresh_focus not in state._listeners
     try:
         state.start()
         assert state.focusing

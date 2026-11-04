@@ -10,10 +10,10 @@ import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from .focus_mode import (focus_prompt, normalize_focus_config,
-                         parse_observation, shared_focus_session)
-from .proactive_limiter import ProactiveLimiter
-from .focus_notes import FocusHistory, FocusNotes, parse_work_memory, reply_object
+from ...proactive_limiter import ProactiveLimiter
+from .notes import FocusHistory, FocusNotes, parse_work_memory, reply_object
+from .session import (focus_prompt, normalize_focus_config,
+                      parse_observation, shared_focus_session)
 
 
 def foreground_observation_available():
@@ -84,7 +84,7 @@ class FocusController(QObject):
         self.changed.emit()
 
     def _finish_session(self):
-        from . import window_alerts
+        from ... import window_alerts
         summary = self.session.last_finished
         if summary is None:
             return
@@ -109,11 +109,11 @@ class FocusController(QObject):
             self.presentation.show_bubble(text, duration_ms=10000)
 
     def _play_phase_sound(self, sound_id):
-        from . import window_alerts
+        from ... import window_alerts
         if window_alerts.quiet_blocked(self.presentation):
             return
         try:
-            from .click_sound import play_sound, resolve_builtin_sound
+            from ...click_sound import play_sound, resolve_builtin_sound
             path = resolve_builtin_sound(sound_id)
             if path is not None:
                 play_sound(path, volume=0.65)
@@ -134,7 +134,7 @@ class FocusController(QObject):
         """Snapshot GUI-owned data, then perform OS capture/network only on the worker."""
         if self._closed or self._busy or not self.session.focusing:
             return False
-        from . import window_alerts
+        from ... import window_alerts
         if (not self.presentation.has_presentation_target()
                 or window_alerts.quiet_blocked(self.presentation)
                 or getattr(self.presentation, "_sticky_bubble_active", False)
@@ -157,8 +157,8 @@ class FocusController(QObject):
             return False
         identity = self.identity_config()
         try:
-            from . import catalog
-            from .chat.prompt import PromptBuilder
+            from ... import catalog
+            from ...chat.prompt import PromptBuilder
             settings = identity.chat_settings()
             provider = copy.copy(settings.active_config)
             provider.api_key = identity.resolve_api_key(provider)
@@ -187,7 +187,7 @@ class FocusController(QObject):
     def _request(self, token, provider, prompt, visual, recent, work_notes):
         # No Qt/widget/config access on this thread. All output is queued to _deliver.
         try:
-            from . import vision
+            from ... import vision
             if self._closed or token != self.session.generation:
                 self._publish(token, "", "", "cancelled")
                 return
@@ -265,7 +265,7 @@ class FocusController(QObject):
             self._recent = (self._recent + [kind])[-3:]
         now = time.monotonic()
         cooldown = 300 if kind == "off_task" else self._preferences()["check_minutes"] * 60
-        from . import window_alerts
+        from ... import window_alerts
         if (message and self.presentation.has_presentation_target()
                 and not window_alerts.quiet_blocked(self.presentation)
                 and not getattr(self.presentation, "_sticky_bubble_active", False)
