@@ -3,6 +3,7 @@
   "layout_id": "modern-default-v1",
   "nodes": [
     {"type": "action", "id": "chat", "visible": true, "section": "interaction"},
+    {"type": "action", "id": "quick_chat", "visible": true, "section": "interaction"},
     {"type": "action", "id": "look_screen", "visible": true, "section": "interaction"},
     {"type": "action", "id": "screen_capture", "visible": true, "section": "interaction"},
     {"type": "separator", "id": "default.separator-interaction", "visible": true},

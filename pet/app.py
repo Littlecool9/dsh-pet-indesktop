@@ -317,21 +317,17 @@ class PetInstance:
 
     # ------------------------------------------------------------ 角色切换
     def sync_chat_character(self, character_id: str) -> None:
-        """把新角色同步到本窗的聊天面（B07：overlay 主宠切角色后由 sprite 壳调用）。
+        """把新角色同步到**助手线**聊天窗（overlay 主宠切角色后由 sprite 壳调用）。
 
-        本窗的聊天面（完整聊天窗 + 进程级岛对话气泡）各自持一份角色快照，只换
-        素材库不会更新它们——切完角色再开口仍是旧角色的会话/头像/系统提示。这里
-        收敛成一条公开 seam，overlay 路径（``OverlayShell.switch_character``）
-        快速对话气泡不在此列：它挂在 sprite 壳上（``_quick_chat``），由持有点自己同步。
+        完整聊天窗按角色持有会话/头像/系统提示，只换素材库不会更新它——切完角色
+        再开口仍是旧角色的上下文。陪伴线（快速气泡 / 岛对话）不在此列：它的角色
+        与人设由 SurfCore 持有，不随素材角色切换。
 
         **先刷新 slot0 读视图，再同步已建面**（F01）：本实例的 ``config`` 是那条
         slot0 路由视图（``SlotRoutedConfig(..., 0)``），它读一次就把档案快照缓存住
         ——而"完整聊天窗构造"读的就是它（``ChatWindow(self.config, self.config.get(
-        'character'))``）。只同步**已存在**的聊天面并不够：尚未构造的岛对话气泡在
-        首次点岛时按 ``AppShell._chat_identity_config()`` 取角色，缓存里的旧角色
-        没人作废，那条路径就会进旧角色的会话/人设（2026-10-10 终审 F01，冷启动
-        直读磁盘的用例覆盖不到这条暖缓存路径）。刷新只作废只读快照，表单草稿与
-        钉住的编辑代次都不受影响（见 ``SlotRoutedConfig.refresh_profile_view``）。
+        'character'))``）。刷新只作废只读快照，表单草稿与钉住的编辑代次都不受影响
+        （见 ``SlotRoutedConfig.refresh_profile_view``）。
         """
         if not self.enable_chat:
             return
@@ -341,9 +337,7 @@ class PetInstance:
         for chat_window in (self.legacy_chat_window, self.modern_chat_window):
             if chat_window is not None:
                 chat_window.switch_character(character_id)
-        island_chat = getattr(self.shell, "island_chat", None)
-        if island_chat is not None:
-            island_chat.switch_character(character_id)
+        # 岛对话气泡的角色/历史由 SurfCore 持有，不再随素材角色同步。
 
     # ------------------------------------------------------------ 聊天窗
     def _chat_host(self):
@@ -1827,19 +1821,13 @@ class AppShell:
         return self._island_hidden_chat_enabled()
 
     def _chat_identity_config(self):
-        """岛对话面的**身份配置视图**（角色与会话的真值 = slot0 档案，规范 §二）。
+        """岛对话气泡的**呈现配置视图**（slot0 档案，规范 §二）。
 
-        共享会话的角色由 **slot0 自己的档案**决定：`slot0` 关闭（留槽）不改变它，
-        子宠切自己的角色也不改变它。`AppShell.instance` 的配置面就是那条路由视图
-        （``SlotRoutedConfig(..., 0)``）：每宠键（含 ``character``）从 `config-slot-0.json`
-        读、缺键取同源默认，全局键（``chat_settings`` / 密钥 / 会话目录身份）仍取主配置。
-        这正是"一份会话、一个角色、会话归共享"的落点。
-
-        为什么不能直接用 ``self.config``（全局面）：迁移已经把 slot0 的每宠键从
-        ``config.json`` 抽走，全局面上那个 ``character`` 只是**出厂默认的残留**。用它
-        构造岛气泡 = 第一次点岛就进默认角色的会话/人设，而完整聊天窗与宠物快速对话走
-        的是 slot0 档案——同一个应用里两套角色。（``sync_chat_character`` 只修已存在的
-        岛气泡，修不了首次构造；2026-10-10 终审 A02。）
+        角色/人设/历史由 SurfCore 持有；气泡仍用 slot0 的每宠配置读气泡样式等
+        呈现键。`AppShell.instance` 的配置面就是那条路由视图
+        （``SlotRoutedConfig(..., 0)``）：每宠键从 `config-slot-0.json` 读、缺键
+        取同源默认，全局键仍取主配置。这样同一进程里所有宠物面看到的是同一份
+        slot0 呈现设置，而不是全局面上出厂默认的残留。
 
         拿不到实例（精简装配 / 测试替身）时回退全局面。
         """
@@ -1871,6 +1859,13 @@ class AppShell:
             return sprite_config(sprite)
         return self._chat_identity_config()
 
+    def _surfcore_companion(self):
+        """陪伴线的 SurfCore 桥（核心只经模块服务表拿；拿不到 = 离线）。"""
+        from .module_host import module_service
+
+        service = module_service(self, "surfcore")
+        return getattr(service, "companion", None)
+
     def _show_island_chat(self, *, activate: bool = True,
                           reply_text: str | None = None) -> None:
         """弹出锚定灵动岛的对话气泡（activate=False 为不抢焦点的预览弹出）。"""
@@ -1879,13 +1874,13 @@ class AppShell:
         from .island_chat import IslandChatBubble
 
         chat_config = self._chat_identity_config()
+        companion = self._surfcore_companion()
         if getattr(self, "island_chat", None) is None:
-            self.island_chat = IslandChatBubble(chat_config)
+            self.island_chat = IslandChatBubble(chat_config, companion=companion)
             self.island_chat.show_pet_requested.connect(self._show_pets_from_island_chat)
         bubble = self.island_chat
+        bubble.set_companion(companion)
         bubble.open_chat_callback = self._open_full_chat_from_island_chat
-        bubble.settings = chat_config.chat_settings()
-        bubble.refresh_session()
         bubble.show_for_island(self.island, activate=activate, reply_text=reply_text)
 
     def _chat_from_island(self) -> None:
@@ -1939,10 +1934,13 @@ class AppShell:
             return False
         from .island_chat import IslandChatBubble
 
+        companion = self._surfcore_companion()
         if getattr(self, "island_chat", None) is None:
-            self.island_chat = IslandChatBubble(self._chat_identity_config())
+            self.island_chat = IslandChatBubble(
+                self._chat_identity_config(), companion=companion)
             self.island_chat.show_pet_requested.connect(self._show_pets_from_island_chat)
         bubble = self.island_chat
+        bubble.set_companion(companion)
         asker = getattr(bubble, "request_in_flight", None)
         if callable(asker) and asker():
             return False

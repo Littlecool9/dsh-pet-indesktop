@@ -7,8 +7,6 @@ IslandChatBubble 锚定定位与预览态、AppShell 接线（可用性判定、
 """
 from __future__ import annotations
 
-import json
-import threading
 import time
 from pathlib import Path
 
@@ -45,7 +43,7 @@ def _island(tmp_path: Path, **overrides) -> DynamicIsland:
 
 
 def _click(widget) -> None:
-    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtCore import QEvent, QPoint, QPointF
     from PySide6.QtGui import QMouseEvent
 
     center = widget.geometry().center()
@@ -169,20 +167,17 @@ def test_island_chat_bubble_positions_below_and_flips_above(tmp_path):
 
 
 def test_island_chat_show_reply_display_only(tmp_path):
-    """预览回复：只改展示文本，不产生新的在途请求、不落库。"""
+    """预览回复：只改展示文本，不产生新的在途请求。"""
     _qapp()
     cfg = Config(base=tmp_path)
     bubble = IslandChatBubble(cfg)
     try:
-        before = list(bubble.session.messages)
         bubble.show_reply("你好呀")
         assert bubble._reply_full == "你好呀"
         _doc = QTextDocument()
         _doc.setHtml(bubble.output.text())   # 富文本信封 → 纯文本比对
         assert _doc.toPlainText().rstrip("\n") == "你好呀"
-        assert bubble._active_request_id is None
-        assert list(bubble.session.messages) == before  # 不动会话历史
-        assert not bubble.service.busy
+        assert bubble.request_in_flight() is False
     finally:
         bubble.close()
         bubble.deleteLater()
@@ -483,41 +478,34 @@ def test_island_feedback_disabled_when_hidden_chat_off(tmp_path):
         _teardown_shell(shell)
 
 
-class _BlockingProvider:
-    """可控网络替身（只替换网络边界）：请求进来卡住，测试放行后才产出一条回答。"""
+class _GatedCompanion:
+    """可控陪伴线桥：发送先挂住，用例放行后才回调 /chat 响应。"""
 
     def __init__(self, reply: str = "在的呀，我一直在听") -> None:
+        self.online = True
         self.reply = reply
-        self.started = threading.Event()
-        self.release = threading.Event()
+        self.sent: list[str] = []
+        self.listeners: list = []
+        self._done = None
 
-    def stream(self, messages, config, cancel):
-        self.started.set()
-        while not self.release.wait(timeout=0.02):
-            if cancel.is_set():
-                return
-        if cancel.is_set():
-            return
-        yield self.reply
+    def add_listener(self, callback) -> None:
+        self.listeners.append(callback)
 
+    def remove_listener(self, callback) -> None:
+        if callback in self.listeners:
+            self.listeners.remove(callback)
 
-class _LateProvider:
-    """可控网络替身：请求卡住，放行后**一定**产出一条回答（收到 cancel 也不提前收场）。
+    def send(self, text, on_done=None) -> bool:
+        self.sent.append(str(text))
+        self._done = on_done
+        return True
 
-    与 ``_BlockingProvider`` 的分工：那个收到 cancel 就直接返回，迟到信号根本没被造
-    出来；本替身让 worker 在切角色**之前**就 emit 出「增量 + 完成」，投递到 GUI 线程
-    留到切换之后，正好验 ID 闸。
-    """
-
-    def __init__(self, reply: str = "旧角色的迟到回答") -> None:
-        self.reply = reply
-        self.started = threading.Event()
-        self.release = threading.Event()
-
-    def stream(self, messages, config, cancel):
-        self.started.set()
-        self.release.wait(timeout=10)
-        yield self.reply
+    def complete(self, text: str | None = None) -> None:
+        self._done(
+            {"ok": True, "reply": {"id": "m-1", "text": text or self.reply,
+                                   "modality": "text"}},
+            None,
+        )
 
 
 def _pump_until(predicate, *, timeout: float = 10.0) -> bool:
@@ -533,128 +521,60 @@ def _pump_until(predicate, *, timeout: float = 10.0) -> bool:
     return predicate()
 
 
-def _disk_messages(bubble) -> list[dict]:
-    """会话**磁盘文件**里的消息（落库真值，不走 pending 快照）。"""
-    path = (Path(bubble.config.dir) / "sessions" / bubble.session.character_id
-            / f"{bubble.session.session_id}.json")
-    return json.loads(path.read_text(encoding="utf-8"))["messages"]
-
-
 def _send_blocking_question(shell, tmp_path, question: str = "你在吗"):
-    """真气泡 + 真 ChatService/QThread + 真会话存储：发一条问题并卡在请求中。"""
+    """真气泡 + 可控陪伴线桥：发一条问题并停在等待态。"""
     shell._show_island_chat(activate=True)
     bubble = shell.island_chat
-    provider = _BlockingProvider()
-    bubble.service.provider = provider
+    companion = _GatedCompanion()
+    bubble.set_companion(companion)
     bubble.input.setText(question)
     bubble._send()
-    assert provider.started.wait(timeout=10), "前提：请求已进入 provider"
-    assert bubble._active_request_id is not None, "前提：请求在途"
-    return bubble, provider
+    assert companion.sent == [question], "前提：发送必须经过陪伴线桥"
+    assert bubble.request_in_flight() is True, "前提：请求在途"
+    return bubble, companion
 
 
 def test_island_feedback_yields_to_inflight_request(tmp_path):
-    """联动反馈不得打断岛聊天在途请求：AI 回答照常上屏并落库。
-
-    旧行为：``_island_feedback_bubble`` 复用现存气泡直接 ``show_feedback`` →
-    ``show_reply`` 把 ``_active_request_id`` 清成 None → 真实 AI 完成回调
-    request_id 对不上直接返回，回答既不显示也不落库（用户看到的是被反馈文案
-    顶掉的气泡，聊到一半的回答凭空消失）。反馈面必须给在途请求让路：本轮
-    反馈丢弃（反馈本身有时效性，排队到回答之后只会送出一条过期状态），
-    调用方维持"改道失败即放弃"的原语义。
-    """
+    """联动反馈不得打断岛聊天在途请求：SurfCore 回答照常上屏。"""
     _qapp()
     shell = _make_shell(tmp_path, hidden_chat=True)
     try:
         shell.island = _island(tmp_path)
         shell.enable_chat = True
-        bubble, provider = _send_blocking_question(shell, tmp_path)
+        bubble, companion = _send_blocking_question(shell, tmp_path)
 
         assert shell._island_feedback_bubble(
-            "DSH 正在认真想办法……", subtitle="DSH", duration_ms=4500) is False, \
-            "在途请求期间联动反馈必须让路（返回 False 让调用方维持原丢弃行为）"
-        assert bubble._active_request_id is not None, "在途请求不得被反馈清掉"
+            "DSH 正在认真想办法……", subtitle="DSH", duration_ms=4500) is False,             "在途请求期间联动反馈必须让路（返回 False 让调用方维持原丢弃行为）"
+        assert bubble.request_in_flight() is True, "在途请求不得被反馈清掉"
 
-        provider.release.set()
-        assert _pump_until(lambda: bubble._active_request_id is None), "回答未回到气泡"
+        companion.complete()
+        assert _pump_until(lambda: not bubble.request_in_flight()), "回答未回到气泡"
 
         _doc = QTextDocument()
         _doc.setHtml(bubble.output.text())   # 富文本信封 → 纯文本比对
-        assert _doc.toPlainText().rstrip("\n") == provider.reply, "AI 回答必须显示（不是反馈文案）"
-        bubble.store.flush()
-        roles = [m["role"] for m in _disk_messages(bubble)]
-        assert roles == ["user", "assistant"], f"AI 回答必须落库，实际 {roles}"
+        assert _doc.toPlainText().rstrip("\n") == companion.reply, "SurfCore 回答必须显示"
     finally:
         _teardown_shell(shell)
 
 
-def test_island_switch_character_drops_inflight_answer(tmp_path):
-    """岛气泡继承基类的切角色闸门：旧角色的回答不许落进新角色的会话。
-
-    岛气泡与快速对话气泡共用一套会话链路（``IslandChatBubble`` 继承
-    ``QuickChatBubble``），切角色走的就是基类那个 seam——主宠切角色后岛气泡跟在途
-    请求之间同样必须作废（否则岛上的旧回答写进新角色会话）。
-    """
+def test_island_preview_reply_drops_the_pending_completion(tmp_path):
+    """预览式改写会清掉等待态：迟到的 /chat 回调不再上屏（调用方须先让路）。"""
     _qapp()
     bubble = IslandChatBubble(Config(base=tmp_path))
     try:
-        provider = _BlockingProvider()
-        bubble.service.provider = provider
+        companion = _GatedCompanion()
+        bubble.set_companion(companion)
         bubble.input.setText("你在吗")
         bubble._send()
-        assert provider.started.wait(timeout=10), "前提：请求已进入 provider"
+        assert bubble.request_in_flight() is True
 
-        bubble.switch_character("nova")
-        assert bubble._active_request_id is None, "切角色即作废在途请求"
+        bubble.show_reply("反馈预览")
+        companion.complete("真正的回答")
 
-        provider.release.set()
-        assert _pump_until(lambda: not bubble.service.busy), "旧 worker 未收尾"
-        assert bubble.output.text() == "", "旧角色的回答不许显示在岛上"
-        assert not [m for m in bubble.session.messages if m.role == "assistant"]
-        assert bubble.session.character_id == "nova"
-    finally:
-        bubble.close()
-        bubble.deleteLater()
-
-
-def test_island_switch_character_drops_queued_late_delta_and_completion(tmp_path):
-    """astra #1：岛气泡同一条——排好队的增量 + 完成信号在切角色后投递必须被丢弃。
-
-    基类那条用例的替身收到 cancel 就直接返回（迟到信号根本没被造出来）；本用例放行后
-    先产出一条增量再正常收尾，worker 线程直连打点确认两类信号**已 emit**（此时队列投递
-    还挂在 GUI 线程事件队列里），随后才切角色：增量不许上岛、完成不许落进新角色会话。
-    """
-    _qapp()
-    bubble = IslandChatBubble(Config(base=tmp_path))
-    try:
-        provider = _LateProvider()
-        bubble.service.provider = provider
-        phase = {"now": "in_flight"}
-        forwarded: list[tuple[str, str]] = []
-        for name in ("delta", "finished"):
-            getattr(bubble.service, name).connect(
-                lambda *args, _name=name: forwarded.append((_name, phase["now"])))
-        bubble.input.setText("你在吗")
-        bubble._send()
-        assert provider.started.wait(timeout=10), "前提：请求已进入 provider"
-
-        done = threading.Event()
-        bubble.service._worker.finished.connect(lambda: done.set(), Qt.DirectConnection)
-        provider.release.set()
-        assert done.wait(timeout=10), "前提：worker 已把增量 + 完成 emit 进队列"
-
-        phase["now"] = "after_switch"
-        bubble.switch_character("nova")
-
-        delivered = {name for name, _ in forwarded}
-        assert _pump_until(lambda: {"delta", "finished"} <= {name for name, _ in forwarded}), \
-            f"前提：两类信号必须真的被投递过（实际 {delivered}）"
-        assert all(where == "after_switch" for _, where in forwarded), \
-            f"前提：投递必须发生在切角色之后（实际 {forwarded}）"
-        assert bubble.output.text() == "", "迟到的增量不许上岛"
-        assert not [m for m in bubble.session.messages if m.role == "assistant"], \
-            "迟到的完成信号不许落进新角色的会话"
-        assert bubble.session.character_id == "nova"
+        _doc = QTextDocument()
+        _doc.setHtml(bubble.output.text())
+        assert _doc.toPlainText().rstrip("\n") == "反馈预览"
+        assert bubble.request_in_flight() is False
     finally:
         bubble.close()
         bubble.deleteLater()
@@ -667,9 +587,9 @@ def test_island_feedback_previews_when_request_finished(tmp_path):
     try:
         shell.island = _island(tmp_path)
         shell.enable_chat = True
-        bubble, provider = _send_blocking_question(shell, tmp_path)
-        provider.release.set()
-        assert _pump_until(lambda: bubble._active_request_id is None)
+        bubble, companion = _send_blocking_question(shell, tmp_path)
+        companion.complete()
+        assert _pump_until(lambda: not bubble.request_in_flight())
 
         assert shell._island_feedback_bubble(
             "DSH 开始干活啦～", subtitle="DSH", duration_ms=4500) is True

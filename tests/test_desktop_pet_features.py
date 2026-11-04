@@ -636,6 +636,7 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     labels = [action.text() for action in menu.actions() if not action.isSeparator()]
     expected_labels = [
         "AI 对话",
+        "快速对话",  # 陪伴线入口（SurfCore 未连接时置灰并写明原因）
         "看看屏幕",
         "截图提问",
         "播放动画",

@@ -15,6 +15,7 @@ from typing import Any
 
 from ..base import ModuleHost, ModuleManifest
 from .client import SurfCoreClient
+from .companion import CompanionBridge
 from .events import EventPoller
 from .service import SurfCoreService
 
@@ -30,6 +31,7 @@ class SurfCoreModule:
         self._client: SurfCoreClient | None = None
         self._poller: EventPoller | None = None
         self._service: SurfCoreService | None = None
+        self._companion: CompanionBridge | None = None
         self._executor: ThreadPoolExecutor | None = None
 
     # ---- PetModule ----------------------------------------------------------
@@ -42,10 +44,13 @@ class SurfCoreModule:
         poller = EventPoller(client, self._on_event, self._on_online_change)
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="surfcore-call")
         service = SurfCoreService(client, host, executor=executor)
+        companion = CompanionBridge(host, service)
+        service.companion = companion
         self._host = host
         self._client = client
         self._poller = poller
         self._service = service
+        self._companion = companion
         self._executor = executor
         host.provide(SERVICE_NAME, service)
         poller.start()
@@ -60,12 +65,17 @@ class SurfCoreModule:
         poller = self._poller
         host = self._host
         service = self._service
+        companion = self._companion
         self._poller = None
         self._client = None
         self._host = None
         self._service = None
+        self._companion = None
         self._executor = None
+        if companion is not None:
+            companion.stop()
         if service is not None:
+            service.companion = None
             service.stop()
         if poller is not None:
             poller.stop()
@@ -77,6 +87,16 @@ class SurfCoreModule:
         host = self._host
         if host is not None:
             host.emit(EVENT_TOPIC, event)
+
+    @property
+    def online(self) -> bool:
+        """SurfCore 当前是否在线（菜单 / 测试用只读面）。"""
+        service = self._service
+        return bool(service is not None and service.online)
+
+    @property
+    def companion(self) -> CompanionBridge | None:
+        return self._companion
 
     def _on_online_change(self, online: bool) -> None:
         service = self._service

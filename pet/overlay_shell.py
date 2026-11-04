@@ -62,7 +62,7 @@ None，扇出集合为空等于联动/自说自话静默缺失（D0 的另一半
   multi_window_shared 的说明——G1 逐 tick 读可见性）；
 - 快速对话：气泡可点 → ``open_quick_chat``，``QuickChatBubble`` 锚定被点
   sprite（``_SpriteChatAnchor`` 提供 pet 形的 ``visible_content_rect`` /
-  ``on_open_chat``），回车发送走既有 ChatService/SessionStore 链路；
+  ``on_open_chat``），回车发送经宿主服务表交给 SurfCore 陪伴线（离线即禁用）；
   无聊天打包变体（``pet.chat`` 被排除）按 app.py 既有 ImportError 守卫
   静默降级为不可点。
 """
@@ -161,20 +161,17 @@ _resolve_self_talk_image_dir = resolve_self_talk_image_dir
 
 
 def _import_quick_chat():
-    """取 ``QuickChatBubble``；无聊天打包变体返回 None（app.py 既有守卫惯例）。
+    """取 ``QuickChatBubble``；导入失败返回 None（app.py 既有守卫惯例）。
 
-    打包变体以 ``excludes=['pet.chat']`` 排除聊天模块（见 ``pet/__main__.py
-    _chat_available``），此时 ``pet.quick_chat`` 的模块级 ``from .chat.service
-    import ChatService`` 抛 ImportError。只吞 ``pet.chat`` 系的 ImportError
-    （返回 None = 无聊天变体）；其它导入错误照旧抛出，由壳层统一降级并落
-    日志，不在这里静默吞掉（不掩盖真实故障）。
+    陪伴线已改走 SurfCore，不再依赖 ``pet.chat`` 的会话/客户端模块；无聊天
+    打包变体由 ``enable_chat=False`` 的进程级开关降级（``_chat_enabled``）。
+    这里仍只把 ImportError 降级为 None（气泡链路不能因一个可选外围模块中断），
+    其它异常照旧抛出、由壳层统一记录（不掩盖真实故障）。
     """
     try:
         from .quick_chat import QuickChatBubble
-    except ImportError as exc:
-        if str(getattr(exc, "name", "") or "").startswith("pet.chat"):
-            return None
-        raise
+    except ImportError:
+        return None
     return QuickChatBubble
 
 
@@ -2785,6 +2782,13 @@ class OverlayShell(QObject):
         """快速对话是否可用（未启用聊天 / 无聊天打包变体 → False）。"""
         return self._quick_chat_class() is not None
 
+    def _surfcore_companion(self):
+        """陪伴线的 SurfCore 桥；模块缺失/未运行 = None（气泡显示离线原因）。"""
+        from .module_host import module_service
+
+        service = module_service(getattr(self._instance, "shell", None), "surfcore")
+        return getattr(service, "companion", None)
+
     def _quick_chat_class(self):
         """解析 ``QuickChatBubble``（结果缓存；不可用时 None，**绝不抛**）。
 
@@ -2829,15 +2833,16 @@ class OverlayShell(QObject):
         if target is None or target not in self._all_sprites():
             return False
         anchor = _SpriteChatAnchor(self, target)
+        companion = self._surfcore_companion()
         try:
             bubble = self._quick_chat
             if bubble is None:
-                bubble = cls(self._sprite_config(self.sprite), pet_window=anchor)
+                bubble = cls(self._sprite_config(self.sprite), pet_window=anchor,
+                             companion=companion)
                 bubble.open_chat_callback = self.open_full_chat
                 self._quick_chat = bubble
             else:
-                bubble.settings = self._config.chat_settings()
-                bubble.refresh_session()
+                bubble.set_companion(companion)
             bubble.show_for_pet(anchor)
             return True
         except Exception:
