@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from pet import agent_link, harness_launcher
+from pet import agent_link, dsh_probe
 from pet.agent_link import AgentLinkManager, DshMonitor
 from pet.config import Config
 from pet.dsh_state import DshState
@@ -40,11 +40,11 @@ def _make_dsh_monitor(tmp_path, monkeypatch, online=True):
     config_dir.mkdir(parents=True)
     bridge_dir = tmp_path / "dsh-pet-bridge"
     bridge_dir.mkdir(parents=True)
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: online)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: online)
     # 「桌面端进程在跑」是 online 的旁路判定（机器相关 OS 边界）：本文件用端口
     # 探测表达在线/离线，必须钉死旁路——否则本机装了并在跑桌面端时，
     # online=False 形同虚设，离线分支根本进不去。
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: False)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: False)
     mon = DshMonitor("dsh", config_dir)
     assert mon.events_dir == bridge_dir
     mon._tailer._initial_backfill_done = True  # 跳过 backfill 防护，立即读已写入内容
@@ -267,7 +267,7 @@ class _InteractionWin:
 def _make_live_manager(tmp_path, monkeypatch):
     """真 manager + 真 DshMonitor（worker 不启动，手动驱动 _poll）。"""
     _qapp()
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
     cfg = Config(base=tmp_path / "cfg")
     win = _InteractionWin()
     mgr = AgentLinkManager(win, cfg, min_interval=0.0)

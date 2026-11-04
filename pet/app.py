@@ -1073,7 +1073,8 @@ class AppShell:
         联动开启时桥接插件才安装（``DshMonitor.install_bridge``，关联动即卸载）、
         DshMonitor（桥目录唯一读方：信号分派 + dsh_state 收敛器共用一份解析）
         才由 ``AgentLinkManager.apply_config`` 拉起；联动没开时它 3s 探端口、
-        1.5s 读桥目录全是空转。本方法是该门的单一口径，harness 自启/收口也复用它。
+        1.5s 读桥目录全是空转。本方法是核心侧的单一口径；harness 模块按同一
+        配置键名（``agent_link.dsh``）自行判定自启/收口（agent_link 本阶段未迁移）。
         """
         agent_cfg = self.config.get("agent_link", {})
         return bool(agent_cfg.get("dsh", False)) if isinstance(agent_cfg, dict) else False
@@ -1089,7 +1090,6 @@ class AppShell:
         在真实壳上委托到这里）；多实例时扇出到每个 PetInstance 的窗口，而不是
         只看主窗——外部改配置的那个实例不一定是主窗。
         """
-        self._apply_global_hotkeys()
         for inst in getattr(self, "_instances", []):
             win = getattr(inst, "win", None)
             if win is not None:
@@ -1110,22 +1110,9 @@ class AppShell:
         self._apply_balance_timer()
         # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
         self._sync_todo_service()
-        # 模块运行时配置（菜单开关等）与进程内服务同一处收敛。
+        # 模块运行时配置（菜单开关等）与进程内服务同一处收敛；harness 模块
+        # 在自己的 apply_config 里按 agent_link.dsh 收口自拉起的 dsh web（后台线程）。
         self._apply_module_config()
-        # 外部配置变更也可能改了 agent_link.dsh（右键菜单开关落盘后同样收敛到
-        # 这里）→ 各窗 refresh_pet_settings 链里的 manager.apply_config 会按
-        # 同一功能门启停 DshMonitor（桥目录唯一读方）；overlay 拓扑由上面的
-        # _sync_shared_optional_services 走同一条 apply_config。
-        # 联动被关掉 → 桌宠自拉起的 dsh web 立即收口：它唯一的消费者就是这条
-        # 联动管线，关掉后留着只是常驻内存。顺序放在跟踪器停表之后（先停探测再
-        # 停服务，免得跟踪器在服务消失的那一刻又报一轮 offline）；只动自拉起
-        # 登记表里的 pid，用户手动起的实例不受影响。
-        # 进程反查（PowerShell ~10s 超时）与 taskkill（~15s 超时）是秒级阻塞：
-        # 本方法跑在配置去抖回调（GUI 线程）上，收口与后续设置同步没有依赖，
-        # 放 daemon 线程做，不许卡死所有桌宠共用的 GUI 线程（审查缺口 G2）。
-        if not self._dsh_tracker_wanted():
-            threading.Thread(target=self._stop_harness_if_still_unwanted,
-                             daemon=True, name="pet-harness-stop").start()
         for inst in getattr(self, "_instances", []):
             refresh = getattr(inst, "_refresh_chat_windows", None)
             if callable(refresh):
@@ -1529,13 +1516,10 @@ class AppShell:
         # 合并进运行期（开关关闭时不装，完全走旧路径）。
         self._install_config_watcher()
         QTimer.singleShot(3500, self.instance._check_autostart_wanted)
-        QTimer.singleShot(4000, self._maybe_autostart_harness)
         # issue #111：会话结束（Windows 关机/注销）探测器。必须在窗口就绪后安装
         # ——它要在关机窗口期到来**之前**就位，才能抢在会话拆除前关掉 ffmpeg
         # 派生（否则系统会弹 0xc0000142 阻塞关机）。
         self._install_session_watcher()
-        # 全局快捷键：壳已就绪才装（分发目标是壳的三个既有入口），默认全不绑。
-        self._install_global_hotkeys()
         self._announce_slot0_profile_problem()
 
     def _announce_slot0_profile_problem(self) -> None:
@@ -1569,76 +1553,6 @@ class AppShell:
             except Exception:
                 logging.exception("提示 slot0 档案降级失败（窗口）")
         logging.warning("slot0 档案降级提示无法上屏（无可见桌宠/托盘）：%s", diagnosis)
-
-    # ------------------------------------------------------------ 全局快捷键
-    def _install_global_hotkeys(self) -> None:
-        """装系统级热键服务（幂等；非 Windows 或装不上时只保留引用供诊断）。"""
-        service = getattr(self, "_hotkeys", None)
-        if service is None:
-            try:
-                from .hotkeys import GlobalHotkeyService
-
-                service = GlobalHotkeyService(self.app)
-                self._hotkeys = service  # 先保活：装原生过滤器要求对象常驻
-                service.install()
-            except Exception:
-                logging.exception("安装全局快捷键失败（右键菜单仍可用）")
-                return
-        self._apply_global_hotkeys()
-
-    def _apply_global_hotkeys(self) -> None:
-        """按当前配置重新注册全部热键（改键/启动/外部配置变更后调用）。"""
-        service = getattr(self, "_hotkeys", None)
-        if service is None or not getattr(service, "installed", False):
-            return
-        from .hotkeys import ACTIONS
-
-        try:
-            failures = service.apply(
-                {action: self.config.get(key) for action, key in ACTIONS.items()},
-                {
-                    "open_chat": self._hotkey_open_chat,
-                    "look_screen": self._hotkey_look_screen,
-                    "screen_capture": self._hotkey_screen_capture,
-                })
-        except Exception:
-            logging.exception("注册全局快捷键失败（右键菜单仍可用）")
-            return
-        for action, text, reason in failures:
-            logging.warning("全局快捷键未生效：%s（%s）%s", action, text, reason)
-
-    def _hotkey_overlay(self):
-        return getattr(self, "_overlay_shell", None)
-
-    def _hotkey_open_chat(self) -> None:
-        """AI 对话：与右键「AI 对话」同一条入口（内部已处理 overlay 拓扑的回退）。"""
-        opener = getattr(self.instance, "open_chat", None)
-        if callable(opener):
-            opener()
-            return
-        quick = getattr(self._hotkey_overlay(), "open_quick_chat", None)
-        if callable(quick):
-            quick()
-
-    def _hotkey_look_screen(self) -> None:
-        """看看屏幕：与右键「看看屏幕」同一条入口（不传 sprite = 主宠）。"""
-        look = getattr(self._hotkey_overlay(), "look_at_screen", None)
-        if callable(look):
-            look()
-            return
-        legacy = getattr(getattr(self.instance, "win", None), "look_at_screen", None)
-        if callable(legacy):
-            legacy()
-
-    def _hotkey_screen_capture(self) -> None:
-        """截图提问：与右键「截图提问」同一条入口。"""
-        capture = getattr(self._hotkey_overlay(), "on_screen_capture", None)
-        if callable(capture):
-            capture()
-            return
-        legacy = getattr(getattr(self.instance, "win", None), "on_screen_capture", None)
-        if callable(legacy):
-            legacy()
 
     def _install_session_watcher(self) -> None:
         """安装会话结束探测器（幂等；实例属性强引用保活，不跨实例共享）。"""
@@ -1725,120 +1639,6 @@ class AppShell:
         except Exception:
             logging.exception("置位会话结束闸门失败")
 
-
-    def _maybe_autostart_harness(self) -> None:
-        """「随桌宠启动 dsh 服务」：主窗就绪后按 ``harness_launch_target`` 拉起。
-
-        目标 auto/service 都是**只拉起 dsh 服务**：全程静默（CREATE_NO_WINDOW
-        隐藏控制台 + open_browser=False，不开浏览器、不开界面、无弹窗）——自启的
-        本意就是把服务准备好，要界面得用户显式选 web/desktop 目标（菜单里点哪项
-        起哪项）。目标是 desktop 时直接打开桌面端应用（用户的主力应用，桌宠退出
-        **不会**关它）；auto 已不再解析成 desktop（2026-10 语义收紧：否则每次
-        桌宠启动都会把整个桌面端 GUI 拉起来）。
-
-        「本机已有实例」的判定交给 ``launch_harness`` 自己做：它同时会看 web
-        端口候选与桌面端单实例；在这里按 web 端口提前 return，会把用户选的
-        桌面端目标一起挡掉（桌面端根本不上那个端口）。
-
-        机器级语义：仅主窗就绪时调度一次（进程内新窗不重复触发）。
-
-        门控见 ``_harness_autostart_wanted``（本批收紧：DSH 联动没开不拉）。
-        注：``launch_harness`` 本身不带门——菜单「启动 dsh web 界面 / 启动桌面端
-        界面」是用户明示动作，必须照常可用。
-        """
-        if not self._harness_autostart_wanted():
-            return
-
-        def _run() -> None:
-            try:
-                from . import harness_launcher as harness_mod
-                # 拉起窗口期竞态（审查缺口 G4）：慢探测期间联动可能已被关掉，
-                # 门必须在每个耗时步骤后重核，而不是只在调度时查一次。
-                # 正常退出同理（R2 第五缺口）：退出标记置位后绝不再拉起。
-                if getattr(self, "_quitting", False):
-                    return
-                if not self._harness_autostart_wanted():
-                    return
-                harness_mod.launch_harness(
-                    open_browser=False,
-                    target=str(self.config.get("harness_launch_target", "auto")),
-                    # 探测期间一切「用户已经不想要了」的状态都要能中止拉起：
-                    # 退出/会话结束之外，还要算上开关或联动被关——desktop 目标下
-                    # 这一步的代价是弹出一个用户刚说不想要的 GUI 窗口。
-                    cancel_check=lambda: (
-                        getattr(self, "_quitting", False)
-                        or getattr(self, "_session_end_done", False)
-                        or not self._harness_autostart_wanted()
-                    ),
-                )
-                if getattr(self, "_session_end_done", False):
-                    # 关机/注销窗口：只标记不补偿——补偿收口会派生 PowerShell/
-                    # taskkill，撞 issue #111「静默、快速、不再派生」纪律（ds/sol R3）
-                    return
-                if not self._harness_autostart_wanted() or getattr(self, "_quitting", False):
-                    # 拉起刚完成联动就被关/进程在退出：立刻收口，不留「关了还在跑」
-                    harness_mod.stop_self_launched_harness()
-            except Exception:
-                logging.exception("随桌宠自动拉起 dsh 服务失败")
-
-        threading.Thread(target=_run, daemon=True, name="pet-harness-autostart").start()
-
-    def _harness_autostart_wanted(self) -> bool:
-        """「随桌宠启动 dsh 服务」的功能门：三个条件同时成立才自动拉起。
-
-        1. ``enable_chat``——旧口径；无 Chat 的变体连 Harness 菜单都不显示；
-        2. 用户显式开了 ``harness_autostart``；
-        3. **DSH 联动确实启用**（``agent_link.dsh``，复用 ``_dsh_tracker_wanted``
-           这个单一口径）。
-
-        第 3 条是本批的收紧。dsh web 的真实消费者只有 DSH 联动这一条管线：
-        桥接插件只在开启联动时安装（关闭时卸载）、``DshMonitor``（桥目录唯一
-        读方，状态收敛也并入了它）只在联动开启时运行——联动没开时它没有任何
-        消费者，只是一个常驻的 node.exe（实机 41.9MB）。旧口径只看前两条，
-        于是"联动全关 + 开了自启"的用户白烧一份内存。
-
-        复用 ``_dsh_tracker_wanted`` 而不是就地再读一遍 config：同一个功能门在两处
-        各自实现，早晚会漂移（监视器跟联动走、服务不跟）。
-        """
-        if not self.enable_chat:
-            return False
-        if not bool(self.config.get("harness_autostart", False)):
-            return False
-        return self._dsh_tracker_wanted()
-
-    def _stop_harness_if_still_unwanted(self) -> None:
-        """G2 异步收口的门复核：窗口期内联动又被打开，则作废本次收口。
-
-        联动关闭触发的收口是 daemon 线程：PowerShell 反查 + taskkill 有秒级
-        延迟，期间用户可能已把联动重新打开——裸调 ``_stop_self_launched_harness``
-        会把用户刚恢复的服务杀掉（ds/sol R2 发现的反向竞态）。线程入口先复核。
-
-        **诚实残余（ds/sol R3）**：本复核只覆盖「派发 → 线程入口」一段；
-        复核通过后收口慢操作（命令行反查 ~0.7s 上限 10s、taskkill 上限 15s）
-        期间重开联动不在防护内——服务会被停一次，且不会自动重拉（自启只在
-        主窗就绪时调度一次），用户可从菜单手动启动。把复核嵌进逐 pid 的
-        收口循环属于另一次设计变更，本批不夹带。
-        """
-        if getattr(self, "_session_end_done", False):
-            # 关机/注销窗口：纪律是静默、快速、不再派生任何进程操作
-            # （与主退出收口的跳过语义一致，ds/sol R3）
-            return
-        if self._dsh_tracker_wanted():
-            return
-        self._stop_self_launched_harness()
-
-    def _stop_self_launched_harness(self) -> list[int]:
-        """收掉本进程自拉起的 dsh web，返回被终止的 pid（见 harness_launcher 归属收口）。
-
-        只认自拉起登记表 + 终止前命令行复核：用户自己在终端跑着的实例不在表中，
-        永远不受影响。这是**无确认**的收口路径（退出 / 联动关闭），宁可漏杀。
-        """
-        try:
-            from . import harness_launcher as harness_mod
-            return harness_mod.stop_self_launched_harness()
-        except Exception:
-            logging.exception("停止自拉起的 dsh 服务失败")
-            return []
 
     def _on_dsh_state_changed(self, from_state: str, to_state: str) -> None:
         """订阅 DSH 统一状态变化（共享 Agent 联动管理器转发；收敛器是纯逻辑，
@@ -1948,15 +1748,8 @@ class AppShell:
         #（关掉后迟到的 queued 回调提交会被明确拒绝）。
         if self.todo_service is not None:
             self.todo_service.stop()
-        # 退出收口：停掉本进程自拉起的 dsh web（父进程退出不带走 CREATE_NO_WINDOW
-        # 的子进程，实机确认桌宠退出后 node 仍活着——只能由宿主自己收）。
-        # 只杀自拉起登记表里且命令行复核通过的那个：用户手动起的实例不受影响。
-        #
-        # 会话结束（关机/注销）路径整段跳过：那条路径的纪律是「静默、快速、不再
-        # 派生任何进程」（issue #111 的 0xc0000142 就是关机窗口里派生进程引起的），
-        # taskkill 与 Get-CimInstance 同样属于派生，且机器马上断电、收口无收益。
-        if not getattr(self, "_session_end_done", False):
-            self._stop_self_launched_harness()
+        # harness 自拉起进程与全局热键的收口都由各自模块的 stop() 负责
+        # （_stop_modules 在本槽前段已执行）；这里不再保留逐功能接线。
         try:
             from .chat import session_store as _session_store
 
@@ -1968,12 +1761,6 @@ class AppShell:
             logging.exception("退出时关闭会话写盘 worker 失败")
         # 批5.2a：进程级共享子系统收口（agent_link / proactive / 全屏 watcher）。
         # 单窗关闭（退出这只）不触发——只有「全部退出」才停共享子系统。
-        hotkeys = getattr(self, "_hotkeys", None)
-        if hotkeys is not None:
-            try:
-                hotkeys.uninstall()
-            except Exception:
-                logging.debug("注销全局快捷键失败", exc_info=True)
         if self._shared is not None:
             try:
                 self._shared.stop_all()
@@ -2006,17 +1793,16 @@ class AppShell:
                     except Exception:
                         logging.debug("测试收口待办服务失败", exc_info=True)
                     shell.todo_service = None
+                # 模块先停：全局热键是系统级注册，测试里直接 start() 过的壳不摘，
+                # 注册会活到进程结束；harness 的自拉起收口也由模块负责。
+                stop_modules = getattr(shell, "_stop_modules", None)
+                if callable(stop_modules):
+                    try:
+                        stop_modules()
+                    except Exception:
+                        logging.debug("测试收口模块失败", exc_info=True)
                 if getattr(shell, "_shared", None) is not None:
                     shell._shared.stop_all()
-                # 全局热键是**系统级**注册：测试里直接 start() 过的壳不摘，注册会活到
-                # 进程结束（后面的用例、甚至开发机上真热键都会被它占着）。
-                hotkeys = getattr(shell, "_hotkeys", None)
-                if hotkeys is not None:
-                    try:
-                        hotkeys.uninstall()
-                    except Exception:
-                        logging.debug("测试收口注销全局快捷键失败", exc_info=True)
-                    shell._hotkeys = None
                 if getattr(shell, "instance", None) is not None:
                     win = getattr(shell.instance, "win", None)
                     lib = getattr(win, "lib", None)

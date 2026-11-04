@@ -41,7 +41,7 @@ from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
 from PySide6.QtWidgets import QMessageBox
 
 from . import agent_cost as agent_cost_mod
-from . import harness_launcher
+from . import dsh_probe
 from .click_sound import play_sound, resolve_builtin_sound
 from .agent_event_protocol import parse_agent_event
 from .agent_event_normalizer import normalize_event
@@ -162,7 +162,7 @@ def _which(name: str) -> str | None:
 DSH_PLUGIN_NAME = "@dsh-pet/bridge"
 DSH_PROFILE_HOME = Path(os.environ.get("DSH_HOME", str(Path.home() / ".dsh")))
 
-# Windows 探测/安装子进程隐藏窗口（与 harness_launcher 同款）：桌宠是无控制台
+# Windows 探测/安装子进程隐藏窗口（与 pet/modules/harness/harness_launcher.py 同款）：桌宠是无控制台
 # 的 GUI 进程，node/cmd 子进程不隐藏会弹出可见终端窗口。
 _HIDDEN_KWARGS: dict = (
     {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
@@ -470,7 +470,7 @@ def _pnpm_cli() -> str | None:
 def _pnpm_command() -> list[str] | None:
     """pnpm 的可执行命令前缀（JS 入口经 node 直调；独立可执行直接跑）。
 
-    Windows 上 `.cmd/.bat` 必须经 cmd 启动（与 harness_launcher._wrap_cmd 同款
+    Windows 上 `.cmd/.bat` 必须经 cmd 启动（与 pet/modules/harness/harness_launcher.py::_wrap_cmd 同款
     实测结论）；`.exe`（pnpm 独立安装）自带运行时，不能再拼 node。
     """
     cli = _pnpm_cli()
@@ -2413,11 +2413,11 @@ class DshMonitor(BaseAgentMonitor):
         """worker 线程内同步端口探活（关着的端口 Windows 回环可能等 ~250ms，
         在本线程阻塞无碍——这正是双读方合并省掉旧探测线程的原因）。"""
         try:
-            online = any(harness_launcher.is_running(p) for p in _dsh_state_candidate_ports())
+            online = any(dsh_probe.is_running(p) for p in _dsh_state_candidate_ports())
             if not online:
                 # 桌面端旁路：desktop host 端口随版本硬编码（本机实测 19387，已在
                 # 候选里），不赌死——端口全 miss 时以「桌面端进程在跑」兜底 online
-                online = harness_launcher.desktop_process_running()
+                online = dsh_probe.desktop_process_running()
         except Exception:
             log.exception("DSH 在线探测异常")
             online = False

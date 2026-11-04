@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QApplication
 
 import pet.app as app_mod
 import pet.overlay_shell as overlay_shell_mod
-from pet import harness_launcher
+from pet import dsh_probe
 from pet.app import AppShell
 from pet.config import APP_DIR_NAME, Config
 
@@ -126,7 +126,7 @@ def _dsh_monitor(shell):
 def test_default_config_keeps_dsh_monitor_stopped(tmp_path, monkeypatch):
     """默认配置（agent_link 四 agent 全关）：读方不启，零端口探测。"""
     connects: list[int] = []
-    monkeypatch.setattr(harness_launcher, "is_running",
+    monkeypatch.setattr(dsh_probe, "is_running",
                         lambda port: connects.append(port) or False)
     shell = _start_shell(tmp_path, monkeypatch)
     monitor = _dsh_monitor(shell)
@@ -138,7 +138,7 @@ def test_default_config_keeps_dsh_monitor_stopped(tmp_path, monkeypatch):
 
 def test_dsh_link_enabled_starts_monitor(tmp_path, monkeypatch):
     """DSH 联动开启：读方照常跑（功能不变），worker 线程存活。"""
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
     shell = _start_shell(tmp_path, monkeypatch, dsh=True)
     monitor = _dsh_monitor(shell)
     assert monitor._running is True
@@ -156,7 +156,7 @@ def test_malformed_agent_link_config_keeps_monitor_stopped(tmp_path, monkeypatch
 
 def test_gated_monitor_still_drives_offline_dismiss(tmp_path, monkeypatch):
     """门开时行为与现在一致：收敛器 offline 仍收口常驻审批/问题气泡。"""
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
     shell = _start_shell(tmp_path, monkeypatch, dsh=True)
     manager = shell._shared.agent_link
     dismissed: list[bool] = []
@@ -170,7 +170,7 @@ def test_gated_monitor_still_drives_offline_dismiss(tmp_path, monkeypatch):
 
 def test_disabling_dsh_link_stops_monitor_on_apply_config(tmp_path, monkeypatch):
     """关掉 DSH 联动 → apply_config（设置保存链的终点）同步停读方。"""
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
     shell = _start_shell(tmp_path, monkeypatch, dsh=True)
     monitor = _dsh_monitor(shell)
     assert monitor._running is True
@@ -186,7 +186,7 @@ def test_disabling_dsh_link_stops_monitor_on_apply_config(tmp_path, monkeypatch)
 
 def test_enabling_dsh_link_starts_monitor_on_apply_config(tmp_path, monkeypatch):
     """反向：运行期打开 DSH 联动 → apply_config 立即拉起读方。"""
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
     shell = _start_shell(tmp_path, monkeypatch)
     monitor = _dsh_monitor(shell)
     assert monitor._running is False

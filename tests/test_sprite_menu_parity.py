@@ -391,14 +391,14 @@ def test_harness_launcher_gets_widget_dialog_parent(tmp_path, monkeypatch):
     """
     from PySide6.QtWidgets import QWidget
 
-    import pet.context_menus.shared as shared_mod
+    from pet.modules.harness import harness_launcher as harness_mod
 
     shell, _instance, _config = _make_overlay(tmp_path)
     captured: list[tuple] = []
     bubbles: list[tuple] = []
     try:
         monkeypatch.setattr(
-            shared_mod, "launch_harness_gui",
+            harness_mod, "launch_harness_gui",
             lambda parent=None, action="start", target="auto": captured.append(
                 (parent, action, target)))
         monkeypatch.setattr(

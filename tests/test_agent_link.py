@@ -24,7 +24,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import pet.agent_link as agent_link
-from pet import click_sound, harness_launcher
+from pet import click_sound, dsh_probe
 from pet.dsh_state import DshState, SCOPE_REJECT_LOG_EVERY
 from pet.agent_link import (
     AgentLinkManager,
@@ -4313,7 +4313,7 @@ class TestDshTurnEndSuccessCompletion:
         覆盖两种到达顺序：中止 turn/end 直接到达；以及旧 AgentStatus idle 基线
         先到（已排下完成确认）后再到中止 turn/end——后者必须撤掉那个确认。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         bridge_dir = mon.events_dir
@@ -4403,7 +4403,7 @@ class TestDshTurnEndSuccessCompletion:
         （含真 ``DshStateConverger``）流到 ``AgentLinkManager``，最终出完成气泡。
         本机无 DSH+桥接真实环境，验到「真实记录形状 → 真实收敛器 → 真实出口」一层。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         bridge_dir = mon.events_dir
@@ -4460,7 +4460,7 @@ class TestDshTurnEndSuccessCompletion:
 
     def test_failed_turn_reports_failure_without_done(self, tmp_path, monkeypatch):
         """⑦ 失败序列：只出失败提醒，不排定完成确认（无成功气泡、无 done 音效）。"""
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4488,7 +4488,7 @@ class TestDshTurnEndSuccessCompletion:
         唯一入口。原样转发 ``success`` 会让岛走 ``_arm_dot_done``（绿点 4s + 卡片
         「刚完成」），与同屏的失败提醒自相矛盾。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         converged = []
@@ -4507,7 +4507,7 @@ class TestDshTurnEndSuccessCompletion:
 
     def test_normal_turn_still_sends_success_to_the_island(self, tmp_path, monkeypatch):
         """⑪ 非回归：正常成功回合的岛绿点照旧（翻译只认失败标记）。"""
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         converged = []
@@ -4530,7 +4530,7 @@ class TestDshTurnEndSuccessCompletion:
         这条路径上岛看到的是最后一个真实事件态（working），错误红点的呈现由
         ``_on_agent_state`` 的 busy→error 负责——本修复**不**在这里发明新状态。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         converged = []
@@ -4546,7 +4546,7 @@ class TestDshTurnEndSuccessCompletion:
 
     def test_next_turn_after_failed_turn_plays_done_again(self, tmp_path, monkeypatch):
         """⑧ 失败回合之后的下一个正常回合：清标后恢复完成气泡 + done 音效。"""
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4582,7 +4582,7 @@ class TestDshTurnEndSuccessCompletion:
         （``{"event": "AgentStatus", "state": ...}``，桥接 aggregateWrite 的真实
         形状）合成「失败后回 idle 再干活」这一段，钉住的是标记生命周期本身。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4612,7 +4612,7 @@ class TestDshTurnEndSuccessCompletion:
         （``_fire_done`` 的 ``_saw_error`` 闸）与收尾文案（``_saw_alert`` 决定
         说「已完成本轮任务」还是「停了，看一眼」）一并改掉。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4671,7 +4671,7 @@ class TestDshTurnEndSuccessCompletion:
 
     def test_error_inside_confirm_window_never_claims_success(self, tmp_path, monkeypatch):
         """⑪ AgentStatus(error) 落在确认窗内：取消确认，不弹成功口径、不播 done。"""
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4701,7 +4701,7 @@ class TestDshTurnEndSuccessCompletion:
         （``_on_dsh_converged_state`` 只注入 thinking/success）——这条路径上唯一能
         拦住完成确认的就是 ``_on_llm_error`` 自己，⑪ 的状态闸在这里够不着。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4733,7 +4733,7 @@ class TestDshTurnEndSuccessCompletion:
         时钟全程冻结（``clock=[1000.0]``），所以下一回合的完成气泡只有在
         「被取消的确认没占掉完成冷却（``_DONE_COOLDOWN_S``）」时才可能出现。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4767,7 +4767,7 @@ class TestDshTurnEndSuccessCompletion:
         _DONE_COOLDOWN_S`` 恒真，所以「上一轮误写了冷却」的唯一表现就是下一轮的
         完成气泡永不出现——本用例把这一点钉死。
         """
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
         mgr, bubbles, sounds, clock, app = self._make_mgr(tmp_path, monkeypatch)
         mon = mgr.monitors["dsh"]
         try:
@@ -4888,8 +4888,8 @@ class TestQqChatSessionsIgnored:
         return bool(predicate())
 
     def _mgr(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-        monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
         return self._make_mgr(tmp_path, monkeypatch)
 
     def test_qq_chat_v2_records_do_not_change_state_or_play_feedback(self, tmp_path, monkeypatch):
@@ -5578,8 +5578,8 @@ class TestMultiDshInstanceIsolation:
         for fn in ("play_sound", "play_with_winmm", "play_with_qt"):
             monkeypatch.setattr(click_sound._pool, fn,
                                 lambda path, volume=1.0: sounds.append(Path(path).name) or True)
-        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-        monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+        monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+        monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
 
         class DummyWin:
             cats = {"acts": ["写代码", "吃Token"]}
@@ -6087,8 +6087,8 @@ class TestMultiDshInstanceIsolation:
             # ③ 整体离线（写者文件镜像被清）：游标随之复位
             mon._running = True
             mon._dead_probe_cursor = limit
-            monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
-            monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: False)
+            monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
+            monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: False)
             mon._probe_online()
             assert mon._online is False and not mon._owner_files
             assert mon._dead_probe_cursor == 0, "离线清空写者镜像时必须复位游标"
@@ -6142,8 +6142,8 @@ class TestMultiDshInstanceIsolation:
             assert mgr.any_busy() is True
 
             # DSH 整体离线（真探活路径：端口与桌面端进程都探不到）
-            monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
-            monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: False)
+            monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
+            monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: False)
             mon._probe_tick = mon._ONLINE_PROBE_EVERY_N_POLLS - 1
             mon._poll()
             assert mgr.any_busy() is False, "offline 后不得还停在上一个写者的忙态"
@@ -6152,7 +6152,7 @@ class TestMultiDshInstanceIsolation:
             assert not getattr(mon, "_owner_files", {}), "offline 必须清写者→文件镜像"
 
             # 新 DSH 起来（新 boot 身份）只报待机：不得被旧分片压成忙
-            monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+            monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
             self._write(bridge, "dsh-202.jsonl",
                         {"event": "AgentStatus", "state": "idle", "inst": "bootB"})
             mon._probe_tick = mon._ONLINE_PROBE_EVERY_N_POLLS - 1

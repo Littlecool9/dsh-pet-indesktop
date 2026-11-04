@@ -34,7 +34,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 import pet.agent_link as agent_link
-from pet import click_sound, dsh_state, harness_launcher
+from pet import click_sound, dsh_state, dsh_probe
 from pet.agent_link import AgentLinkManager
 from pet.config import Config
 from pet.dsh_state import DshState
@@ -67,8 +67,8 @@ class _Rig:
 def _make_rig(tmp_path, monkeypatch) -> _Rig:
     """构造真 manager/monitor；**不碰** ``_initial_backfill_done``（回填保持开着）。"""
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
 
     bubbles: list[str] = []
     sounds: list[str] = []

@@ -32,7 +32,6 @@ import json
 import logging
 import os
 import signal
-import socket
 import struct
 import subprocess
 import threading
@@ -41,50 +40,22 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
-from .node_runtime import augmented_path as _augmented_path
-from .node_runtime import global_node_modules_roots
-from .node_runtime import static_node_modules_roots
-from .node_runtime import which as _which
+from ...dsh_probe import DEFAULT_PORT as DEFAULT_PORT
+from ...dsh_probe import DESKTOP_SUPPORTED as DESKTOP_SUPPORTED
+from ...dsh_probe import candidate_ports as _candidate_ports
+from ...dsh_probe import is_running as is_running
+from ...node_runtime import augmented_path as _augmented_path
+from ...node_runtime import global_node_modules_roots
+from ...node_runtime import static_node_modules_roots
+from ...node_runtime import which as _which
 
-# 3080 会落入 Windows winnat/Hyper-V 动态保留段（EACCES），默认改用 38080；
-# 与环境变量 DSH_PORT 保持一致（dsh-launcher 三件套也读它）。
-DEFAULT_PORT = int(os.environ.get("DSH_PORT") or 38080)
 # npx 首次拉取 @deepseek-ai/dsh 可能较慢，预留 90 秒就绪窗口
 _READY_TIMEOUT_SECONDS = 90.0
-
-def is_running(port: int = DEFAULT_PORT) -> bool:
-    """探测 127.0.0.1:port 是否有服务监听。"""
-    try:
-        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.5):
-            return True
-    except OSError:
-        return False
-
-
-def _candidate_ports(port: int = DEFAULT_PORT) -> list[int]:
-    """复用已有实例的候选端口：配置端口优先，其次官方默认 3080。
-
-    用户可能已自行跑着一个 dsh web（比如官方默认 3080——3080 只是
-    Windows 上不宜**绑定**，作为客户端去连接没有问题）。先复用再新起，
-    避免用户机器上同时跑两个 dsh web 互相不认识。"""
-    ports: list[int] = []
-    for p in (int(port), 3080):
-        if p not in ports:
-            ports.append(p)
-    return ports
-
-
 
 # ------------------------------------------------------------------ 桌面端
 LAUNCH_TARGETS = ("auto", "service", "web", "desktop")
 DESKTOP_APP_NAME = "DeepSeek Harness"
 _DESKTOP_EXE_NAME = "DeepSeek Harness.exe"
-# 桌面端自动拉起**本轮只支持 Windows**：macOS 的 .app 是目录（Popen 不了），
-# Linux 无官方包。非 Windows 一律按「不支持」处理——自动目标（auto/service）本就
-# 只起服务、与平台无关，显式 desktop 明确回报 unsupported；绝不让占位路径把默认
-# 拐到 desktop。在线判定用的 19387 端口候选在 pet/dsh_state.py（那边是纯逻辑，
-# 不在这里重复）。
-DESKTOP_SUPPORTED = os.name == "nt"
 
 # 注册表卸载项路径（NSIS per-user 安装写 HKCU）
 _UNINSTALL_KEY = "Software" + chr(92) + "Microsoft" + chr(92) + "Windows" + chr(92) + "CurrentVersion" + chr(92) + "Uninstall"

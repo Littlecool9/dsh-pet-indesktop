@@ -18,7 +18,6 @@ from .shared import (
     add_autostart,
     add_balance,
     add_edge_probe,
-    add_harness,
     add_hide_pet,
     add_look_screen,
     add_agent_cost,
@@ -149,7 +148,6 @@ class MenuActionRegistry:
                 disabled_reason="尚未配置快捷启动应用",
             ),
             "balance": MenuActionSpec(add_balance, _callback_available("on_show_balance")),
-            "harness": MenuActionSpec(add_harness, _callback_available("on_open_chat")),
             "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import QMenu
 
 from .. import autostart as autostart_mod
 from .. import catalog
-from ..harness_launcher import launch_harness_gui
 from .icons import fitted_pet_pixmap_icon, vector_menu_icon
 from .menu_styles.common import inherit_menu_style
 
@@ -952,49 +951,6 @@ def confirm_destructive_action(pet, *, title: str, text: str, informative: str =
     box.setDefaultButton(cancel)
     box.exec()
     return box.clickedButton() is confirm
-
-
-def add_harness(menu: QMenu, pet, *, icons: bool = True):
-    """DeepSeek Harness 子菜单：启动 / 重启 / 停止。
-
-    为什么用子菜单而不是三个平级项：菜单默认布局（pet/menu_templates/
-    modern-default-v1.json）与用户自己编排过的布局里只有 ``harness`` 这一个 id，
-    新增 id 对老布局不生效；子菜单挂在既有 id 上，老用户的菜单立刻拿到完整生命周期
-    入口。
-
-    重启/停止是破坏性动作（可能结束你自己在终端里跑着的 dsh），带确认框；启动
-    保持原语义（复用本机实例并打开页面）。
-    """
-    start_icon = "harness" if icons else None
-    submenu = add_submenu(menu, "DeepSeek Harness", start_icon)
-
-    def _launch(action: str = "start", target: str = "auto") -> None:
-        # 父窗口在**点击时**解析：宿主（facade）可能在菜单关闭后被回收，
-        # 这里只读它自报的 dialog_parent 面，不缓存对象。
-        launch_harness_gui(_dialog_parent(pet), action=action, target=target)
-
-    # 所有动作都 close_on_trigger：菜单先关闭、回调延迟到菜单关闭后执行——
-    # 重启/停止的确认框是模态框，系统原生菜单跟踪会话中弹模态框会被
-    # 系统原生菜单会话抑制（与设置对话框首次点击无反应同源）。
-    # 启动分双目标（2026-10）：web 界面 / 桌面端界面；重启/停止只作用于
-    # web 服务进程（桌面端是用户的主力应用，桌宠绝不终止它）。
-    add_action(submenu, "启动 dsh web 界面", start_icon,
-               lambda: _launch("start", "web"),
-               close_on_trigger=True)
-    add_action(submenu, "启动桌面端界面", start_icon,
-               lambda: _launch("start", "desktop"),
-               close_on_trigger=True)
-    add_action(
-        submenu, "重启服务", "play" if icons else None,
-        lambda: _launch("restart"),
-        close_on_trigger=True,
-    )
-    add_action(
-        submenu, "停止服务", "quit" if icons else None,
-        lambda: _launch("stop"),
-        close_on_trigger=True,
-    )
-    return submenu
 
 
 def add_agent_cost(menu: QMenu, pet, *, icons: bool = True):

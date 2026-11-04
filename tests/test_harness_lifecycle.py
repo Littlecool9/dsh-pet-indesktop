@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from pet import harness_launcher as hl
+from pet.modules.harness import harness_launcher as hl
 
 
 @pytest.fixture(autouse=True)
@@ -439,11 +439,11 @@ def test_harness_submenu_wires_three_lifecycle_actions(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication, QMenu
 
     app = QApplication.instance() or QApplication([])
-    from pet.context_menus.shared import add_harness
+    from pet.modules.harness.menu import add_harness
 
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "pet.context_menus.shared.launch_harness_gui",
+        "pet.modules.harness.harness_launcher.launch_harness_gui",
         lambda pet, action="start", target="auto": calls.append((action, target)),
     )
 
@@ -495,7 +495,7 @@ def test_lite_build_hides_the_harness_submenu(tmp_path, monkeypatch):
 
     # 子菜单的顶层标题（旧的平级项「启动 DeepSeek Harness」已不存在）：
     # 轻量替身也验证四个入口都在子菜单内、不会绕过门禁漏成平级项。
-    from pet.context_menus.shared import add_harness
+    from pet.modules.harness.menu import add_harness
 
     class _Pet:
         pass
@@ -522,7 +522,7 @@ def test_harness_submenu_actions_close_on_trigger(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication, QMenu
 
     app = QApplication.instance() or QApplication([])
-    from pet.context_menus.shared import add_harness
+    from pet.modules.harness.menu import add_harness
 
     class _Pet:
         pass

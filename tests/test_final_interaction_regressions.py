@@ -42,7 +42,7 @@ import pytest  # noqa: E402
 from PySide6.QtCore import QObject  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pet import harness_launcher  # noqa: E402
+from pet import dsh_probe  # noqa: E402
 from pet.agent_link import AgentLinkManager, BaseAgentMonitor  # noqa: E402
 from pet.config import Config  # noqa: E402
 from pet.multi_window_shared import MultiWindowProxy  # noqa: E402
@@ -189,8 +189,8 @@ def _dsh_probe_pinned_online(monkeypatch):
     只钉网络/OS 边界，产品探活行为不改；副作用是真 socket 不再发生。
     真实离线口径由 ``test_offline_probe_override_...`` 在用例体内覆盖（后打的补丁生效）。
     """
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
 
 
 def _build(tmp_path, win):
@@ -404,8 +404,8 @@ def test_overflow_drops_locally_without_touching_the_source(tmp_path, monkeypatc
     """洪泛下：本地表有界，桥接源文件逐字节不变，且没有任何远端批准/拒绝写回。"""
     win = _MergingWin()
     mgr, mon = _build(tmp_path, win)
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
     cap = AgentLinkManager._PENDING_INTERACTION_MAX
     source = mon.events_dir / "dsh-1001.jsonl"
     try:
@@ -548,8 +548,8 @@ def test_offline_probe_override_clears_pending_and_stops_converging(tmp_path, mo
     且此后的桥接记录不再进收敛器（``_on_parsed_record`` 早退）——这正是「记录被
     消费」要求探活在线的机制。
     """
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: False)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: False)
     win = _MergingWin()
     mgr, mon = _build(tmp_path, win)
     converged: list[tuple] = []
@@ -614,8 +614,8 @@ def test_emit_retires_generation_when_signal_source_is_gone(tmp_path, monkeypatc
 def test_destroyed_worker_does_not_raise_out_of_thread(tmp_path, monkeypatch):
     """真实生命周期边界：父链析构正好落在 worker 首轮发射窗口内 → 线程内不得有
     未捕获异常（pytest 的 ``PytestUnhandledThreadExceptionWarning`` 即来自这里）。"""
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: False)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: False)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: False)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: False)
     cfg = Config(base=tmp_path)
     mgr = AgentLinkManager(None, cfg)
     mon = mgr.monitors["dsh"]

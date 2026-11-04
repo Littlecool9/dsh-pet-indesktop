@@ -71,7 +71,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import autostart as autostart_mod
 from . import catalog
-from . import harness_launcher as harness_mod
+from . import dsh_probe as harness_mod
 from .click_sound import warm_click_sound_effects
 from .config import (
     DEFAULT_CONTEXT_MENU_APPEARANCE,
@@ -358,7 +358,7 @@ class ModernSettingsDialog(QDialog):
         # 「只拉起 dsh 服务」（不开浏览器、不开界面），web/desktop 才是显式要界面；
         # 只作用于「随桌宠启动」，菜单的两个启动入口是显式选择（不受本项影响）。
         # 桌面端探测/自动拉起本轮只支持 Windows，唯一口径是
-        # harness_launcher.DESKTOP_SUPPORTED（不在设置页另写一份平台判定）。
+        # dsh_probe.DESKTOP_SUPPORTED（不在设置页另写一份平台判定）。
         # 不支持的平台上该项**保留但置灰**（能力暂不可用 ≠ 永久不支持，见
         # docs/SETTINGS-CHANGE-GATES.md §4「暂不可用的能力保留并解释原因」），
         # 并保证 desktop 绝不会被写回：显示与保存两处都回落 auto（auto 与平台

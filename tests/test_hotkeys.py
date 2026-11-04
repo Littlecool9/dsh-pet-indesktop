@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""全局快捷键：文本口径（``hotkey_spec``）与服务（``hotkeys``）的回归。
+"""全局快捷键：文本口径（``hotkey_spec``）与服务（模块 ``hotkeys``）的回归。
 
 **不碰真实系统**：``user32`` 是注入的替身（内部维护"已占用组合"表），原生消息
 由手工构造的 ``MSG`` 喂进 ``nativeEventFilter``，所以这些用例在 CI 的三个平台上
@@ -17,8 +17,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from pet import hotkey_spec as spec
-from pet import hotkeys
-from pet.hotkeys import GlobalHotkeyService
+from pet.modules.hotkeys import hotkeys
+from pet.modules.hotkeys.hotkeys import GlobalHotkeyService
 
 
 @pytest.fixture
@@ -266,7 +266,7 @@ def test_second_service_instance_is_reported(qapp_, caplog):
     """进程内出现第二个服务实例要告警（热键 id 是进程级的，会互相顶掉）。"""
     import logging as _logging
 
-    from pet import hotkeys as hk
+    from pet.modules.hotkeys import hotkeys as hk
 
     user32 = _FakeUser32()
     first = GlobalHotkeyService(app=qapp_, user32=user32, install_native_filter=False,
@@ -306,3 +306,99 @@ def test_legacy_num_plus_spelling_still_parses():
     """旧写法 ``Ctrl+num+``（与分隔符冲突）在入口归一化后仍能解析。"""
     assert spec.parse("Ctrl+num+") == (spec.MOD_CONTROL, 0x6B)
     assert spec.normalize("ctrl+NUM+") == "Ctrl+numplus"
+
+# ---------------------------------------------------------------- 目标不可用
+class _RecordingService:
+    installed = True
+
+    def __init__(self):
+        self.calls: list[tuple[dict, dict]] = []
+
+    def apply(self, bindings, callbacks):
+        self.calls.append((dict(bindings), dict(callbacks)))
+        return []
+
+
+def test_unavailable_action_target_is_not_registered_and_reason_is_logged(
+        monkeypatch, caplog):
+    """目标模块没运行 → 该热键不注册，并记录原因（不留假绑定）。"""
+    import logging
+    from types import SimpleNamespace
+
+    from pet.modules.hotkeys import module as hotkeys_module
+
+    module = hotkeys_module.HotkeysModule()
+    service = _RecordingService()
+    module._service = service
+    module._host = SimpleNamespace(
+        shell=SimpleNamespace(instance=None, _overlay_shell=None))
+    monkeypatch.setitem(hotkeys_module.ACTION_TARGET_MODULES, "open_chat", "ghost")
+    config = {"hotkey_open_chat": "Ctrl+Alt+P",
+              "hotkey_look_screen": "", "hotkey_screen_capture": ""}
+
+    with caplog.at_level(logging.WARNING):
+        module.apply_config(config)
+
+    bindings, callbacks = service.calls[-1]
+    assert "open_chat" not in bindings, "目标不可用时不得注册"
+    assert callbacks == {}
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("ghost" in message and "不注册" in message for message in messages), messages
+
+
+def test_available_shell_action_is_registered(monkeypatch):
+    """对照：入口存在时照常注册（别把门焊死）。"""
+    from types import SimpleNamespace
+
+    from pet.modules.hotkeys import module as hotkeys_module
+
+    module = hotkeys_module.HotkeysModule()
+    service = _RecordingService()
+    module._service = service
+    module._host = SimpleNamespace(shell=SimpleNamespace(
+        instance=SimpleNamespace(open_chat=lambda: None),
+        _overlay_shell=None,
+    ))
+    monkeypatch.setitem(hotkeys_module.ACTION_TARGET_MODULES, "open_chat", None)
+    module.apply_config({"hotkey_open_chat": "Ctrl+Alt+P"})
+
+    bindings, callbacks = service.calls[-1]
+    assert bindings == {"open_chat": "Ctrl+Alt+P"}
+    assert callable(callbacks["open_chat"])
+
+def test_bound_actions_dispatch_through_the_same_shell_entry_points(monkeypatch):
+    """三个动作仍走宿主既有入口（open_chat / look_at_screen / on_screen_capture）。"""
+    from types import SimpleNamespace
+
+    from pet.modules.hotkeys import module as hotkeys_module
+
+    calls: list[str] = []
+
+    class _Instance:
+        def open_chat(self):
+            calls.append("open_chat")
+
+    class _Overlay:
+        def look_at_screen(self):
+            calls.append("look_screen")
+
+        def on_screen_capture(self):
+            calls.append("screen_capture")
+
+    module = hotkeys_module.HotkeysModule()
+    service = _RecordingService()
+    module._service = service
+    module._host = SimpleNamespace(shell=SimpleNamespace(
+        instance=_Instance(), _overlay_shell=_Overlay()))
+    for action in hotkeys_module.ACTION_TARGET_MODULES:
+        monkeypatch.setitem(hotkeys_module.ACTION_TARGET_MODULES, action, None)
+
+    module.apply_config({
+        "hotkey_open_chat": "Ctrl+Alt+P",
+        "hotkey_look_screen": "Ctrl+Alt+L",
+        "hotkey_screen_capture": "Ctrl+Alt+S",
+    })
+    _bindings, callbacks = service.calls[-1]
+    for action in ("open_chat", "look_screen", "screen_capture"):
+        callbacks[action]()
+    assert calls == ["open_chat", "look_screen", "screen_capture"]

@@ -75,7 +75,7 @@ def pid_alive(pid: int) -> bool:
             # 句柄打得开 ≠ 进程还活着：进程被 TerminateProcess 后，只要还有人
             # 持着它的句柄（如父进程的 Popen 尚未 reap），进程对象不会销毁，
             # OpenProcess 一路成功。只有退出码仍是 STILL_ACTIVE 才算存活。
-            # 同 pet/harness_launcher.py::_windows_pid_alive 的既有判定口径。
+            # 同 pet/modules/harness/harness_launcher.py::_windows_pid_alive 的既有判定口径。
             code = wintypes.DWORD()
             if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return False
