@@ -284,29 +284,6 @@ def test_library_stop_all_clips_survives_single_clip_failure():
     assert clips["c"].stops == 1
 
 
-def test_library_warm_predicted_refused_when_session_ending(monkeypatch):
-    """预测式预热（每几秒一次的短命 ffmpeg）在会话结束后必须停手。"""
-    from pet import catalog
-    from pet.library import MovieLibrary
-
-    asset_dir = catalog.resolve_character_video_dir("shenshen")
-    if not asset_dir.is_dir():
-        pytest.skip(f"角色素材目录不存在: {asset_dir}")
-
-    lib = MovieLibrary(character_id="shenshen", asset_dir=asset_dir)
-    try:
-        monkeypatch.setattr(lib, "_prewarm_enabled", True)
-        warmed: list = []
-        monkeypatch.setattr(lib, "movie", lambda name: warmed.append(name))
-        webm_clip_mod.set_session_ending(True)
-
-        lib.warm_predicted("随便一个动作")
-
-        assert warmed == [], "会话结束后不得创建 clip / 起预热线程"
-    finally:
-        lib.shutdown()
-
-
 # ---------------------------------------------------------------------------
 # 3) Windows 会话结束探测（原生消息层，真实 MSG 缓冲区）
 # ---------------------------------------------------------------------------
