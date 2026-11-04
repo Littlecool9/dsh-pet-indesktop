@@ -2126,6 +2126,12 @@ class ChatWindow(QDialog):
         self._begin_generation(text, image_payloads=image_payloads)
 
     def _begin_generation(self, text: str, *, image_payloads: list[dict] | None = None) -> None:
+        from .. import surfcore_link
+
+        allowed, blocked_message = surfcore_link.budget_gate("桌宠助手")
+        if not allowed:
+            self._show_budget_blocked(blocked_message)
+            return
         self._typewriter_timer.stop()
         self._pending_output = ""
         self._pending_finish_text = None
@@ -2141,7 +2147,11 @@ class ChatWindow(QDialog):
         self.store.save(self.session)
         config = self.settings.active_config
         config.api_key = self.config.resolve_api_key(config)
-        messages = self.prompt_builder.build_messages(self.settings, self.character_id, self.session.messages[:-1], text)
+        self._request_model = str(config.model or "")
+        messages = self.prompt_builder.build_messages(
+            self.settings, self.character_id, self.session.messages[:-1], text,
+            role_prompt=surfcore_link.persona_card(),
+        )
         if image_payloads:
             messages[-1]["content"] = [{"type": "text", "text": text}, *image_payloads]
         self._last_user_payload = messages[-1].get("content") if image_payloads else None
@@ -2152,6 +2162,20 @@ class ChatWindow(QDialog):
         request_id = uuid.uuid4().hex
         self._active_request_id = request_id
         self.service.send(messages, config, request_id=request_id)
+        self._bottom()
+
+    def _show_budget_blocked(self, message: str) -> None:
+        """SurfCore 额度拦截：在聊天窗里可见地说清原因，且不发起任何请求。"""
+        self._typewriter_timer.stop()
+        self._pending_output = ""
+        self._pending_finish_text = None
+        self._active_request_id = None
+        self._bubble = self._add("assistant", "请求未发送：" + str(message), )
+        self._bubble.set_state("error")
+        self.status.setText("额度已用完")
+        self.status_dot.setProperty("state", "ready")
+        self._refresh_status_style()
+        self.composer.set_busy(False)
         self._bottom()
 
     def _focus_chat(self) -> None:
@@ -2251,6 +2275,12 @@ class ChatWindow(QDialog):
     def _finished(self, request_id: str, text: str) -> None:
         if request_id != self._active_request_id:
             return
+        from .. import surfcore_link
+
+        usage = getattr(self.service, "last_usage", None)
+        if isinstance(usage, dict) and usage:
+            surfcore_link.report_usage(
+                getattr(self, "_request_model", ""), usage, "桌宠助手")
         text = str(text or "")
         if not text.strip():
             self._typewriter_timer.stop()

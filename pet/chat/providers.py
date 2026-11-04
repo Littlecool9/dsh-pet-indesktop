@@ -97,7 +97,7 @@ class ProviderError(RuntimeError):
     def __init__(self,message,status=None): self.status=status; super().__init__(f'HTTP {status}: {message}' if status else message)
 
 class SSEParser:
-    def __init__(self): self._buffer=b''; self.done=False; self.finish_reason=None
+    def __init__(self): self._buffer=b''; self.done=False; self.finish_reason=None; self.usage=None
     def feed_events(self,chunk:bytes):
         self._buffer+=chunk
         if len(self._buffer)>1024*1024: raise ProviderError('SSE 缓冲超过 1MB 上限（服务端未按事件分隔）')  # 审查 GLM-M5：防异常 provider 无界堆积
@@ -119,6 +119,8 @@ class SSEParser:
             except json.JSONDecodeError as exc: raise ProviderError('Provider 返回了无效 JSON') from exc
             if isinstance(payload,dict) and payload.get('error'):
                 err=payload['error']; msg=err.get('message','Provider 返回错误') if isinstance(err,dict) else str(err); raise ProviderError(str(msg))
+            usage=payload.get('usage') if isinstance(payload,dict) else None
+            if isinstance(usage,dict): self.usage=usage
             choices=payload.get('choices',[]) if isinstance(payload,dict) else []
             if choices and isinstance(choices[0],dict):
                 delta=choices[0].get('delta',{}) or {}
@@ -222,7 +224,7 @@ class OpenAICompatibleProvider:
             raise ProviderError(f'网络连接失败：{reason}{hint}') from exc
         except OSError as exc: raise ProviderError(f'网络请求失败：{exc}') from exc
 
-    def stream(self,messages:list[dict[str,Any]],config:ProviderConfig,cancel_event:threading.Event,response_holder:list|None=None)->Iterator[str]:
+    def stream(self,messages:list[dict[str,Any]],config:ProviderConfig,cancel_event:threading.Event,response_holder:list|None=None,usage_holder:list|None=None)->Iterator[str]:
         web=getattr(config,'web_search',None)
         if web is not None and getattr(web,'enabled',False) and not cancel_event.is_set():
             notes=yield from self._research(messages,config,cancel_event,response_holder)
@@ -230,9 +232,9 @@ class OpenAICompatibleProvider:
             if notes:
                 messages=inject_search_context(messages,notes)
                 yield StreamEvent('status','已获取联网资料，正在组织回答…')
-        yield from self._stream_answer(messages,config,cancel_event,response_holder)
+        yield from self._stream_answer(messages,config,cancel_event,response_holder,usage_holder)
 
-    def _stream_answer(self,messages,config,cancel_event,response_holder):
+    def _stream_answer(self,messages,config,cancel_event,response_holder,usage_holder=None):
         payload:dict[str,Any]={'model':config.model,'messages':messages,'stream':True,'temperature':config.temperature,'max_tokens':config.max_tokens}
         payload.update(thinking_payload(config))
         response=self._open(payload,config,'text/event-stream')
@@ -253,6 +255,8 @@ class OpenAICompatibleProvider:
         finally:
             try: response.close()
             except Exception: pass
+        if usage_holder is not None and isinstance(parser.usage,dict):
+            usage_holder.append(parser.usage)
         if got_reasoning and not got_content and parser.finish_reason=='length' and not cancel_event.is_set():
             raise ProviderError(f'深度思考用完了「最大输出 Token」（当前 {config.max_tokens}），还没来得及给出回答。请在 AI 设置 → 生成参数里调大（建议 8192 以上）。')
 

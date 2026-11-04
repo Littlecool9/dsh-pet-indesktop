@@ -25,6 +25,7 @@ from .proactive_limiter import (
     effective_proactive_config,
 )
 from .proactive_memory import ProactiveMemory
+from . import surfcore_link
 
 
 def _focus_service_of(win):
@@ -538,15 +539,12 @@ class ProactiveScreenWatcher:
                     )
                     return
 
-            # G6 严格频控门禁二次确认（原子判定+盖章，多开不互相踩冷却）
-            ok, reason = self.limiter.try_acquire()
-            if not ok:
-                return
-
-            self._last_dhash = cur_hash
-
-            # 判断是否处于 dry_run 模式
+            # dry_run 只做本地判定/日志：不产生气泡，也不占用 SurfCore 的共享额度。
             if self.limiter.dry_run:
+                ok, _reason = self.limiter.try_acquire()
+                if not ok:
+                    return
+                self._last_dhash = cur_hash
                 import logging
 
                 logging.info(
@@ -555,49 +553,118 @@ class ProactiveScreenWatcher:
                     hwnd,
                     hex(cur_hash),
                 )
-                # last_request 已在 try_acquire 原子盖章，无需再 record_attempt
                 return
 
-            # 真实模式：触发先兆提示 + 派发后台视觉请求（同上，盖章已完成）
-            # 先兆 → 模型答复整个窗口期内占用气泡位，自言自语让路（防连环顶掉）
-            hold = getattr(self.win, "hold_bubble", None)
-            if callable(hold):
-                hold(30.0)
-            if eff.get("pre_cue", True) and hasattr(self.win, "show_bubble"):
-                self.win.show_bubble("让我看看……", duration_ms=2500)
+            # 在线：主动说话额度与 SurfCore 的目的机制共享同一个计数器。
+            # 领取在后台线程，裁决结果回到 GUI 线程后才允许冒泡/发请求。
+            link = surfcore_link.current()
+            if link is not None and link.online():
+                self._dispatch_via_claim(img, app_str, hwnd, cur_hash, info, eff)
+                return
 
-            # 纯内存 JPEG bytes（严禁写临时文件）；worker 线程已完成编码，
-            # 直接调用（测试）传入 PIL Image 时在此兼容编码
-            if isinstance(img, (bytes, bytearray)):
-                jpeg_bytes = bytes(img)
-            else:
-                import io
-
-                buf = io.BytesIO()
-                img.convert("RGB").save(buf, "JPEG", quality=70)
-                jpeg_bytes = buf.getvalue()
-
-            # 解析 Provider（手册 §6：免费优先策略）
-            provider, system_prompt = self._resolve_vision_provider(eff)
-
-            # 短期陪伴记忆（Phase 5）：分类活动并构造上下文
-            proc_name = str(info.get("process", "")).strip()
-            win_title = str(info.get("title", "")).strip()
-            current_act = classify_activity(proc_name, win_title)
-            last_entry = self.memory.latest()
-            memory_ctx = build_memory_context(last_entry, current_act) or ""
-
-            import threading
-
-            self._request_in_flight = True  # 请求完成前不再派新 pipeline
-            threading.Thread(
-                target=self._worker_request_vision,
-                args=(jpeg_bytes, app_str, system_prompt, provider, memory_ctx, proc_name, win_title, current_act, self._generation),
-                daemon=True,
-                name="proactive-vision-requester",
-            ).start()
+            # 离线/无服务：沿用今天的本地限流器。
+            ok, reason = self.limiter.try_acquire()
+            if not ok:
+                return
+            self._last_dhash = cur_hash
+            self._dispatch_vision_request(img, app_str, info, eff)
         finally:
             self._worker_busy = False
+
+    def _dispatch_via_claim(
+        self, img: Any, app_str: str, hwnd: int, cur_hash: int,
+        info: dict, eff: dict,
+    ) -> None:
+        """在线路径：先向 SurfCore 领取'主动说话'额度，granted 才走视觉管线。"""
+        import logging
+
+        if self._request_in_flight:
+            return
+        allowed, blocked_message = surfcore_link.budget_gate("桌宠主动识屏")
+        if not allowed:
+            logging.info("主动识屏: SurfCore 额度不足，跳过本次 (%s)", blocked_message)
+            return
+        self._last_dhash = cur_hash
+        self._request_in_flight = True
+        gen = self._generation
+
+        def claimed(granted: bool, reason: str) -> None:
+            if gen != self._generation:
+                self._request_in_flight = False
+                return
+            if not granted:
+                logging.info("主动识屏: SurfCore 未批准本次主动说话 (%s)", reason or "denied")
+                self._request_in_flight = False
+                return
+            if not self._dispatch_vision_request(
+                    img, app_str, info, eff, use_local_budget=False):
+                self._request_in_flight = False
+
+        if surfcore_link.claim_proactive("vision", claimed):
+            return
+        # 服务在判定与领取之间掉线：退回本地限流器，行为等同离线。
+        self._request_in_flight = False
+        ok, _reason = self.limiter.try_acquire()
+        if ok:
+            self._dispatch_vision_request(img, app_str, info, eff)
+
+    def _dispatch_vision_request(
+        self, img: Any, app_str: str, info: dict, eff: dict,
+        *, use_local_budget: bool = True,
+    ) -> bool:
+        """真实模式：触发先兆提示 + 派发后台视觉请求（调用方已盖章）。
+
+        ``use_local_budget=False``（SurfCore 已批准本次主动说话）：本地限流器
+        的每日额度不再二次裁决，只保留 SurfCore 的共享计数。
+        """
+        import logging
+
+        allowed, blocked_message = surfcore_link.budget_gate("桌宠主动识屏")
+        if not allowed:
+            logging.info("主动识屏: SurfCore 额度不足，跳过本次 (%s)", blocked_message)
+            return False
+
+        # 先兆 → 模型答复整个窗口期内占用气泡位，自言自语让路（防连环顶掉）
+        hold = getattr(self.win, "hold_bubble", None)
+        if callable(hold):
+            hold(30.0)
+        if eff.get("pre_cue", True) and hasattr(self.win, "show_bubble"):
+            self.win.show_bubble("让我看看……", duration_ms=2500)
+
+        # 纯内存 JPEG bytes（严禁写临时文件）；worker 线程已完成编码，
+        # 直接调用（测试）传入 PIL Image 时在此兼容编码
+        if isinstance(img, (bytes, bytearray)):
+            jpeg_bytes = bytes(img)
+        else:
+            import io
+
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, "JPEG", quality=70)
+            jpeg_bytes = buf.getvalue()
+
+        # 解析 Provider（手册 §6：免费优先策略）
+        provider, system_prompt = self._resolve_vision_provider(eff)
+
+        # 短期陪伴记忆（Phase 5）：分类活动并构造上下文
+        proc_name = str(info.get("process", "")).strip()
+        win_title = str(info.get("title", "")).strip()
+        current_act = classify_activity(proc_name, win_title)
+        last_entry = self.memory.latest()
+        memory_ctx = build_memory_context(last_entry, current_act) or ""
+
+        import threading
+
+        self._request_in_flight = True  # 请求完成前不再派新 pipeline
+        consume_budget = self.limiter.consume_budget if use_local_budget else None
+        threading.Thread(
+            target=self._worker_request_vision,
+            args=(jpeg_bytes, app_str, system_prompt, provider, memory_ctx,
+                  proc_name, win_title, current_act, self._generation,
+                  consume_budget),
+            daemon=True,
+            name="proactive-vision-requester",
+        ).start()
+        return True
 
     def _on_reply_synced(self, user_text: str, reply: str) -> None:
         """主线程槽：把主动识屏回复全文转发给 app 层同步进 AI 对话会话。
@@ -658,16 +725,19 @@ class ProactiveScreenWatcher:
         win_title: str = "",
         current_act: str = "",
         gen: int = -1,
+        consume_budget: Any = None,
     ) -> None:
         """后台线程：发起大模型视觉请求，处理重试/熔断，并通过桥接信号在桌宠冒泡。"""
         from . import vision
 
         pet_name = self.pet_name()
         try:
-            reply = vision._post_vision_request(
-                jpeg_bytes, app_str, system_prompt, provider, memory_context=memory_ctx,
-                consume_budget=self.limiter.consume_budget, pet_name=pet_name,
-            )
+            with surfcore_link.usage_label("桌宠主动识屏"):
+                reply = vision._post_vision_request(
+                    jpeg_bytes, app_str, system_prompt, provider,
+                    memory_context=memory_ctx,
+                    consume_budget=consume_budget, pet_name=pet_name,
+                )
             # 代次隔离：请求在飞期间用户关闭功能/隐藏窗口（pause 翻转代次）时，
             # 迟到答复一律丢弃——不冒泡、不耗额度计数、不写陪伴记忆。
             if gen >= 0 and gen != self._generation:

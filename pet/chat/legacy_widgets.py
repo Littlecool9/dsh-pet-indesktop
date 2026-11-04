@@ -936,6 +936,12 @@ class ChatWindow(QDialog):
         self._begin_generation(text)
 
     def _begin_generation(self, text: str) -> None:
+        from .. import surfcore_link
+
+        allowed, blocked_message = surfcore_link.budget_gate("桌宠助手")
+        if not allowed:
+            self._show_budget_blocked(blocked_message)
+            return
         self._bubble = self._add("assistant", "")
         self._bubble.set_state("streaming")
         self._bubble.retry_requested.connect(self.retry_last)
@@ -945,12 +951,27 @@ class ChatWindow(QDialog):
         self.store.save(self.session)
         config = self.settings.active_config
         config.api_key = self.config.resolve_api_key(config)
-        messages = self.prompt_builder.build_messages(self.settings, self.character_id, self.session.messages[:-1], text)
+        self._request_model = str(config.model or "")
+        messages = self.prompt_builder.build_messages(
+            self.settings, self.character_id, self.session.messages[:-1], text,
+            role_prompt=surfcore_link.persona_card(),
+        )
         # 与 widgets.py 同款：id 必须先落本窗在途状态再 send（`started` 在
         # send() 内同步发出，晚赋值会让 `_started` 的 id 过滤恒命中）。
         request_id = uuid.uuid4().hex
         self._active_request_id = request_id
         self.service.send(messages, config, request_id=request_id)
+        self._bottom()
+
+    def _show_budget_blocked(self, message: str) -> None:
+        """SurfCore 额度拦截：可见说明 + 不发起请求（与 modern 同语义）。"""
+        self._active_request_id = None
+        self._bubble = self._add("assistant", "请求未发送：" + str(message))
+        self._bubble.set_state("error")
+        self.status.setText("额度已用完")
+        self.status_dot.setProperty("state", "ready")
+        self._refresh_status_style()
+        self.composer.set_busy(False)
         self._bottom()
 
     def _focus_chat(self) -> None:
@@ -1024,6 +1045,12 @@ class ChatWindow(QDialog):
     def _finished(self, request_id: str, text: str) -> None:
         if request_id != self._active_request_id:
             return
+        from .. import surfcore_link
+
+        usage = getattr(self.service, "last_usage", None)
+        if isinstance(usage, dict) and usage:
+            surfcore_link.report_usage(
+                getattr(self, "_request_model", ""), usage, "桌宠助手")
         follow_output = self._is_near_bottom()
         if self._bubble:
             self._bubble.set_content(text)

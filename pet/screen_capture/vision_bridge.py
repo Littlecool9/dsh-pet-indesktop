@@ -73,10 +73,13 @@ def resolve_chat_context(config) -> tuple[Any, str]:
     里的共享对象）、system prompt 用人设那份。配置面不可用时抛异常——由调用方
     转成给用户看的理由，不在这里静默降级。
     """
+    from .. import surfcore_link
+
     settings = config.chat_settings()
     provider = copy.copy(settings.active_config)
     provider.api_key = config.resolve_api_key(provider)
-    return provider, str(settings.default_system_prompt or "")
+    local_prompt = str(settings.default_system_prompt or "")
+    return provider, surfcore_link.persona_or(local_prompt) or ""
 
 
 class ChatVisionChannel:

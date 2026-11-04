@@ -57,8 +57,12 @@ def translate_text(text: str, config, *, target: str | None = None) -> str:
     if not source:
         raise TranslateError("没有可翻译的文字")
 
+    from .. import surfcore_link
     from .vision_bridge import resolve_chat_context
 
+    allowed, blocked_message = surfcore_link.budget_gate("桌宠识屏")
+    if not allowed:
+        raise TranslateError(blocked_message or "今天的额度用完了，明天再试或调高额度。")
     provider, _system_prompt = resolve_chat_context(config)
 
     # 延迟导入：无 Chat 变体（pet.chat 被排除）下本函数不会被调用
@@ -131,4 +135,7 @@ def translate_text(text: str, config, *, target: str | None = None) -> str:
     translated = content.strip() if isinstance(content, str) else ""
     if not translated:
         raise TranslateError("翻译服务没说话（空回复）")
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if isinstance(usage, dict):
+        surfcore_link.report_usage(str(provider.model or ""), usage, "桌宠识屏")
     return translated

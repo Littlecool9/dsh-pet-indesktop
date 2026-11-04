@@ -13,6 +13,7 @@ class _Worker(QThread):
         super().__init__()
         self.provider=provider; self.messages=messages; self.config=config; self.cancel=cancel; self.parts=[]
         self._responses = []
+        self.usage = None
     def cancel_response(self):
         self.cancel.set()
         for resp in list(self._responses):
@@ -25,12 +26,17 @@ class _Worker(QThread):
             sig = inspect.signature(self.provider.stream)
             if 'response_holder' in sig.parameters:
                 stream_kwargs['response_holder'] = self._responses
+            usage_holder = []
+            if 'usage_holder' in sig.parameters:
+                stream_kwargs['usage_holder'] = usage_holder
             for text in self.provider.stream(self.messages,self.config,self.cancel,**stream_kwargs):
                 if self.cancel.is_set(): self.stopped_by_user.emit(); return
                 if isinstance(text,StreamEvent):
                     if text.text: self.activity_received.emit(text.kind,text.text)
                     continue
                 self.parts.append(text); self.delta_received.emit(text)
+            if usage_holder and isinstance(usage_holder[-1], dict):
+                self.usage = usage_holder[-1]
             if self.cancel.is_set(): self.stopped_by_user.emit()
             else:
                 result = ''.join(self.parts)
@@ -59,7 +65,7 @@ class ChatService(QObject):
             cls._global_finished_listeners.remove(callback)
 
     def __init__(self,provider=None,parent=None):
-        super().__init__(parent); self.provider=provider or OpenAICompatibleProvider(); self._request_id=None; self._cancel=None; self._worker=None; self._workers=set()
+        super().__init__(parent); self.provider=provider or OpenAICompatibleProvider(); self._request_id=None; self._cancel=None; self._worker=None; self._workers=set(); self.last_usage=None
         # 退出时先取消并短等在飞 worker，避免 QThread 运行中被销毁导致崩溃
         app = QApplication.instance()
         if app is not None:
@@ -83,7 +89,7 @@ class ChatService(QObject):
     @property
     def busy(self): return self._worker is not None and self._worker.isRunning()
     def send(self,messages:list[dict[str,Any]],config:ProviderConfig,request_id=None):
-        self.stop(); rid=request_id or uuid.uuid4().hex; cancel=threading.Event(); worker=_Worker(self.provider,messages,config,cancel); self._request_id=rid; self._cancel=cancel; self._worker=worker
+        self.stop(); rid=request_id or uuid.uuid4().hex; cancel=threading.Event(); worker=_Worker(self.provider,messages,config,cancel); self._request_id=rid; self._cancel=cancel; self._worker=worker; self.last_usage=None
         self._workers.add(worker)
         # 全部显式 QueuedConnection：worker 线程 emit 的信号若直连 lambda
         # 会在 worker 线程执行 _delta/_cleanup 等，与 GUI 线程的 busy()/
@@ -112,6 +118,9 @@ class ChatService(QObject):
         if self._current(rid): self.activity.emit(rid,kind,text)
     def _finished(self,rid,text):
         if self._current(rid):
+            usage = getattr(self._worker, "usage", None)
+            if isinstance(usage, dict):
+                self.last_usage = usage
             self.finished.emit(rid,text)
             for cb in list(type(self)._global_finished_listeners):
                 try: cb(text)

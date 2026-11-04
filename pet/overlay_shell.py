@@ -2609,6 +2609,13 @@ class OverlayShell(QObject):
         target = self.sprite if sprite is None else sprite
         if target is None or target not in self._all_sprites():
             return
+        from . import surfcore_link
+
+        allowed, blocked_message = surfcore_link.budget_gate("桌宠识屏")
+        if not allowed:
+            self._look_sprite = target
+            self._look_bubble(blocked_message)
+            return
         if self._look_busy:
             self._show_bubble_text_for(target, "上一张还没看完呢…", 3200)
             return
