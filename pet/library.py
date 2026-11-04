@@ -32,7 +32,6 @@ from PySide6.QtGui import QImage, QMovie
 
 from . import catalog
 from . import frameseq_provision
-from . import perfstats
 from . import webm_clip
 from .webm_clip import WebMClip, session_ending
 
@@ -337,27 +336,14 @@ class MovieLibrary(QObject):
         # 让在飞的预热线程尽快退出（低功耗铁律）。
         self._warm_paused = False
         self._low_first_frames_done = False  # 低优先级池首帧预热是否完整跑完
-        # 低优先级预热交互让路：用户交互（拖拽/点击动画/右键菜单）期间暂停
-        # 随机动作池预热，交互结束后继续；可重入（begin/end 配对计数，
-        # 拖拽中再点击等叠加持有）。高优先级预热不走此闸门。
-        # Condition 与 _interaction_lock 共用同一把锁：等待线程真正阻塞
-        # （交互放行时 notify 唤醒），而不是对已 set 的 Event 高频 wait 空转。
-        self._interaction_holders = 0
-        self._interaction_lock = threading.Lock()
-        self._interaction_cond = threading.Condition(self._interaction_lock)
-        # 测试 seam：仅供测试注入，产品侧无调用
-        self._interaction_active = threading.Event()  # 观测镜像：set=交互中
         # 预热代次：pause_warm（隐藏/切角色）时自增；在飞的旧代次预热线程
-        # 据此放弃，保证旧角色（旧库）的预热不会在交互结束后"复活"。
-        # begin_interaction 返回当前代次作为 token，end_interaction(token)
-        # 只释放同代次持有：pause_warm 换代的迟到 release 成为 no-op，
-        # 不会误释放换代后新交互的持有（可重入配对不被 pause 破坏）。
+        # 据此放弃，保证旧角色（旧库）的预热不会在恢复后"复活"。
         self._warm_generation = 0
         # Phase 2：动画预热总开关（默认开）。关闭时不启动高/低优先级预热，
         # 也不在窗口恢复显示时自动 resume 预热；首次播放/交互按需同步解码。
         self._prewarm_enabled = bool(prewarm_enabled)
-        # 低优先级批次去重：同一时间最多一个在飞批次（timer 到点/50ms 重试/
-        # resume 重排可能并发触发），worker 收尾时在 finally 清除。
+        # 低优先级批次去重：同一时间最多一个在飞批次（timer 到点 / resume 重排
+        # 可能并发触发），worker 收尾时在 finally 清除。
         self._low_warm_in_flight = False
         self._warm_state_lock = threading.Lock()  # 保护在飞标志与完成标志
         self._shutdown = False
@@ -367,13 +353,6 @@ class MovieLibrary(QObject):
         # 锁被占时的有界重试计数（见 _retry_frameseq_provision_after_lock）：三宠三库
         # 抢同一把素材根锁，抢不到的那个若就此收手就再也不会供给。
         self._frameseq_lock_retries = 0
-        # 交互中让路重排期：50ms 短间隔重试（交互一结束立即补上，不把 2s
-        # 延迟原样再等一遍）；pause_warm 会停掉它，避免遗留 singleShot 在
-        # pause 后仍触发起批。
-        self._low_warm_retry_timer = QTimer(self)
-        self._low_warm_retry_timer.setSingleShot(True)
-        self._low_warm_retry_timer.setInterval(50)
-        self._low_warm_retry_timer.timeout.connect(self._warm_low_priority_background)
         # 非播放中 clip 的残留帧回收（内存瘦身第一刀）：低频兜底定时器，随
         # 低优先级预热排期开、随隐藏/关闭停（见 pause_warm / shutdown）。
         self._idle_trim_timer = QTimer(self)
@@ -659,7 +638,6 @@ class MovieLibrary(QObject):
         clips: list,
         workers: int,
         *,
-        yield_to_interaction: bool = False,
         generation: int | None = None,
         cancelled: Callable[[], bool] | None = None,
         include_frames: bool = True,
@@ -673,14 +651,10 @@ class MovieLibrary(QObject):
         - balanced 只预解码常用交互动画首帧，随机动作池只取元数据（默认）
         - minimal  一律不预解码首帧，按需同步解码（最省内存，首次播放可能微卡）
 
-        yield_to_interaction=True 时（低优先级随机动作池），每段耗时的
-        ffmpeg 预热前检查交互让路闸门：交互进行中阻塞等待，交互结束后继续；
-        被 pause_warm（隐藏/切角色）作废则放弃本批（代次检查），不复活。
-
-        cancelled：可选的轻量中途作废检查（高优先级预热用，非阻塞）。每个
+        cancelled：可选的轻量中途作废检查（高/低优先级预热都传，非阻塞）。每个
         clip 预热前调用，返回 True（已暂停/换代）则跳过该 clip——隐藏/切角色
-        发生在预热中途时，旧库不再继续为后续 clip 拉起 ffmpeg（P2 对齐低优
-        路径的门控；低优路径走 yield_to_interaction 的阻塞闸门，不受影响）。
+        发生在预热中途时，旧库不再继续为后续 clip 拉起 ffmpeg，旧角色的预热
+        也不会在恢复后复活。
 
         generation：批次认领时（GUI 线程）捕获的代次，随批次传入 worker；避免
         "认领后、worker 真正开始预热前"的快速 pause/resume 让旧批次读到新代次
@@ -713,8 +687,6 @@ class MovieLibrary(QObject):
                         i = state['idx']
                         state['idx'] += 1
                     clip = clips[i]
-                    if yield_to_interaction and not self._await_interaction_clear(generation):
-                        continue
                     if cancelled is not None and cancelled():
                         continue
                     try:
@@ -780,23 +752,6 @@ class MovieLibrary(QObject):
                 return  # 已隐藏/切角色/收尾：不再等，照旧自己解
             time.sleep(0.02)
 
-    def _await_interaction_clear(self, generation: int) -> bool:
-        """低优先级预热让路：交互进行中阻塞等待，交互结束返回 True 继续。
-
-        用 Condition 阻塞等待（事件已 set 时 Event.wait 会立即返回，不能
-        用作"等待放行"原语——那样会形成忙循环空转 CPU）；交互结束或被
-        pause_warm 复位时 notify 唤醒。被 pause_warm（隐藏/切角色）作废
-        （暂停或代次不匹配）返回 False，调用方跳过该 clip —— 旧角色/旧库
-        的预热不会在交互结束后复活。
-        """
-        with self._interaction_lock:
-            while self._interaction_holders > 0:
-                if self._warm_paused or generation != self._warm_generation:
-                    return False
-                # 真正阻塞：wait 释放锁并睡眠，交互结束 notify 后立即返回；
-                # 50ms 超时只是防丢失唤醒的兜底轮询，不是忙循环。
-                self._interaction_cond.wait(timeout=0.05)
-            return not self._warm_paused and generation == self._warm_generation
 
     def set_prewarm_enabled(self, enabled: bool, *, visible: bool | None = None) -> None:
         """运行时开关动画预热（Phase 2）。
@@ -818,7 +773,7 @@ class MovieLibrary(QObject):
     def warm_allowed(self) -> bool:
         """库级预热闸门（只读判定）：设置页总开关开 **且** 未被隐藏/挂起暂停。
 
-        本库自有的预热路径（``_warm_objects`` / ``warm_predicted`` / 两条
+        本库自有的预热路径（``_warm_objects`` / 两条
         ``schedule_*``）各自读这两个标志；行为层的两条**直提**路径（预测预热与
         起飞落地预热）不经过它们，需要同一个判据才能守住"关闭后停止后台动画
         预热"的承诺。只读两个 bool，无锁、无副作用（跨线程读安全）。
@@ -826,10 +781,9 @@ class MovieLibrary(QObject):
         return bool(self._prewarm_enabled) and not self._warm_paused
 
     def pause_warm(self) -> None:
-        """窗口隐藏时暂停预热：停掉延迟定时器与让路重试，在飞线程尽快收尾。"""
+        """窗口隐藏时暂停预热：停掉延迟定时器，在飞线程尽快收尾。"""
         self._warm_paused = True
         self._low_warm_timer.stop()
-        self._low_warm_retry_timer.stop()
         self._idle_trim_timer.stop()  # 隐藏即停：池级回收也没有可见收益
         self._warm_generation += 1
         # 取消在飞的首帧预热（B7 审查 P1-2）：其拉起的 ffmpeg 进程随 clip 侧
@@ -842,13 +796,6 @@ class MovieLibrary(QObject):
                     cancel()
                 except Exception:
                     pass
-        # 交互让路闸门同步复位：持有计数清零并放行在飞的低优先级预热线程，
-        # 它们醒来后经代次检查发现本批已作废而放弃（旧角色预热不复活）。
-        # 计数与 event 在同一临界区更新，并 notify 唤醒等待线程。
-        with self._interaction_lock:
-            self._interaction_holders = 0
-            self._interaction_active.clear()
-            self._interaction_cond.notify_all()
 
     def cancel_frameseq_provision(self, *, timeout_ms: int = 2000) -> bool:
         """取消在飞的首跑供给线程（会话结束/退出收口）：置取消谓词 + terminate
@@ -1015,33 +962,6 @@ class MovieLibrary(QObject):
             return True
         return shared.claim_warm_owner(self)
 
-    def begin_interaction(self) -> int:
-        """用户交互开始：低优先级预热让路（可重入，拖拽中再点击等叠加持有）。
-
-        返回当前交互代次 token；释放时须原样传回 end_interaction(token)。
-        pause_warm 换代清零后，旧代次 token 的迟到 end 成为 no-op，不会
-        误释放换代后新交互的持有（可重入配对不被 pause 破坏）。
-        """
-        with self._interaction_lock:
-            self._interaction_holders += 1
-            self._interaction_active.set()
-            return self._warm_generation
-
-    def end_interaction(self, token: int | None = None) -> None:
-        """用户交互结束：全部持有者释放后恢复低优先级预热。
-
-        token 来自 begin_interaction()；与当前代次不匹配（pause_warm 换代
-        后的迟到 release）时忽略。token 为 None 时退化为旧式全局递减
-        （兼容无 token 调用方），仅在不涉及换代时使用。
-        """
-        with self._interaction_lock:
-            if token is not None and token != self._warm_generation:
-                return
-            if self._interaction_holders > 0:
-                self._interaction_holders -= 1
-            if self._interaction_holders == 0:
-                self._interaction_active.clear()
-                self._interaction_cond.notify_all()
 
     def _warm_clips(
         self,
@@ -1104,7 +1024,7 @@ class MovieLibrary(QObject):
         （不把 2s 延迟原样再等一遍）；已暂停（隐藏/切角色）则直接放弃。
 
         批次去重：同一时间最多一个在飞批次（_low_warm_in_flight），
-        timer 到点 / 50ms 重试 / resume 重排的并发触发只保留最早一批；
+        timer 到点 / resume 重排的并发触发只保留最早一批；
         已完整预热过则直接跳过（遗留 timer 触发不重复起批）。
 
         同角色兄弟库：预热责任在同角色首个活库（_warm_peer），本批不起——
@@ -1123,15 +1043,7 @@ class MovieLibrary(QObject):
                     return  # 已完整跑完：遗留 timer/重试触发不再重复起批
                 if self._low_warm_in_flight:
                     return  # 已有批次在飞：并发触发去重
-            with self._interaction_lock:
-                interaction_active = self._interaction_holders > 0
-            if interaction_active:
-                # 交互中：50ms 短间隔重排期；pause_warm 会停掉此 timer，
-                # 交互结束（end_interaction）后下一次触发立即起批。
-                self._low_warm_retry_timer.start()
-                return
             clips = [self.movie(name) for name in low]  # 主线程创建 QObject
-            self._low_warm_retry_timer.stop()
             with self._warm_state_lock:
                 self._low_warm_in_flight = True
                 # 代次必须在 GUI 线程认领批次这一刻捕获并随批次传入 worker：
@@ -1144,8 +1056,9 @@ class MovieLibrary(QObject):
                 try:
                     self._warm_objects(
                         clips, 1,
-                        yield_to_interaction=True,
                         generation=generation,
+                        cancelled=lambda: (self._warm_paused
+                                           or generation != self._warm_generation),
                         include_frames=(self._prewarm_policy == "full"),
                     )
                 finally:
@@ -1324,50 +1237,6 @@ class MovieLibrary(QObject):
                     '会话结束时停止 clip 失败', exc_info=True,
                 )
 
-    def warm_predicted(self, name: str) -> None:
-        """批10-A1：后台预解码预测动画的首帧（Phase 1，尽力而为）。
-
-        GLM A-1 / A3：预测预热只复用「交互让路 / 隐藏暂停 / warm_first_frame
-        幂等」三重闸门，webm_clip.py 零改动；不预起 reader（Phase 2 挂起）。
-
-        - 交互让路（_await_interaction_clear）：拖拽/点击动画/右键菜单期间等待；
-        - 隐藏暂停（_warm_paused / 代次）：pause_warm 换代后作废，不复活；
-        - 总开关（_prewarm_enabled）：库级预热开关关闭时不启动；
-        - warm_first_frame 幂等：已有缓存直接返回，不重复拉起 ffmpeg。
-
-        预测预热只是消除首播卡顿的缓存；作废/未命中时最坏退化为今天的行为
-        （后台短命 ffmpeg 产物进 LRU，被逐出即自然回收）。
-
-        必须在 GUI 线程调用（self.movie(name) 按 QObject thread affinity 在
-        主线程创建 clip）；真正耗时的 ffmpeg 解码放到独立 daemon 线程。
-        """
-        if self._warm_paused or not self._prewarm_enabled:
-            return
-        if session_ending():
-            return  # 会话结束（关机/注销）：绝不起预热线程拉 ffmpeg（issue #111）
-        clip = self.movie(name)
-        generation = self._warm_generation
-
-        def _run() -> None:
-            try:
-                if not self._await_interaction_clear(generation):
-                    return
-                if self._warm_paused or generation != self._warm_generation:
-                    return
-                warm = getattr(clip, 'warm_first_frame', None)
-                if not callable(warm):
-                    return
-                t0 = perfstats.clock() if perfstats.ENABLED else 0.0
-                warm()
-                if perfstats.ENABLED:
-                    perfstats.time('prewarm.ff_ms', perfstats.clock() - t0)
-            except Exception:
-                pass  # 预热失败不致命，后续播放按需同步解码
-
-        try:
-            threading.Thread(target=_run, daemon=True).start()
-        except Exception:
-            pass
 
     def rescan_frameseq(self) -> None:
         """重建帧序列映射（热集 + random/events）：只采纳**当前源身份**的世代目录。
@@ -1592,10 +1461,6 @@ class MovieLibrary(QObject):
 
     def names(self) -> list[str]:
         return list(self._paths)
-
-    def movies(self) -> dict[str, object]:
-        """当前已创建（已加载）的 clip 映射，供窗口层连接信号。"""
-        return dict(self._movies)
 
 
 def clip_current_image(clip):

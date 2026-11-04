@@ -594,20 +594,6 @@ def read_self_talk_texts(value) -> list[str]:
     return texts or list(DEFAULT_SELF_TALK_TEXTS)
 
 
-def expression_style_text(host, text: str) -> str:
-    """Apply the shared expression style only to built-in host-talk text."""
-    if text not in DEFAULT_SELF_TALK_TEXTS:
-        return text
-    mode = str(host.cfg.get("dialogue_mode", "legacy") or "legacy")
-    from .persona_phrases import PhrasePicker
-    picker = getattr(host, "_expression_picker", None)
-    if picker is None:
-        picker = host._expression_picker = PhrasePicker()
-    if mode == "custom":
-        return picker.custom(host.cfg.get("dialogue_phrases", {}), "thinking", text)
-    return picker.get(mode, "thinking", text)
-
-
 def schedule_self_talk(host, *, after_display: bool = False) -> None:
     host._self_talk_timer.stop()
     if not host._self_talk_enabled or not (
@@ -618,19 +604,6 @@ def schedule_self_talk(host, *, after_display: bool = False) -> None:
     if after_display:
         delay += host._self_talk_duration_seconds
     host._self_talk_timer.start(max(1000, int(round(delay * 1000))))
-
-
-def show_self_talk_text(host, text: str) -> bool:
-    from .window import _set_speech_bubble_interactive
-    if bubble_blocked(host):
-        return False
-    duration_ms = int(round(host._self_talk_duration_seconds * 1000))
-    anchor = window_placement.bubble_anchor_rect(host)
-    _set_speech_bubble_interactive(host)
-    host._speech_bubble.show_text(
-        text, anchor, duration_ms, pet_scale=host.scale
-    )
-    return True
 
 
 DEFAULT_IMAGE_CHANCE = 30  # 与 config.py 的 DEFAULT_SELF_TALK_IMAGE_CHANCE 保持一致
@@ -674,55 +647,6 @@ def pick_self_talk_choice(texts, images, image_chance):
     if random.random() * 100.0 < chance:
         return ("image", random.choice(image_list))
     return ("text", random.choice(clean_texts))
-
-
-def show_random_self_talk(host) -> bool:
-    from .focus_mode import shared_focus_session
-    if shared_focus_session().focusing:
-        return False  # FocusController provides the task-aware persona utterance once per process.
-    from .window import _set_speech_bubble_interactive
-    if bubble_blocked(host):
-        return False
-
-    # 审批等一直挂着的气泡优先，自言自语不覆盖
-    if getattr(host, "_sticky_bubble_active", False) or getattr(host, "_alert_current", None) is not None:
-        return False
-
-    # 惰性剔除运行期间被删除的图片
-    live_images = [
-        path for path in host._self_talk_images
-        if path.is_file()
-    ]
-    if len(live_images) != len(host._self_talk_images):
-        host._self_talk_images = live_images
-
-    picked = pick_self_talk_choice(
-        host._self_talk_texts, live_images, self_talk_image_chance(host)
-    )
-    if picked is None:
-        return False
-
-    kind, value = picked
-    duration_ms = int(
-        round(host._self_talk_duration_seconds * 1000)
-    )
-    anchor = window_placement.bubble_anchor_rect(host)
-
-    _set_speech_bubble_interactive(host)
-
-    if kind == "image":
-        # 图片气泡没有可朗读的文本：显式记 None，点击路径据此保持安静。
-        host._last_self_talk_text = None
-        return host._speech_bubble.show_image(
-            value,
-            anchor,
-            duration_ms,
-            pet_scale=host.scale,
-            image_scale=host._self_talk_image_scale,
-        )
-
-    host._last_self_talk_text = value
-    return host._show_self_talk_text(value)
 
 
 def on_self_talk_timeout(host) -> None:

@@ -240,7 +240,7 @@ def _gc_census() -> dict:
             except Exception:
                 continue
             if name in ('QImage', 'QPixmap', 'QIcon', 'QMovie', 'WebMClip', 'FrameSeqClip',
-                        'GifClip', 'PetSprite', 'OverlayWindow', 'PetWindow', 'QWidget',
+                        'GifClip', 'PetSprite', 'OverlayWindow', 'QWidget',
                         'QTimer', 'QThread', 'QObject', 'DynamicIsland', 'QMenu', 'QAction',
                         'AgentLinkManager', 'SharedAgentLinkManager', 'SharedSubsystems',
                         'MultiWindowProxy', 'SharedProactiveWatcher', 'SharedFullscreenWatcher',
