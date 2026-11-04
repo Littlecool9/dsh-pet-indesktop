@@ -12,14 +12,12 @@ import sys
 import time
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, QRect, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QMenu
 
-import pet.window as window_mod
 from pet import catalog
-from pet.config import Config
-from pet.window import PetWindow
+from pet.context_menus.shared import release_menu_tree
 
 
 class FakeClip(QObject):
@@ -87,14 +85,6 @@ class FakeLibrary:
         return 1.0
 
 
-class _Screen:
-    def availableGeometry(self):
-        return QRect(0, 0, 1920, 1080)
-
-    def devicePixelRatio(self):
-        return 1.0
-
-
 class _SlowPool:
     """前两次 waitForDone 未结束（触发 50ms 轮询重挂），之后完成。"""
 
@@ -121,30 +111,19 @@ def _pump(app, seconds):
         time.sleep(0.01)
 
 
-def test_delete_when_idle_timer_drops_after_menu_destroyed(app, tmp_path, monkeypatch):
-    lib = FakeLibrary()
-    win = PetWindow(lib, Config(base=tmp_path))
-    monkeypatch.setattr(win, '_screen_available', lambda: _Screen())
-    monkeypatch.setattr(win, '_rebuild_frame', lambda: None)
-
+def test_delete_when_idle_timer_drops_after_menu_destroyed(app, monkeypatch):
+    """释放流水线里的轮询定时器必须绑 menu context：菜单先销毁就随之失效。"""
     pool = _SlowPool()
-    built: list[QMenu] = []
 
-    def fake_populate(menu, pet):
-        submenu = menu.addMenu("动画")
-        submenu._animation_icon_pool = pool
-        built.append(menu)
-
-    monkeypatch.setattr(window_mod, '_populate_context_menu', fake_populate)
-    monkeypatch.setattr(PetWindow, '_exec_context_menu', lambda self, menu, pos: None)
+    menu = QMenu()
+    submenu = menu.addMenu("动画")
+    submenu._animation_icon_pool = pool
 
     errors: list[BaseException] = []
     monkeypatch.setattr(sys, 'excepthook',
                         lambda et, ev, tb: errors.append(ev))
 
-    win._show_context_menu(QPoint(100, 100))
-    assert built, "菜单必须经 populate 构建"
-    menu = built[0]
+    release_menu_tree(menu)
     assert pool.calls == 1, "worker 未结束：首轮轮询后应已重挂 50ms 定时器"
 
     # 窗口/菜单在轮询途中销毁：context 绑定的定时器必须随 menu 失效被丢弃，
@@ -160,6 +139,3 @@ def test_delete_when_idle_timer_drops_after_menu_destroyed(app, tmp_path, monkey
 
     assert pool.calls < 3, "菜单销毁后轮询定时器必须停止触发"
     assert errors == [], f"销毁后不得访问已删 C++ 对象：{errors}"
-
-    win.close()
-    app.processEvents()

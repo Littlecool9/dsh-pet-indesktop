@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-"""overlay 右键菜单 parity：与真实 PetWindow 的现代菜单树逐项一致。
+"""overlay 右键菜单 parity：独立 pet 形基准与 overlay 菜单树逐项一致。
 
-比对基准是**真实 PetWindow**：构造一个 PetWindow，按 ``app.py::_wire_window``
-的原样接线（聊天/余额/看屏/待办/报时/节日/生小肥鱼…）注入回调，再用**同一个
-建造器**（``build_modern_menu``）在同一份 Config、同一平台上建菜单；overlay 侧用
+比对基准是**独立的 pet 形宿主**：显式声明 ``app.py::_wire_window`` 原样注入的
+回调与素材池（聊天/余额/看屏/待办/生小肥鱼…），再用**同一个建造器**
+（``build_modern_menu``）在同一份 Config、同一平台上建菜单；overlay 侧用
 ``build_sprite_full_menu`` 建。断言 overlay 树**逐项包含**基准树（同一父路径、
 兄弟顺序保持），且多出来的条目只允许 overlay 特有项。
 
-基准用真 PetWindow 而不是替身，正是为了防"两边都少同一项"的自证：基准里出现
-什么，由注册表 + 用户编排 + 真实窗口面决定；facade 缺任何一面都会在这里红。
+基准不读 facade，正是为了防"两边都少同一项"的自证：基准里出现什么，由注册表 +
+用户编排 + 显式声明的宿主面决定；facade 缺任何一面都会在这里红。
 
 旧版扁平布局及模板切换已于 2026-10-08 全量退役，本文件随之收成单树 parity
 （见 docs/PR-REPORT-LEGACY-MENU-RETIREMENT-2026-10-08.md）。
 
 覆盖：
-1. overlay 树 ≡ build_modern_menu(PetWindow)（注册表 + 用户编排 + 图标分组）；
+1. overlay 树 ≡ build_modern_menu(独立 pet 形基准)（注册表 + 用户编排 + 图标分组）；
 2. 显式清单：用户点名的缺失条目（AI 对话/黄金回旋/显示本轮消费/
    边缘探头/大小/DeepSeek Harness/主动识屏/Agent 联动/
    网络信息）逐项在树里；
@@ -35,10 +35,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import json
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import QApplication
 
-import tests.test_context_menu_lifecycle as lc
 import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
 from pet.catalog import CANVAS_W, SCALE_STEPS
@@ -141,13 +140,40 @@ class _StubInstance(cap.CapInstance):
         return fac.RichLibrary()
 
 
-class _RefLibrary(lc.FakeLibrary):
-    """基准 PetWindow 的素材库（真 PetWindow 构造要求 names()）。"""
+class _ReferenceHost:
+    """现代建造器的独立 pet 形基准：显式声明 app 同款回调，不依赖 overlay facade。"""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._clips["act1"] = lc.FakeClip()
-        self.character_id = ""
+    def __init__(self, config, *, chat=True) -> None:
+        self.cfg = config
+        for key, pool in POOLS.items():
+            setattr(self, key, list(pool))
+        self.on_open_chat = (lambda: None) if chat else None
+        self.on_open_chat_settings = (lambda: None) if chat else None
+        self.on_show_balance = (lambda parent=None: None) if chat else None
+        self.on_look_screen = self.look_at_screen if chat else None
+        self.on_open_modern_settings = lambda: None
+        self.on_spawn_pet = lambda: None
+        self.on_clear_spawned_pets = lambda: None
+        self.on_open_todo_panel = lambda: None
+        self.on_network_info = lambda: None
+        self.on_switch_character = lambda character_id: None
+        self.playback_speed = 1.0
+        self.scale = 1.0
+        self.drag_physics = False
+        self.no_move = False
+
+    def look_at_screen(self) -> None:
+        pass
+
+    def icon_pixmap(self, size: int = 64) -> QPixmap:
+        pixmap = QPixmap(size, size)
+        pixmap.fill()
+        return pixmap
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return lambda *args, **kwargs: None
 
 
 class _NoChatInstance(_StubInstance):
@@ -168,29 +194,16 @@ def _make_overlay(tmp_path, *, chat=True, values=None):
     return shell, instance, config
 
 
-def _reference_window(config, *, chat=True):
-    """真实 PetWindow + app.py 同款接线（``_wire_window`` 的逐点对照）。"""
-    win = lc.PetWindow(_RefLibrary(), config)
-    for key, pool in POOLS.items():
-        setattr(win, key, list(pool))
-    win.on_open_chat = (lambda: None) if chat else None
-    win.on_open_chat_settings = (lambda: None) if chat else None
-    win.on_show_balance = (lambda parent=None: None) if chat else None
-    win.on_look_screen = win.look_at_screen if chat else None
-    win.on_open_modern_settings = lambda: None
-    win.on_spawn_pet = lambda: None
-    win.on_clear_spawned_pets = lambda: None
-    win.on_open_todo_panel = lambda: None
-    win.on_network_info = lambda: None
-    win.on_switch_character = lambda character_id: None
-    return win
+def _reference_host(config, *, chat=True):
+    """独立 pet 形宿主 + app.py 同款接线（``_wire_window`` 的逐点对照）。"""
+    return _ReferenceHost(config, chat=chat)
 
 
-def _reference_menu(win):
+def _reference_menu(host):
     from PySide6.QtWidgets import QMenu
 
     menu = QMenu()
-    build_modern_menu(menu, win)
+    build_modern_menu(menu, host)
     return menu
 
 
@@ -274,18 +287,17 @@ def _all_labels(container):
 
 
 # ---------------------------------------------------------------- 1. 树 parity
-def test_menu_tree_matches_reference_petwindow(tmp_path):
+def test_menu_tree_matches_reference_host(tmp_path):
     shell, _instance, config = _make_overlay(tmp_path)
-    win = _reference_window(config)
+    reference_host = _reference_host(config)
     try:
-        reference = _reference_menu(win)
+        reference = _reference_menu(reference_host)
         overlay = build_sprite_full_menu(shell)
         _assert_reference_contained(overlay, reference)
         # 现代布局确实生效：分组子菜单 + 样式标记
         assert "桌宠控制" in _all_labels(overlay)
         assert overlay.property("menuStyle") == "modern"
     finally:
-        win.close()
         shell._delete_runtime_marker()
 
 
@@ -401,9 +413,9 @@ def test_harness_launcher_gets_widget_dialog_parent(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- 3. 聊天门
 def test_chat_gated_entries_follow_chat_availability(tmp_path):
     shell, _instance, config = _make_overlay(tmp_path, chat=False)
-    win = _reference_window(config, chat=False)
+    reference_host = _reference_host(config, chat=False)
     try:
-        reference = _reference_menu(win)
+        reference = _reference_menu(reference_host)
         overlay = build_sprite_full_menu(shell)
         _assert_reference_contained(overlay, reference)
         labels = _all_labels(overlay)
@@ -412,7 +424,6 @@ def test_chat_gated_entries_follow_chat_availability(tmp_path):
         # 与基准逐点一致：基准也不含这些
         assert set(CHAT_GATED_LABELS).isdisjoint(_all_labels(reference))
     finally:
-        win.close()
         shell._delete_runtime_marker()
 
 
@@ -592,20 +603,20 @@ def _animation_families(container, *, label="随机动作", collect_actions=None
 
 
 def test_long_animation_menu_groups_and_closes(tmp_path):
-    """长随机动作清单：overlay facade 与真实 PetWindow 两条路径逐项一致。
+    """长随机动作清单：overlay facade 与独立基准宿主两条路径逐项一致。
 
     同时锁住 overlay 侧的两件能力：分组层级照建（facade 的素材面接得上），
     以及族内叶子带 ``closeOnTrigger``（点完动作整条菜单链收起，overlay 的
     ``_dispatch_deferred_menu_callbacks`` 负责派发挂起命令）。
     """
     shell, _instance, config = _make_overlay(tmp_path)
-    win = _reference_window(config)
+    reference_host = _reference_host(config)
     try:
-        win.acts = list(LONG_ACTS)
+        reference_host.acts = list(LONG_ACTS)
         shell.sprite.library.acts = list(LONG_ACTS)
         shell.behavior._cats_cache.clear()
 
-        reference = _reference_menu(win)
+        reference = _reference_menu(reference_host)
         overlay = build_sprite_full_menu(shell)
         _assert_reference_contained(overlay, reference)
 
@@ -620,7 +631,6 @@ def test_long_animation_menu_groups_and_closes(tmp_path):
         for action in leaves:
             assert action.property("closeOnTrigger") is True, action.text()
     finally:
-        win.close()
         shell._delete_runtime_marker()
 
 

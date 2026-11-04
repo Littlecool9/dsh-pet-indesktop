@@ -460,8 +460,16 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     from PySide6.QtWidgets import QApplication, QMenu
 
     from pet import catalog
-    from pet.context_menu import populate_context_menu
+    from pet.context_menus import build_modern_menu
     from pet.context_menus import shared
+    from pet.context_menus.menu_styles import (
+        apply_modern_menu_style,
+        install_modern_check_indicators,
+    )
+    from pet.context_menus.menu_styles.common import (
+        install_responsive_menu_style,
+        install_stay_open_interaction,
+    )
 
     class FakeConfig:
         values = {
@@ -505,8 +513,15 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     monkeypatch.setattr(shared.autostart_mod, "is_enabled", lambda: False)
     monkeypatch.setattr(catalog, "list_available_characters", lambda: ["shenshen"])
     menu = QMenu()
+    pet = FakePet()
 
-    populate_context_menu(menu, FakePet())
+    # 旧 ``populate_context_menu`` 的等价流水线（overlay 侧同一建造器 + 安装器）。
+    apply_modern_menu_style(
+        menu, pet.cfg.get("context_menu_appearance", {}) or {})
+    build_modern_menu(menu, pet)
+    install_modern_check_indicators(menu)
+    install_responsive_menu_style(menu)
+    install_stay_open_interaction(menu)
 
     root = [action.text() for action in menu.actions() if not action.isSeparator()]
     expected_root = [
