@@ -382,16 +382,31 @@ class SpriteMenuFacade:
     def on_open_todo_panel(self):
         return _first_callable(self._hosts(), ("open_todo_panel",))
 
-    @property
-    def on_network_info(self):
-        """「网络信息」：``AppShell.open_network_info``（进程级弹窗，与窗口版同一方法）。
+    # ---------------------------------------------------------------- 模块入口
+    def running_module(self, module_id: str):
+        """模块入口（菜单建造器用它拿运行中的模块实例）：经宿主找 AppShell。
 
-        弹窗按当前网络环境取一次数据，与"哪一只宠被右击"无关，故不绑 sprite——
-        但仍必须在 facade 上存在：注册表的可用性判定要求 ``on_network_info``
-        可调用（``registry._network_info_available``），缺了这个属性 overlay 菜单
-        会静默少一项（tests/test_sprite_menu_parity.py 逐项比对拦得住）。
+        解析顺序与其它进程级服务相同（AppShell → PetInstance → 壳），拿不到就
+        返回 ``None``——菜单条目据此置灰并写明模块不可用的原因。
         """
-        return _first_callable(self._hosts(), ("open_network_info",))
+        for host in self._hosts():
+            getter = getattr(host, "running_module", None)
+            if callable(getter):
+                try:
+                    return getter(module_id)
+                except Exception:
+                    log.debug("overlay: 取模块 %s 失败", module_id, exc_info=True)
+        return None
+
+    def module_unavailable_reason(self, module_id: str) -> str:
+        for host in self._hosts():
+            getter = getattr(host, "module_unavailable_reason", None)
+            if callable(getter):
+                try:
+                    return str(getter(module_id) or "")
+                except Exception:
+                    log.debug("overlay: 取模块 %s 不可用原因失败", module_id, exc_info=True)
+        return "模块未启动"
 
     def _behavior(self, sprite=None):
         """该 sprite **所在宿主**的行为控制器。

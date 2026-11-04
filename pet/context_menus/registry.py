@@ -1,6 +1,7 @@
 """Action registration and tree rendering for the shared Menu Action Model."""
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass
 from typing import Callable
@@ -12,7 +13,6 @@ from ..focus_ui import build_focus_menu
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
 from .shared import (
-    NETWORK_INFO_DISABLED_REASON,
     add_action,
     add_agent_link_menu,
     add_autostart,
@@ -30,8 +30,6 @@ from .shared import (
     add_return_corner,
     add_screen_capture_menu,
     add_submenu,
-    add_network_info,
-    network_info_menu_enabled,
     build_animation_categories,
     build_character_menu,
     build_size_menu,
@@ -51,7 +49,6 @@ ACTION_LABELS = {
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
     "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
     "quiet_mode": "免打扰", "focus_mode": "专注模式",
-    "network_info": "网络信息",
     "modern_settings": "桌宠设置", "quit": "退出",
 }
 
@@ -73,7 +70,6 @@ ACTION_ICONS = {
     "quick_launch": "application", "balance": "balance", "harness": "harness",
     "proactive_screen": "screen", "todo_panel": "todo",
     "quiet_mode": "pause", "focus_mode": "pause",
-    "network_info": "web",
     "modern_settings": "settings", "quit": "quit",
 }
 
@@ -93,7 +89,10 @@ class MenuActionSpec:
     build: Builder
     available: Availability = lambda _pet: True
     enabled: Enablement = lambda _pet: True
-    disabled_reason: str = "当前功能未启用"
+    disabled_reason: str | Callable[[object], str] = "当前功能未启用"
+    # 模块自带条目：标签/图标由模块声明，核心不维护第二份。
+    label: str = ""
+    icon: str = ""
 
 
 def _callback_available(name: str) -> Availability:
@@ -118,20 +117,12 @@ def _build_todo_panel(menu, pet):
     return add_action(menu, "待办提醒", "todo", pet.on_open_todo_panel, close_on_trigger=True)
 
 
-def _network_info_enabled(pet) -> bool:
-    """「网络信息」入口的运行时启用态：设置里开着才可用（默认开）。
-
-    **只影响 enabled，不影响 available**：关掉开关时入口保留布局位置、渲染成
-    "灰掉 + 说明"（CONTEXT.md 的 Runtime Disabled），不把节点从菜单树里过滤掉——
-    过滤只用于"能力不可用"，本例里就是回调缺失（纯桌宠变体）。
-    """
-    return network_info_menu_enabled(pet)
-
-
 class MenuActionRegistry:
     """Resolve capability-aware action IDs and render a resolved menu tree."""
 
     def __init__(self) -> None:
+        self._module_action_ids: set[str] = set()
+        self._modules_merged = False
         self._specs = {
             "chat": MenuActionSpec(_build_chat, _callback_available("on_open_chat")),
             "look_screen": MenuActionSpec(add_look_screen, _callback_available("on_look_screen")),
@@ -174,22 +165,42 @@ class MenuActionRegistry:
             "todo_panel": MenuActionSpec(
                 _build_todo_panel, _callback_available("on_open_todo_panel")
             ),
-            # 天气：回调缺失 = 能力不可用（隐藏）；开关关掉 = 运行时置灰、位置保留
-            # （CONTEXT.md 的 Capability Unavailable / Runtime Disabled 口径）。
-            "network_info": MenuActionSpec(
-                add_network_info,
-                _callback_available("on_network_info"),
-                enabled=_network_info_enabled,
-                disabled_reason=NETWORK_INFO_DISABLED_REASON,
-            ),
             "quit": MenuActionSpec(add_quit),
         }
 
+    # ---- 模块菜单条目（惰性合并；设置进程同样只读清单/菜单入口）------------
+    def _merge_module_specs(self) -> None:
+        if self._modules_merged:
+            return
+        self._modules_merged = True
+        try:
+            from ..modules import MODULES
+            from ..modules.registry import ModuleRegistry
+
+            specs = ModuleRegistry.from_packages(MODULES, tolerant=True).menu_action_specs()
+        except Exception:
+            logging.exception("汇总模块菜单入口失败（菜单按内置动作继续）")
+            return
+        conflicts = sorted(action_id for action_id in specs if action_id in self._specs)
+        if conflicts:
+            raise ValueError("模块菜单动作与内置动作 id 冲突：" + "、".join(conflicts))
+        self._specs.update(specs)
+        self._module_action_ids.update(specs)
+
+    def reset_module_specs(self) -> None:
+        """作废已合并的模块条目并允许下次访问重读 ``MODULES``（测试/热重载）。"""
+        for action_id in self._module_action_ids:
+            self._specs.pop(action_id, None)
+        self._module_action_ids.clear()
+        self._modules_merged = False
+
     @property
     def ids(self) -> frozenset[str]:
+        self._merge_module_specs()
         return frozenset(self._specs)
 
     def available_ids(self, pet) -> frozenset[str]:
+        self._merge_module_specs()
         return frozenset(
             action_id
             for action_id, spec in self._specs.items()
@@ -197,20 +208,39 @@ class MenuActionRegistry:
         )
 
     def enabled_ids(self, pet) -> frozenset[str]:
+        self._merge_module_specs()
         return frozenset(
             action_id
             for action_id, spec in self._specs.items()
             if spec.available(pet) and spec.enabled(pet)
         )
 
-    def disabled_reason(self, action_id: str) -> str:
+    def disabled_reason(self, action_id: str, pet=None) -> str:
+        self._merge_module_specs()
         spec = self._specs.get(action_id)
-        return spec.disabled_reason if spec is not None else "当前不可用"
+        if spec is None:
+            return "当前不可用"
+        reason = spec.disabled_reason
+        if callable(reason):
+            try:
+                return str(reason(pet))
+            except Exception:
+                logging.exception("解析菜单置灰原因失败：%s", action_id)
+                return "当前不可用"
+        return str(reason)
 
     def default_icon(self, action_id: str) -> str:
+        self._merge_module_specs()
+        spec = self._specs.get(action_id)
+        if spec is not None and spec.icon:
+            return spec.icon
         return ACTION_ICONS.get(action_id, "")
 
     def label(self, action_id: str) -> str:
+        self._merge_module_specs()
+        spec = self._specs.get(action_id)
+        if spec is not None and spec.label:
+            return spec.label
         return ACTION_LABELS.get(action_id, action_id)
 
     def icon(self, widget, action_id: str, override=None) -> QIcon:
@@ -226,6 +256,7 @@ class MenuActionRegistry:
         return vector_menu_icon(widget, name) if name else QIcon()
 
     def populate(self, menu: QMenu, pet, nodes, *, enabled_actions=None) -> None:
+        self._merge_module_specs()
         enabled = frozenset(enabled_actions) if enabled_actions is not None else self.enabled_ids(pet)
         explicit_separators = any(node.get("type") == "separator" for node in nodes)
         previous_section = None
@@ -274,7 +305,7 @@ class MenuActionRegistry:
                         action.setIcon(self.icon(menu, action_id, node.get("icon")))
                     if action is not None and action_id not in enabled:
                         action.setEnabled(False)
-                        action.setToolTip(self.disabled_reason(action_id))
+                        action.setToolTip(self.disabled_reason(action_id, pet))
                         if isinstance(action, QWidgetAction) and action.defaultWidget() is not None:
                             action.defaultWidget().setEnabled(False)
             rendered += 1

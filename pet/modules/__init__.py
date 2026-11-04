@@ -11,6 +11,7 @@ from __future__ import annotations
 
 MODULES: tuple[str, ...] = (
     "pet.modules.surfcore",
+    "pet.modules.network_info",
 )
 
 __all__ = ["MODULES"]

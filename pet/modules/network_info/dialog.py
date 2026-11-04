@@ -6,7 +6,7 @@
 跟随系统调色板亮度（令牌口径见 ``.agents/skills/desktop-pet-ui-style/``）。
 不发明新视觉语言。
 
-数据口径（与 ``pet/network_info.py`` 一致）：
+数据口径（与 ``pet/modules/network_info/data.py`` 一致）：
 
 - **打开时取一次**（约 1KB），不轮询；只有用户点「重新获取」才再取一次。
 - 取数在后台线程，失败如实显示「获取失败」＋原因，绝不静默显示空值。
@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import network_info as info_mod
+from . import data as info_mod
 
 logger = logging.getLogger(__name__)
 

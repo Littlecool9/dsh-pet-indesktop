@@ -90,8 +90,29 @@ class ModuleRegistry:
         self._started = False
 
     @classmethod
-    def from_packages(cls, packages: Iterable[str]) -> "ModuleRegistry":
-        return cls(read_manifest(p) for p in packages)
+    def from_packages(cls, packages: Iterable[str], *, tolerant: bool = False) -> "ModuleRegistry":
+        """从包名读清单建表。
+
+        ``tolerant=True`` 时**一个包坏掉不拖垮启动**：清单读取失败记成一个
+        ``failed`` 模块状态（原因可见），其余模块照常登记；默认仍严格抛错，
+        守住测试与显式构造的契约。
+        """
+        manifests: list[ModuleManifest] = []
+        broken: dict[str, ModuleStatus] = {}
+        for package in packages:
+            try:
+                manifests.append(read_manifest(package))
+            except Exception as exc:
+                if not tolerant:
+                    raise
+                module_id = str(package).rsplit(".", 1)[-1]
+                broken[module_id] = ModuleStatus(
+                    FAILED, f"模块清单读取失败：{type(exc).__name__}: {exc}"[:200])
+                logger.exception("模块包 %s 的清单读取失败，已跳过", package)
+        registry = cls(manifests)
+        for module_id, status in broken.items():
+            registry._status[module_id] = status
+        return registry
 
     # ---- 查询 ----------------------------------------------------------------
     @property

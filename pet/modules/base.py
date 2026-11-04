@@ -17,7 +17,26 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class ModuleConfigSchema:
+    """模块配置 schema（Qt-free；设置进程与主进程共用）。
+
+    - ``defaults``：本模块拥有的配置键与出厂默认值（键名稳定，不许改名）。
+    - ``normalize``：就地清洗 ``dict``（手改配置里的脏值）；抛异常由调用方隔离。
+    - ``global_keys``：这些键是**全局**配置（落主 ``config.json``），不进每宠档案。
+    """
+
+    defaults: Mapping[str, Any]
+    normalize: Callable[[dict], None] | None = None
+    global_keys: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for key in self.defaults:
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"模块配置键必须是非空字符串：{key!r}")
 
 
 @dataclass(frozen=True)
@@ -28,6 +47,7 @@ class ModuleManifest:
     - ``requires``：硬依赖的模块 id——缺了（未登记 / 未启动成功）本模块就不启动，并记录原因。
     - ``optional``：软依赖——缺了照常启动，由模块自己降级（启动前已在的才算）。
     - ``config_keys``：本模块拥有的配置键（键名不变；只是归属记在模块上）。
+    - ``config_schema``：``"pkg.mod:SCHEMA"``，返回 :class:`ModuleConfigSchema` 的字符串入口。
     - ``factory``：``"pkg.mod:attr"``，调用 ``attr(manifest)`` 得到 :class:`PetModule` 实例。
     - ``settings_page`` / ``menu_actions``：字符串入口，按需 import（见 :func:`load_entry`）。
     """
@@ -38,6 +58,7 @@ class ModuleManifest:
     requires: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
     config_keys: tuple[str, ...] = ()
+    config_schema: str | None = None
     settings_page: str | None = None
     menu_actions: str | None = None
     description: str = ""
@@ -48,7 +69,7 @@ class ModuleManifest:
             raise ValueError(f"模块 id 只能是小写字母/数字/下划线：{self.id!r}")
         if not self.name:
             raise ValueError(f"模块 {self.id} 缺少显示名 name")
-        for entry in (self.factory, self.settings_page, self.menu_actions):
+        for entry in (self.factory, self.config_schema, self.settings_page, self.menu_actions):
             if entry is not None and ":" not in entry:
                 raise ValueError(f"模块 {self.id} 的入口必须写成 'pkg.mod:attr'：{entry!r}")
         if self.id in self.requires or self.id in self.optional:
@@ -93,4 +114,6 @@ def load_entry(entry: str) -> Any:
     return target
 
 
-__all__ = ["ModuleHost", "ModuleManifest", "PetModule", "load_entry"]
+__all__ = [
+    "ModuleConfigSchema", "ModuleHost", "ModuleManifest", "PetModule", "load_entry",
+]

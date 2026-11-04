@@ -26,6 +26,7 @@ import re
 import pytest
 
 from pet import config as config_mod
+from pet import module_config
 from pet.config import Config
 
 # reload() 白名单键集合现状快照（与 pet/config.py reload() 的
@@ -138,7 +139,10 @@ def _actual_reload_whitelist() -> frozenset:
     reload_src = inspect.getsource(config_mod.Config.reload)
     m = re.search(r"for key in \((.*?)\):\n", reload_src, re.S)
     assert m, "从 reload() 源码找不到白名单元组，请检查 config.py 的白名单格式"
-    return frozenset(re.findall(r'"([a-zA-Z0-9_]+)"', m.group(1)))
+    # 模块配置键由模块 schema 提供（`*module_config.module_keys()`），不是字面量；
+    # 运行期白名单 = 字面量 ∪ 模块键，护栏按真实集合比对。
+    return frozenset(re.findall(r'"([a-zA-Z0-9_]+)"', m.group(1))) | frozenset(
+        module_config.module_keys())
 
 
 def _actual_defaults_keys(tmp_path) -> frozenset:

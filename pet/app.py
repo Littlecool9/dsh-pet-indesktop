@@ -706,6 +706,9 @@ class PetInstance:
             shell._apply_balance_timer()
             # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
             shell._sync_todo_service()
+            apply_modules = getattr(shell, "_apply_module_config", None)
+            if callable(apply_modules):
+                apply_modules()
             self._refresh_chat_windows()
 
     # ------------------------------------------------------------ 其它窗口级
@@ -837,9 +840,10 @@ class AppShell:
         # 角色热切换重建窗口后无需重绑（PR72 上游版挂 PetApp；本分支归 AppShell）。
         self.todo_service = None
         self.todo_panel = None
-        # 网络信息弹窗（issue #172）：进程级单例、非模态。数据只在打开时取一次
-        # （后台线程），故不需要常驻服务；窗口销毁即置空。
-        self.network_info_dialog = None
+        # 功能模块：start() 里按 MODULES 建表并启动；运行期配置收敛与退出收口
+        # 都经同一个注册表（模块失败只影响自己，原因可查）。
+        self._module_registry = None
+        self._module_host = None
         if self._todo_wanted():
             self._ensure_todo_service()
         # 4.4b：`experimental_single_process_spawn` 键删除——进程内多窗从
@@ -1106,6 +1110,8 @@ class AppShell:
         self._apply_balance_timer()
         # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
         self._sync_todo_service()
+        # 模块运行时配置（菜单开关等）与进程内服务同一处收敛。
+        self._apply_module_config()
         # 外部配置变更也可能改了 agent_link.dsh（右键菜单开关落盘后同样收敛到
         # 这里）→ 各窗 refresh_pet_settings 链里的 manager.apply_config 会按
         # 同一功能门启停 DshMonitor（桥目录唯一读方）；overlay 拓扑由上面的
@@ -1450,6 +1456,43 @@ class AppShell:
             except RuntimeError:
                 pass
 
+    # ------------------------------------------------------------ 功能模块
+    def _start_modules(self) -> None:
+        """按 ``MODULES`` 建表并启动（幂等；坏包只记为 failed，不拖垮启动）。"""
+        if getattr(self, "_module_registry", None) is not None:
+            return
+        from .module_host import AppModuleHost
+        from .modules import MODULES
+        from .modules.registry import ModuleRegistry
+
+        host = AppModuleHost(self)
+        registry = ModuleRegistry.from_packages(MODULES, tolerant=True)
+        self._module_host = host
+        self._module_registry = registry
+        registry.start_all(host, self.config)
+
+    def _apply_module_config(self) -> None:
+        registry = getattr(self, "_module_registry", None)
+        if registry is not None:
+            registry.apply_config(self.config)
+
+    def _stop_modules(self) -> None:
+        registry = getattr(self, "_module_registry", None)
+        if registry is not None:
+            registry.stop_all()
+
+    def running_module(self, module_id: str):
+        """运行中的模块实例；没启动/失败/被依赖挡住时返回 None。"""
+        registry = getattr(self, "_module_registry", None)
+        return registry.get(module_id) if registry is not None else None
+
+    def module_unavailable_reason(self, module_id: str) -> str:
+        """菜单 / 设置页置灰时显示的模块原因（运行中为空串）。"""
+        registry = getattr(self, "_module_registry", None)
+        if registry is None:
+            return "模块未启动"
+        return registry.unavailable_reason(module_id)
+
     # ------------------------------------------------------------ 启动
     def start(self) -> None:
         # aboutToQuit 只在控制器层绑定一次：角色热切换会重建窗口，逐个
@@ -1477,6 +1520,8 @@ class AppShell:
         # 无需窗——环则空转）；flag 关时 _shared 为 None，no-op。
         if self._shared is not None:
             self._shared.start()
+        # 功能模块在壳就绪后启动：模块的菜单入口/弹窗父窗都依赖壳。
+        self._start_modules()
         self._sync_dynamic_island()
         self._apply_balance_timer()
         self._sync_todo_service()
@@ -1837,6 +1882,8 @@ class AppShell:
         # 退出标记（R2 第五缺口）：在途自动拉起 worker 凭它中止或补偿收口——
         # 否则「退出时登记表为空 → worker 随后 spawn 登记」会留下永远无人收的进程。
         self._quitting = True
+        # 功能模块先停（弹窗/轮询线程/服务），再收窗口与进程级资源。
+        self._stop_modules()
         # 窗级收口：逐窗保存位置、停本窗预热与 Agent、提交本窗会话
         for inst in self._instances:
             win = inst.win
@@ -2767,48 +2814,6 @@ class AppShell:
 
     def _todo_panel_finished(self, _result: int) -> None:
         self.todo_panel = None
-
-    def open_network_info(self) -> None:
-        """打开「网络信息」弹窗（非模态单例；数据只在打开时取一次，不轮询）。"""
-        from .network_info_dialog import NetworkInfoDialog
-
-        dialog = getattr(self, "network_info_dialog", None)
-        if dialog is not None and not shiboken6.isValid(dialog):
-            # 已销毁但收口信号还没到（或父宠物先走一步带走子窗）：先清掉再新建，
-            # 否则复用路径会在死对象上抛 "Internal C++ object already deleted"。
-            dialog = None
-            self.network_info_dialog = None
-        if dialog is None:
-            # parent 必须是 QWidget：overlay 拓扑下 self.win 是 sprite 壳（QObject），
-            # 直接当 parent 会在 QDialog 构造期 TypeError（同待办面板）。
-            parent = self.win
-            dialog = NetworkInfoDialog(parent if isinstance(parent, QWidget) else None)
-            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-            dialog.finished.connect(self._network_info_finished)
-            # 父窗销毁（或任何 C++ 侧析构）不一定发 finished，但一定会发 destroyed：
-            # 用带对象身份的收口兜住，避免单例长期指向失效对象。
-            dialog.destroyed.connect(
-                lambda *_args, owner=self, target=dialog:
-                    owner._network_info_destroyed(target))
-            self.network_info_dialog = dialog
-        inst = self.instance
-        if inst is not None:
-            inst._present_dialog(dialog)
-        else:
-            dialog.show()
-
-    def _network_info_finished(self, _result: int) -> None:
-        """正常关闭（关窗即释放单例；必要时由 destroyed 再兜一次）。"""
-        self.network_info_dialog = None
-
-    def _network_info_destroyed(self, dialog) -> None:
-        """窗口被销毁时收口单例；**只认当前持有的那一个**。
-
-        身份核对不可省：旧窗的 destroyed 可能晚于新窗创建（先销毁、再点菜单开新窗），
-        无脑清空会把新实例一起丢掉，之后每次点击都新建一个窗口。
-        """
-        if getattr(self, "network_info_dialog", None) is dialog:
-            self.network_info_dialog = None
 
     def system_notify(self, title: str, message: str, *, on_click=None, duration_ms: int = 5000) -> None:
         """Show a bottom-right desktop notification (self-drawn, tray-independent)."""
