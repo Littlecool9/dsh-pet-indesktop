@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 MODULES: tuple[str, ...] = (
-    # 按阶段 2 迁移顺序逐个加入，例如 "pet.modules.network_info"。
+    "pet.modules.surfcore",
 )
 
 __all__ = ["MODULES"]
