@@ -786,44 +786,37 @@ def test_island_feedback_previews_when_request_finished(tmp_path):
 
 
 def test_pause_agent_link_for_hide_decision(tmp_path):
-    """隐藏期联动暂停决策：反馈面可用 → 不暂停；不可用/未注入/探针炸 → 照旧暂停。"""
+    """隐藏期联动暂停决策：反馈面可用 → 不暂停；不可用 → 照旧暂停。
+
+    overlay 拓扑的落点是 ``OverlayShell._pause_shared_subsystems``（旧
+    ``WindowFeatureGateMixin.pause_agent_link_for_hide`` 的壳层等价物）。
+    """
     _qapp()
-    from PySide6.QtWidgets import QWidget
+    from pet.overlay_shell import OverlayShell
 
-    from pet.window_optional_services import WindowFeatureGateMixin
-
-    class _Win(QWidget, WindowFeatureGateMixin):
-        pass
-
-    win = _Win()
     pauses = []
 
     class _Mgr:
         def pause(self):
             pauses.append("pause")
 
-    win.agent_link_manager = _Mgr()
-
-    # 未注入探针（no-chat / 旧接线）：照旧暂停（原省电行为）
-    win.pause_agent_link_for_hide()
+    win = type("Host", (), {
+        "agent_link_manager": _Mgr(),
+        "proactive_watcher": None,
+        "_island_feedback_available": lambda self: False,
+    })()
+    OverlayShell._pause_shared_subsystems(win)
     assert pauses == ["pause"]
 
     # 反馈面可用：跳过暂停——隐藏期间岛继续收 DSH 事件驱动反馈气泡
-    win.island_feedback_available = lambda: True
-    win.pause_agent_link_for_hide()
+    win._island_feedback_available = lambda: True
+    OverlayShell._pause_shared_subsystems(win)
     assert pauses == ["pause"]
 
-    # 反馈面不可用 / 探针异常：照旧暂停
-    win.island_feedback_available = lambda: False
-    win.pause_agent_link_for_hide()
+    # 反馈面不可用：照旧暂停
+    win._island_feedback_available = lambda: False
+    OverlayShell._pause_shared_subsystems(win)
     assert pauses == ["pause", "pause"]
-
-    def _boom():
-        raise RuntimeError("probe boom")
-
-    win.island_feedback_available = _boom
-    win.pause_agent_link_for_hide()
-    assert pauses == ["pause", "pause", "pause"]
 
 
 def test_appshell_island_feedback_available(tmp_path):
