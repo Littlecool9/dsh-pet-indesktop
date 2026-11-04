@@ -25,12 +25,11 @@ const PET_BODY_LIMIT = 256 * 1024;
  * @param {object} opts
  * @param {object} opts.chat                  pet-chat 服务
  * @param {object} opts.purpose               pet-purpose 服务
- * @param {object} opts.petService            原有安装/启动服务（拿 running/installed）
  * @param {string} opts.stateDir              ~/.dsh/surfcore
  * @param {() => string} opts.currentDshUrl   DSH 当前 Web 地址
  * @param {(msg:string, ...args:any[])=>void} [opts.pluginLog]
  */
-export function createPetApiService({ chat, purpose, petService, stateDir, currentDshUrl, pluginLog = () => {}, version = '' }) {
+export function createPetApiService({ chat, purpose, stateDir, currentDshUrl, pluginLog = () => {}, version = '' }) {
   const root = path.join(stateDir, 'pet');
   const hostFile = path.join(root, 'host.json');
   let lastHostWrite = 0;
@@ -82,11 +81,11 @@ export function createPetApiService({ chat, purpose, petService, stateDir, curre
   }
 
   function statusForPet() {
-    const base = petService?.status ? petService.status() : {};
     const chatStatus = chat.status();
+    const client = chat.online();
     return {
       ok: true,
-      pet: { installed: Boolean(base.installed), running: Boolean(base.running), dir: base.dir || '', skins: base.skins || [] },
+      client: { online: Boolean(client.online), lastSeenAt: client.lastSeenAt || 0 },
       chat: chatStatus.chat,
       role: chatStatus.role,
       proactive: chatStatus.proactive,

@@ -70,11 +70,9 @@ import { createTokenBudgetService } from './token-budget.js';
 import { scanPluginCompatibility } from './compat.js';
 import { createGateEventStore } from '../../../src/gate-events.js';
 import { normalizeAllowlist } from '../../../src/allowlist.js';
-import { createPetService, detectElectronPath, installElectronRuntime, ELECTRON_VERSION, electronDownloadUrl } from './pet.js';
 import { createPetChatService } from './pet-chat.js';
 import { createPetPurposeService } from './pet-purpose.js';
 import { createPetApiService } from './pet-api.js';
-import { createUpdatesService, resumePendingApply } from './updates.js';
 import { BILI_WORKSPACE_TITLE, biliWorkspacePath } from './bili-workspace.js';
 import {
   adminFromSources, adminSummary, normalizeAdmin, projectAdminSave,
@@ -182,10 +180,6 @@ export const inject = ['webServer', 'connection', 'sessionController'];
 export function apply(ctx) {
   ensureDirs();
 
-  // 上次的"退出后应用"可能没跑起来（Electron 宿主没带 ELECTRON_RUN_AS_NODE）：
-  // 这里重新排队，用户下次退出 DSH 就会应用（2026-10-28 反馈：点几次都还是旧版本）。
-  try { resumePendingApply({ stateDir: STATE_DIR, pluginLog }); } catch (error) { pluginLog('[updates] 启动重试失败：', String(error?.message ?? error)); }
-
   // 2026-10-22 起：`surface_core` 迁移期的一次性逻辑**已整段删除**。
   // 原因：当年为了把旧工作区改名，留了「有 .legacy-workspace 标记就删/移旧目录」的代码；
   // 这类「启动时按标记动用户目录」的代码风险远大于收益（误删不可逆），迁移也早已完成。
@@ -229,9 +223,9 @@ export function apply(ctx) {
   });
   // 闸门事件中心：桥接负责写，插件负责展示/确认；同一份文件、同一套分级。
   const gateEvents = createGateEventStore({ dir: STATE_DIR, log: (message) => pluginLog(message) });
-  // ── 桌宠（独立栏目，默认不安装；用户自己安装才生效）────────────────────
-  const petService = createPetService({ stateDir: STATE_DIR, pluginLog, getSubprocess: () => ctx.get('subprocess') });
   // 桌宠对话与「目的机制」的桌宠载体：和 QQ / B站 共用当前角色的人格卡、记忆卡、目的状态。
+  // 桌面端桌宠是本仓库根目录的 PySide6 程序，自己读 ~/.dsh/surfcore/pet/host.json 连 pet-api；
+  // 插件不再安装/启动/更新任何 Electron 桌宠。
   // Phase 0A：旁路遥测（只读事件，不改 prompt/工具/会话行为）。
   const contextTelemetry = createContextTelemetry({
     file: path.join(STATE_DIR, 'context-telemetry-plugin.jsonl'),
@@ -254,74 +248,10 @@ export function apply(ctx) {
   const petApi = createPetApiService({
     chat: petChat,
     purpose: petPurpose,
-    petService,
     stateDir: STATE_DIR,
     currentDshUrl,
     pluginLog,
     version: VERSION,
-  });
-
-  // ── 组件更新（2026-10-26 用户要求）──────────────────────────────────────
-  // 检查 SurfCore 本体 + 语音包 + 桌宠 + 未来登记的扩展：只读 git fetch，更新只允许 --ff-only。
-  // 组件清单每次动态解析：换路径 / 新装包 / 新扩展都不用重启插件。
-  const updates = createUpdatesService({
-    stateDir: STATE_DIR,
-    pluginLog,
-    githubToken: () => String(readUnified().config?.updates?.githubToken ?? ''),
-    // 更新通道：stable（默认，只走正式 Release）/ dev（只走 Pre-release 的 -dev.N）
-    channel: () => String(readUnified().config?.updates?.channel ?? 'stable'),
-    blockedReason: (component) => {
-      if (component.kind === 'pet' || component.id === 'surfpet') {
-        try {
-          const st = petService.status();
-          if (st?.running) return '桌宠正在运行，先停止再更新';
-        } catch {}
-      }
-      return '';
-    },
-    components: () => {
-      const list = [];
-      const updCfg = readUnified().config?.updates ?? {};
-      // 1) SurfCore 本体：源码树，走 git
-      list.push({ id: 'surfcore', name: 'SurfCore 本体', dir: QQBOT_ROOT, kind: 'git', branch: 'main', versionRepo: 'Mieksido/surfcore' });
-      // 2) 语音包**不进入自动更新列表**：它是离线运行时/模型/vendor 包，
-      //    不是 SurfCore 那种代码 zip；统一 updateFromZip 会按 surfcore-* + package.json
-      //    解析而必然失败（2026-10-30 用户反馈）。需要新包时在「语音」页重新导入离线包，
-      //    由 voice-pack-import 保留 config.toml / .venv / models / vendor。
-      //    语音包自己的 version.json / models.json 仍由语音页/包管理读取。
-      // 3) 桌宠：构建产物，走版本清单（zip 安装包）；更新交给 petService.updateFromZip（保留 data/）
-      try {
-        const st = petService.status();
-        if (st?.dir) {
-          list.push({
-            id: 'surfpet', name: '桌宠', dir: st.dir, kind: 'release',
-            versionUrl: updCfg.pet?.versionUrl || '',
-            versionFile: 'package.json',
-            installZip: (zipPath) => petService.updateFromZip(zipPath),
-          });
-        }
-      } catch {}
-      // 4) 用户/未来扩展登记的组件：unified config 的 updates.components[]
-      try {
-        const custom = updCfg.components;
-        if (Array.isArray(custom)) {
-          for (const item of custom) {
-            if (!item || typeof item !== 'object' || !item.id || !item.dir) continue;
-            list.push({
-              id: String(item.id).slice(0, 60),
-              name: String(item.name ?? item.id).slice(0, 80),
-              dir: String(item.dir),
-              kind: ['git', 'release', 'auto'].includes(item.kind) ? item.kind : 'auto',
-              branch: item.branch ? String(item.branch).slice(0, 60) : undefined,
-              versionUrl: item.versionUrl ? String(item.versionUrl) : '',
-            });
-          }
-        }
-      } catch {}
-      // 去重（同 id 只留第一个）
-      const seen = new Set();
-      return list.filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)));
-    },
   });
 
   let sessionEventOff = null;
@@ -762,8 +692,6 @@ export function apply(ctx) {
       extensions: extensionHost.describe(),
       // 平台启动开关：设置页顶部状态点、概览三按钮的可用性都读它。
       platformStart: platformStartState(),
-      // 组件更新：概览「更新」卡与启动弹窗都读它（检查结果是缓存的，不在这里触发网络）。
-      updates: updates.status(),
       scheduler: schedulerStatus,
       launch: await launchStatus(),
       snowluma: {
@@ -2269,8 +2197,7 @@ ${body}`;
     }
   }
 
-  // 桌宠：安装 / 卸载 / 启动 / 停止 / 状态（本机文件，不经过桥接）
-  let electronJob = null;
+  // 桌宠：只提供连接状态与对话设置；桌面端自己启动、自己读 host.json 连 pet-api。
 
   // 原生「浏览目录 / 选择文件」——浏览器拿不到绝对路径，只能由宿主进程弹 Windows 对话框。
   // 仅 Windows 且 DSH 跑在本机时有意义；其它情况返回可读错误，前端提示手动填。
@@ -2323,13 +2250,11 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     const method = String(req.method || 'GET').toUpperCase();
     try {
       if (suffix === '/status' && method === 'GET') {
-        const petStatus = petService.status();
         const chatStatus = petChat.status();
-        const cfgPet = String(readQqConfig().config?.pet?.appDir || '').trim();
-        const detected = detectElectronPath({ cfgPath: petService.status().electronPath || '', appDir: cfgPet, stateDir: STATE_DIR });
+        const client = petChat.online();
         json(res, 200, {
-          ...petStatus,
-          installing: petStatus.installing || electronJob || null,
+          ok: true,
+          client: { online: Boolean(client.online), lastSeenAt: client.lastSeenAt || 0 },
           chat: chatStatus.chat,
           role: chatStatus.role,
           proactive: chatStatus.proactive,
@@ -2339,72 +2264,16 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
           focus: chatStatus.focus,
           events: { ...chatStatus.events, hostFile: petApi.hostFile },
           lastError: chatStatus.lastError,
-          defaults: {
-            zipUrl: 'https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip',
-            electronUrl: electronDownloadUrl(),
-            electronVersion: ELECTRON_VERSION,
-          },
-          electronDetected: detected,
         });
         return;
       }
       if (method !== 'POST') { json(res, 405, { ok: false, error: '只支持 POST' }); return; }
       const body = JSON.parse((await readBody(req)) || '{}');
-      if (suffix === '/config') { json(res, 200, { ok: true, ...petService.configure(body) }); return; }
       if (suffix === '/focus') {
         const state = petChat.setFocus(body.enabled === true, body.source || 'settings');
         json(res, 200, { ok: true, focus: state });
         return;
       }
-      if (suffix === '/electron-detect') {
-        const cfgPet = String(readQqConfig().config?.pet?.appDir || '').trim();
-        const found = detectElectronPath({ cfgPath: petService.status().electronPath || '', appDir: cfgPet, stateDir: STATE_DIR });
-        if (found) { try { petService.configure({ electronPath: found }); } catch {} }
-        json(res, 200, { ok: Boolean(found), electronPath: found, error: found ? '' : '本机没找到 Electron，可点「下载 Electron」自动装' });
-        return;
-      }
-      if (suffix === '/electron-install') {
-        const jobKey = 'electron';
-        electronJob = { phase: '准备下载 Electron', progress: 0, error: null, key: jobKey };
-        const onProgress = (pct, phase) => {
-          if (!electronJob) return;
-          electronJob = { ...electronJob, progress: pct, phase: phase || electronJob.phase, updatedAt: Date.now() };
-        };
-        const src = ['github', 'mirror'].includes(String(body.source ?? '')) ? String(body.source) : 'auto';
-        let r;
-        try {
-          r = await installElectronRuntime({ stateDir: STATE_DIR, log: (m) => pluginLog(m), source: src, onProgress });
-          electronJob = { ...electronJob, phase: '完成', progress: 100 };
-        } catch (error) {
-          electronJob = { ...electronJob, phase: '失败', error: String(error?.message ?? error) };
-          throw error;
-        } finally {
-          setTimeout(() => { electronJob = null; }, 60_000).unref?.();
-        }
-        try { if (r.electronPath) petService.configure({ electronPath: r.electronPath }); } catch {}
-        json(res, 200, r);
-        return;
-      }
-      if (suffix === '/install') {
-        // body 里带设置页表单：安装请求本身就要落盘 source/appDir/electronPath，
-        // 不能要求用户先点「保存设置」（2026-10-30：填了目录点安装仍报"请先填写安装包地址"）。
-        const r = await petService.install(body?.source, {
-          source: body?.source, appDir: body?.appDir, electronPath: body?.electronPath,
-        });
-        json(res, 200, r);
-        return;
-      }
-      if (suffix === '/remove') { json(res, 200, await petService.remove()); return; }
-      if (suffix === '/clean') { json(res, 200, await petService.cleanAppDir()); return; }
-      if (suffix === '/start') {
-        // 启动同样接受表单里的 electronPath：用户刚填的路径不该先"保存"才生效。
-        if (typeof body?.electronPath === 'string' && body.electronPath.trim()) {
-          try { petService.configure({ electronPath: body.electronPath.trim() }); } catch {}
-        }
-        json(res, 200, await petService.start());
-        return;
-      }
-      if (suffix === '/stop') { json(res, 200, await petService.stop()); return; }
       if (suffix === '/chat-test') {
         // 给设置页「发一条测试消息」用：不占主动搭话，只验证人设/模型/语音链路。
         const result = await petChat.chat({ text: body.text || '在吗', modality: body.modality === 'voice' ? 'voice' : 'text' });
@@ -2429,14 +2298,11 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
 
   // ── 目的机制（设置页「目的」）：按当前载体路由到 Bridge 或桌宠 ─────────────
   async function purposeAvailability() {
-    const petStatus = petService.status();
     const online = petChat.online();
     let bridge = null;
     try { bridge = await bridgeStatus(); } catch (error) { bridge = { ok: false, running: false, error: String(error?.message ?? error) }; }
     return {
       pet: {
-        installed: Boolean(petStatus.installed),
-        running: Boolean(petStatus.running),
         online: Boolean(online.online),
         lastPollAt: online.lastSeenAt || 0,
         roleName: petChat.roleInfo().name,
@@ -2547,9 +2413,9 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     }
   }
 
-  // ── 一键启动 / 停止（概览、QQ、B站、桌宠、语音共用同一份状态）────────────
-  const LAUNCH_IDS = ['qq', 'bili', 'pet', 'voice'];
-  const LAUNCH_LABELS = { qq: 'QQ（含 SnowLuma）', bili: 'B站', pet: '桌宠', voice: '语音' };
+  // ── 一键启动 / 停止（概览、QQ、B站、语音共用同一份状态）────────────
+  const LAUNCH_IDS = ['qq', 'bili', 'voice'];
+  const LAUNCH_LABELS = { qq: 'QQ（含 SnowLuma）', bili: 'B站', voice: '语音' };
 
   function normalizeLaunchComponents(input) {
     const list = Array.isArray(input) ? input : [];
@@ -2574,7 +2440,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     const bridge = await bridgeStatus().catch((error) => ({ running: false, error: String(error?.message ?? error) }));
     let voice = { ok: false, running: false, packs: [], id: '', error: bridge.running ? '' : 'QQ 桥接未运行' };
     if (bridge.running) voice = await voicePacksSnapshot();
-    const pet = petService.status();
     return {
       qq: {
         running: Boolean(bridge.running),
@@ -2588,12 +2453,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
         running: Boolean(scheduler && schedulerStatus.running),
         lastError: schedulerStatus.lastError ?? null,
         reason: schedulerStatus.reason ?? '',
-      },
-      pet: {
-        running: Boolean(pet.running),
-        installed: Boolean(pet.installed),
-        pid: pet.pid ?? null,
-        lastError: pet.lastError ?? null,
       },
       voice: {
         ok: voice.ok !== false,
@@ -2642,15 +2501,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
           detail: state,
         });
       }
-      if (id === 'pet') {
-        const result = await petService.start();
-        return launchItem(id, result?.ok !== false, {
-          code: result?.ok === false ? 'PET_START_FAILED' : '',
-          error: result?.ok === false ? (result.error || '桌宠启动失败') : '',
-          hint: result?.ok === false ? (result.hint || '先在「桌宠」页安装桌宠/Electron') : '',
-          detail: result,
-        });
-      }
       if (id === 'voice') {
         const bridge = await bridgeStatus().catch(() => ({ running: false }));
         if (!bridge.running) {
@@ -2696,15 +2546,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
         const r = stopSchedulerNow();
         return launchItem(id, true, { message: r.wasRunning ? 'B站生物钟已停止' : 'B站生物钟本来就没在跑', detail: r });
       }
-      if (id === 'pet') {
-        const r = await petService.stop();
-        return launchItem(id, r?.ok !== false, {
-          code: r?.ok === false ? 'PET_STOP_FAILED' : '',
-          error: r?.ok === false ? (r.error || '桌宠停止失败') : '',
-          hint: r?.ok === false ? '在「桌宠」页重试，或手动结束进程' : '',
-          detail: r,
-        });
-      }
       if (id === 'voice') {
         const bridge = await bridgeStatus().catch(() => ({ running: false }));
         if (!bridge.running) return launchItem(id, true, { message: 'QQ 桥接未运行，语音包无需单独停止' });
@@ -2741,7 +2582,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     }
     const items = [];
     // 停止时先停语音（它由 QQ 桥接托管），再停桥接；否则桥接先死，语音进程会变成孤儿。
-    const ordered = action === 'stop' ? ['voice', 'qq', 'bili', 'pet'].filter((id) => ids.includes(id)) : ids;
+    const ordered = action === 'stop' ? ['voice', 'qq', 'bili'].filter((id) => ids.includes(id)) : ids;
     for (const id of ordered) {
       items.push(action === 'stop' ? await stopComponent(id, body) : await startComponent(id, body));
     }
@@ -3463,65 +3304,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     });
   }
 
-  // ── 组件更新 ────────────────────────────────────────────────────────────
-  // GET  : 最近一次检查结果 + 待更新项 + 是否该弹窗
-  // POST : { action:'check' | 'apply' | 'dismiss' | 'reset', ids?: string[] }
-  async function handleUpdates(req, res) {
-    if (req.method === 'GET') { json(res, 200, updates.status()); return; }
-    let body = {};
-    try { body = JSON.parse((await readBody(req)) || '{}'); } catch { json(res, 400, { ok: false, error: '请求体不是合法 JSON' }); return; }
-    const action = String(body.action ?? '');
-    const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-    if (action === 'check') { json(res, 200, await updates.check({ fetch: true })); return; }
-    if (action === 'apply') { json(res, 200, await updates.apply(ids, { overwriteModified: body.overwriteModified === true, firstInstall: body.firstInstall === true })); return; }
-    if (action === 'set-token' || action === 'clear-token') {
-      try {
-        const current = readUnified().config ?? {};
-        const next = { ...current, updates: { ...(current.updates ?? {}) } };
-        if (action === 'clear-token') delete next.updates.githubToken;
-        else next.updates.githubToken = String(body.token ?? '').trim();
-        saveUnified(next);
-        json(res, 200, { ok: true, configured: action === 'set-token' && Boolean(next.updates.githubToken) });
-      } catch (error) {
-        json(res, 500, {
-          ok: false, code: 'token.save-failed',
-          error: `保存 token 失败：${String(error?.message ?? error).slice(0, 160)}`,
-          hint: '检查 config.json 是否可写；也可以稍后重试',
-        });
-      }
-      return;
-    }
-    if (action === 'set-channel') {
-      if (updates.status().applying) {
-        json(res, 409, { ok: false, code: 'UPDATE_CHANNEL_BUSY', error: '正在更新中，不能切换通道', hint: '等本次更新完成或失败后再切' });
-        return;
-      }
-      const nextChannel = String(body.channel ?? '').trim();
-      if (!['stable', 'dev'].includes(nextChannel)) {
-        json(res, 400, { ok: false, code: 'UPDATE_CHANNEL_INVALID', error: '更新通道只能是 stable 或 dev', hint: '正式用户用 stable；只有测试机才切 dev' });
-        return;
-      }
-      try {
-        saveUnified({ updates: { channel: nextChannel } });
-        // 切换通道必须清掉上一轮的检查结果：否则 main 通道会被上轮 dev 检查留下的
-        // pending 继续弹窗（2026-11-01 用户要求：选 main 时不被 dev 更新打扰）。
-        updates.resetCheck?.();
-        json(res, 200, { ok: true, channel: nextChannel, requiresCheck: true, hint: nextChannel === 'dev' ? '已切到测试通道：会安装 -dev.N 预发布；正式版用户不要开' : '已切回稳定通道：只跟正式 Release' });
-      } catch (error) {
-        json(res, 500, { ok: false, code: 'UPDATE_CHANNEL_SAVE', error: `保存通道失败：${String(error?.message ?? error).slice(0, 160)}`, hint: '检查 config.json 是否可写后重试' });
-      }
-      return;
-    }
-    if (action === 'rollback') {
-      const target = String(body.id ?? ids[0] ?? '').trim();
-      json(res, 200, await updates.rollback(target));
-      return;
-    }
-    if (action === 'dismiss') { json(res, 200, updates.dismiss(ids)); return; }
-    if (action === 'reset') { json(res, 200, updates.resetDismissed()); return; }
-    json(res, 400, { ok: false, error: '未知 action' });
-  }
-
   // ── 每日 token 额度 ─────────────────────────────────────────────────────
   // GET  : 额度 + 今日三类用量 + 比例 + 当天唯一的 80% 提醒（取走即落盘）
   // POST : { limits } 整体保存 / { add:{scope,unit,amount} } 快捷加额度 / { reset:true } 清空
@@ -3640,7 +3422,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     if (pathname.startsWith(`${API_PREFIX}/pet`)) { await handlePet(req, res, url); return; }
 
     if (pathname === `${API_PREFIX}/token-budget`) { await handleTokenBudget(req, res, url); return; }
-    if (pathname === `${API_PREFIX}/updates`) { await handleUpdates(req, res); return; }
     if (pathname === `${API_PREFIX}/dsh/model`) { await proxyDshModel(req, res); return; }
     if (pathname === `${API_PREFIX}/dsh/effort`) { await proxyDshEffort(req, res); return; }
     if (pathname === `${API_PREFIX}/dsh/follow-default`) { await proxyDshFollowDefault(req, res); return; }
@@ -3699,18 +3480,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
   // 启动后异步做的事（不阻塞插件激活）
   void activateExtensions();
   void maybeAutoStartBridge();
-  // 组件更新检查（2026-10-26）：DSH 起来后延迟 20 秒查一次，之后每 6 小时一次。
-  // 结果缓存在 updates.json；设置页概览打开时若 showPrompt 就自动弹窗。
-  try {
-    const updCfg = readUnified().config?.updates ?? {};
-    updates.startAutoCheck({
-      delayMs: Number(updCfg.startDelayMs ?? 20_000),
-      intervalMs: Number(updCfg.intervalMs ?? 6 * 60 * 60 * 1000),
-      enabled: updCfg.enabled !== false && updCfg.checkOnStart !== false,
-    });
-  } catch (error) {
-    pluginLog('[updates] 启动检查失败：', String(error?.message ?? error));
-  }
   // 端口漂移自愈：每 2 分钟检查一次（内部会判断 autoStart 是否开启、是否有并发）。
   bridgeRepairTimer = setInterval(() => { void maybeAutoStartBridge(); }, 120_000);
   bridgeRepairTimer.unref?.();
@@ -3719,7 +3488,6 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
   // 保存设置后如果开启了“随插件自动启动”，这里也覆盖一次。
   ctx.effect(() => () => {
     try { scheduler?.stop?.(); } catch {}
-    try { updates.dispose(); } catch {}
     try { petPurpose.stop?.(); } catch {}
     if (petHostTimer) clearInterval(petHostTimer);
     try { sessionEventOff?.(); } catch {}

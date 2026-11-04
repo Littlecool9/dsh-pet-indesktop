@@ -82,6 +82,18 @@ if (!apiRoute || !extRoute || !healthRoute) throw new Error('路由没有全部�
 const health = await invoke(healthRoute, 'GET', '/dsh-surfcore/health');
 console.log('health:', health.statusCode, health.body.slice(0, 200));
 
+// 桌宠页状态：桌面端是独立 PySide6 程序，只报 client.online/lastSeenAt，不再报旧安装/运行字段。
+{
+  const petRes = await invoke(apiRoute, 'GET', '/dsh-surfcore/api/pet/status');
+  const pet = JSON.parse(petRes.body || '{}');
+  console.log('pet/status', petRes.statusCode, pet.ok, pet.client);
+  if (petRes.statusCode !== 200 || pet.ok !== true) throw new Error('/pet/status 没有返回 ok');
+  if (!pet.client || typeof pet.client.online !== 'boolean' || typeof pet.client.lastSeenAt !== 'number') {
+    throw new Error('/pet/status 缺少 client.{online,lastSeenAt}');
+  }
+  if ('pet' in pet) throw new Error('/pet/status 不应再返回旧的 pet.installed/running');
+}
+
 for (const path of ['/dsh-surfcore/api/overview', '/dsh-surfcore/api/config', '/dsh-surfcore/api/persona', '/dsh-surfcore/api/memory', '/dsh-surfcore/api/memory-card', '/dsh-surfcore/api/memory-card/full', '/dsh-surfcore/api/align', '/dsh-surfcore/api/extensions', '/dsh-surfcore/api/platforms', '/dsh-surfcore/api/diagnostics', '/dsh-surfcore/api/bili/automation', '/dsh-surfcore/api/watch-history', '/dsh-surfcore/api/preferences/scan?sources=local&limit=5', '/dsh-surfcore/api/bili/fish-guard', '/dsh-surfcore/api/fish-guard/qq']) {
   const res = await invoke(apiRoute, 'GET', path);
   const data = JSON.parse(res.body || '{}');

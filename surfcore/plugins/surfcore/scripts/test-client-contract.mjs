@@ -382,10 +382,14 @@ assert.ok(source.includes('打开网盘下载（提取码 sxUZ）'), '必须有�
 assert.ok(source.includes('复制链接'), '必须有复制链接兜底');
 assert.ok(source.includes('api("/voice/packs/netdisk"'), '按钮必须走后端打开（Electron 会拦新窗口）');
 
-// ── 桌宠安装：表单必须随请求提交（2026-10-30 用户反馈：填了也不生效）──
-assert.ok(/api\("\/pet\/install",[\s\S]{0,200}source: form\.source\.trim\(\)/.test(source), '桌宠安装请求必须带 source');
-assert.ok(/api\("\/pet\/install",[\s\S]{0,260}appDir: form\.appDir\.trim\(\)/.test(source), '桌宠安装请求必须带 appDir');
-assert.ok(/act\("start", \{ electronPath: form\.electronPath\.trim\(\) \}\)/.test(source), '桌宠启动请求必须带 electronPath');
+// ── 桌宠页：只显示桌面客户端在线状态，不再有安装/Electron/更新入口 ──
+assert.ok(source.includes("api(\"/pet/status\")"), '桌宠页必须读 /pet/status');
+assert.ok(source.includes('st?.client?.online') && source.includes('st.client.lastSeenAt'), '桌宠页必须显示客户端 online / lastSeenAt');
+assert.ok(source.includes('桌面客户端') && source.includes('桌宠在线') && source.includes('桌宠离线'), '桌宠页要有在线/离线状态');
+assert.ok(source.includes('~/.dsh/surfcore/pet/host.json'), '桌宠页要说明桌面端通过 host.json 自己连上来');
+assert.ok(!source.includes('/pet/install') && !source.includes('/pet/start') && !source.includes('/pet/stop'), '桌宠页不得再有安装/启动/停止接口');
+assert.ok(!source.includes('electronPath') && !source.includes('Download Electron'), '桌宠页不得再有 Electron 安装/路径');
+assert.ok(!source.includes('/updates') && !source.includes('UpdatesModal'), '设置页不得再有三方自更新界面');
 
 // ── 手动导入 SnowLuma（2026-10-30 用户要求：检测按钮旁加手动选择 + 说明导入的是什么）──
 assert.ok(source.includes('手动选择已安装的 SnowLuma'), '必须提供「手动选择已安装的 SnowLuma」按钮');
@@ -397,14 +401,6 @@ assert.ok(/browseNative\("file",[^)]*"snowluma"\)/.test(source), '文件选择�
 assert.ok(!/browseNative\("file",[^)]*filter:/.test(source), '不得把原始 filter 串传给宿主');
 
 
-
-// ── 更新后必须提示重启 DSH（2026-10-30 用户要求）──
-assert.ok(source.includes('restartHint'), '必须有重启提示状态');
-assert.ok(source.includes('更新已下载：重启 DSH 后生效'), '下载完成后要提示重启');
-assert.ok(source.includes('有可用更新：安装后需要重启 DSH'), '检查到更新后要提示安装需重启');
-assert.ok(source.includes('完全退出 DSH'), '提示要说明“完全退出”而不是刷新页面');
-assert.ok(/setRestartHint\(\{ staged: true/.test(source), '暂存成功后设置重启提示');
-assert.ok(source.includes('下载完成 ≠ 已更新'), '更新卡片要有常驻提示');
 
 // ── B站 登录核查 + 管理员 UID 核查 + 长 UID（2026-10-30 用户要求）──
 assert.ok(source.includes('B站 登录账号'), 'B站 页要有登录账号卡片');
@@ -432,17 +428,6 @@ assert.ok(source.includes('event.evidence?.tool'), '安全提醒要显示工具�
 assert.ok(source.includes('event.evidence?.fingerprint'), '安全提醒要显示错误摘要');
 assert.ok(source.includes('event.subject?.key'), '安全提醒要显示会话');
 
-// ── 更新下载进度：速度 + 百分比（2026-10-31 用户要求）──
-assert.ok(source.includes('st?.download'), '应用更新时要轮询下载进度');
-assert.ok(source.includes('下载中'), '进度条应显示“下载中”');
-assert.ok(source.includes('speedBps'), '进度条应显示网速');
-assert.ok(source.includes('dl.percent'), '进度条应显示百分比');
-
-// ── 更新弹窗不能每次打开设置页都自动弹（2026-10-31 用户反馈）──
-assert.ok(source.includes('surfcore.updatePromptSeen'), '要记住“这个版本已提醒过”');
-assert.ok(source.includes('if (seen === sig) return'), '同一批版本不再自动弹');
-assert.ok(source.includes('updatePromptSignature'), '按版本集合生成提醒签名');
-
 // ── SnowLuma 没启动时，不该弹“断线”L2（2026-10-31 用户反馈）──
 assert.ok(source.includes('neverStarted'), '未启动（everConnected=false）也要过滤旧断线告警');
 assert.ok(source.includes('sl.everConnected === false'), '按 everConnected 判断“从未启动”');
@@ -451,10 +436,6 @@ assert.ok(source.includes('sl.everConnected === false'), '按 everConnected 判�
 assert.ok(source.includes("/dsh/repair"), "设置页要有修复 DSH 注册的入口");
 assert.ok(source.includes("修复 DSH 注册"), "按钮文案要能看懂");
 assert.ok(source.includes("canRepairDsh"), "L2 弹窗遇到 dsh-profile-mcp-missing 要给修复按钮");
-// ── 更新通道单选（2026-11-01）──
-assert.ok(source.includes("update-channel"), "检查更新下面要有 main/dev 单选");
-assert.ok(source.includes("main（正式版") && source.includes("dev（测试版"), "两个通道文案");
-assert.ok(source.includes("switchUpdateChannel"), "切通道要调 set-channel");
 // ── 保存按钮/提示（2026-11-02）──
 assert.ok(source.includes("保存并生效"), "主保存按钮必须明确“保存并生效”");
 assert.ok(source.includes("仅保存（不重启）"), "必须保留明确的“仅保存”次按钮");

@@ -1,10 +1,10 @@
-# 桌宠（默认不安装）
+# 桌宠（桌面客户端）
 
 SurfCore 的「桌宠」是一个**独立栏目**，和 QQ / B站 / 记忆 / 语音平级，互不依赖：
 
-- 装 SurfCore 时**不会**自动装桌宠；
-- 不装桌宠，其他栏目完全正常；
-- 卸载桌宠只删 `~/.dsh/surfcore/pet/app`，不动 `~/.dsh/surfcore/` 下别的东西。
+- 桌面桌宠是 desktop-pet 仓库根目录的 **PySide6 程序**，不随 SurfCore 安装，也没有安装按钮；
+- 它自己读取 `~/.dsh/surfcore/pet/host.json` 连接本插件的 pet-api，所以不需要 SurfCore 启动/停止它；
+- 「桌宠」页只显示它的**在线 / 离线**与最近连接时间，以及对话参数。
 
 > 2026-10-25 起，桌宠不再只是「会动的形象」：它和 SurfCore 共用**当前角色**（人格卡 + 衰减记忆卡 + 目的机制），
 > 支持 **文本对话 / 语音对话**，也能作为**「目的」栏目的主动搭话载体**。
@@ -15,7 +15,7 @@ SurfCore 的「桌宠」是一个**独立栏目**，和 QQ / B站 / 记忆 / 语
 
 | 位置 | 用途 |
 | --- | --- |
-| 设置 → SurfCore → **桌宠** | 安装 / 启动 / 停止 / 卸载、内置形象、**对话参数**（开关 / 回复字数 / 上下文轮数 / 思考强度）、连接状态 |
+| 设置 → SurfCore → **桌宠** | 桌面客户端**在线状态 / 最近连接**、**对话参数**（开关 / 回复字数 / 上下文轮数 / 思考强度）、专注模式 |
 | 设置 → SurfCore → **目的** | 目的机制本身：**触发载体（桌宠 / QQ）**、桌宠主动搭话形式（**文本 / 语音**）、节奏与安静时段、素材、预览、立即试一次 |
 
 「目的」独立于 QQ / B站 / 记忆：只改载体，不改人格与记忆；同一时刻**只有一个载体**在发消息。
@@ -123,44 +123,28 @@ SurfCore 的「桌宠」是一个**独立栏目**，和 QQ / B站 / 记忆 / 语
 
 ```
 ~/.dsh/surfcore/pet/
-  config.json          { source, electronPath, appDir, installedAt }
-  app/                 解压后的桌宠应用（package.json + dist/ + skins/ + assets/）
-  host.json            桌宠发现文件：{ baseUrl, token, api, pluginVersion }（插件每次启动/每 2 分钟重写）
+  host.json            桌面端发现文件：{ baseUrl, token, api, pluginVersion }（插件每次启动/每 2 分钟重写）
   host-token           本地令牌（0600；host.json 里是同一把）
   focus.json           专注模式：{ enabled, updatedAt, source }（桌宠/设置页/桥接共读）
   chat/
     history-<charId>.json   对话历史（气泡重放 / 模型上下文）
   voice/               TTS 缓存（wav，内容寻址）
-  tmp/                 下载安装包时的临时目录
-  pet.pid              运行中的进程号
 ```
 
 - `host.json` 里的 `token` 只在本机回环上使用；DSH 端口漂移后桌宠会自动重读这个文件。
 - 对话历史按**角色**分开：换角色后不会串台；目的状态同样按角色隔离。
-- 卸载桌宠只删 `app/`；`chat/` / `voice/` / `host.json` 保留（重装后对话还在）。
+- 桌面桌宠的程序与数据在 desktop-pet 仓库里管理，SurfCore 不再写 `pet/app/`、`pet.pid` 或安装配置。
 
 ---
 
-## 6. 安装流程（用户操作）
+## 6. 启动与连接（用户操作）
 
-1. 设置 → SurfCore → **桌宠**
-2. 填「安装包地址」：zip 的本地路径，或 `https://` 链接
-3. 点「安装」→ 解压到 `pet/app`（或你设置的安装目录）
-4. 填「Electron 路径」：本机 `electron.exe` 的完整路径（安装包**不带** Electron 运行时；留空会尝试从 PATH 找）
-5. 点「启动」/「停止」；「卸载」只清 `app/`
+1. 从 desktop-pet 仓库启动桌面桌宠（`python -m pet` 或该仓库的启动脚本）。
+2. 桌宠自己读 `~/.dsh/surfcore/pet/host.json`，连接 SurfCore 的 pet-api，并长轮询 `/events`。
+3. 设置 → SurfCore → **桌宠**：显示「桌宠在线 / 离线」与最近连接时间；几秒内没上线就刷新一次。
+4. 对话参数（启用 / 回复字数 / 上下文轮数 / 思考强度 / 专注模式）仍在这里改；不需要重启桌宠。
 
-安装包格式：
-
-```
-package.json       main = dist/main.js
-dist/              构建产物（main.js / preload.js / renderer.js / dialog.* / bubble.* / index.html / slider.*）
-skins/<id>/        manifest.json + art/*.png（可带多套形象）
-assets/            tray.png / icon.png
-```
-
-在桌宠工程里一条命令生成：`npm run pack` → `artifacts/pet-pack.zip`。
-
-「内置形象」列表由宿主读取 `app/skins/*/manifest.json` 的 `name` 字段得到，换皮肤不需要改插件。
+桌面桌宠的启动、皮肤、进程管理都在 desktop-pet 仓库；SurfCore 不安装、不启动、不停止、不更新它。
 
 ---
 
@@ -170,12 +154,7 @@ assets/            tray.png / icon.png
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/dsh-surfcore/api/pet/status` | 安装/运行状态、形象列表、**对话 / 语音 / 模型 / 在线状态** |
-| POST | `/dsh-surfcore/api/pet/config` | 保存 `{ source, electronPath, appDir }` |
-| POST | `/dsh-surfcore/api/pet/install` | 下载/解压安装包 |
-| POST | `/dsh-surfcore/api/pet/start` | 启动 Electron 子进程（自动去掉 `ELECTRON_RUN_AS_NODE`） |
-| POST | `/dsh-surfcore/api/pet/stop` | 结束进程树 |
-| POST | `/dsh-surfcore/api/pet/remove` | 停止并删除 `app/` |
+| GET | `/dsh-surfcore/api/pet/status` | 桌面客户端 `client.{online,lastSeenAt}`、**对话 / 语音 / 模型 / 专注** |
 | POST | `/dsh-surfcore/api/pet/chat-test` | 在设置页发一句，结果推给桌宠气泡 |
 | POST | `/dsh-surfcore/api/pet/focus` | 设置页切换专注模式（`{ enabled }`），并推事件给桌宠 |
 | GET | `/dsh-surfcore/api/purpose/status` | 目的状态（按载体路由到插件或桥接） |
@@ -187,7 +166,7 @@ assets/            tray.png / icon.png
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/dsh-surfcore/pet-api/health` | 探活 |
-| GET | `/dsh-surfcore/pet-api/status` | 对话 / 语音 / 模型 / 在线 / 事件游标 |
+| GET | `/dsh-surfcore/pet-api/status` | 对话 / 语音 / 模型 / `client.{online,lastSeenAt}` / 事件游标 |
 | GET | `/dsh-surfcore/pet-api/config` | 角色名、对话上限、主动搭话载体与形式 |
 | GET | `/dsh-surfcore/pet-api/history?limit=` | 对话历史（含语音回放地址） |
 | POST | `/dsh-surfcore/pet-api/chat` | `{ text, modality }` → 文本/语音回复 |
@@ -200,25 +179,22 @@ assets/            tray.png / icon.png
 鉴权：`x-pet-token: <host.json.token>`（音频用 `?token=`）。只接受 127.0.0.1 / localhost / ::1；
 写操作必须是 `application/json`，且 Origin 同源（或没有 Origin）。
 
-实现：`lib/pet.js`（安装/启动）、`lib/pet-chat.js`（对话/语音/事件）、`lib/pet-purpose.js`（目的载体）、
+实现：`lib/pet-chat.js`（对话/语音/事件）、`lib/pet-purpose.js`（目的载体）、
 `lib/pet-api.js`（桌宠专用路由）；设置页路由在 `lib/index.js` 的 `handlePet` / `handlePurpose`。
+桌面桌宠本身在 desktop-pet 仓库的 `pet/`（PySide6），不在本插件里。
 
 ---
 
-## 8. 为什么有时要改「安装目录」
+## 8. 为什么不再有「安装目录」
 
-桌宠是独立的 Electron 进程，它需要能写自己的 Chromium profile。
-如果 SurfCore 跑在受限环境里（沙箱 / 只读用户目录 / 受管路径），`~/.dsh/surfcore/pet/app` 可能建不了锁文件，
-表现为「点启动立刻退出」。这时把「安装目录」指到一个可写位置即可（例如工作区内），
-启动时会自动带 `--user-data-dir=<安装目录>/data/profile`。
+SurfCore 侧不再安装桌宠，因此也没有 `pet/app` / Electron 路径可填。桌面桌宠的安装、运行参数和
+Chromium/Qt 环境由 desktop-pet 仓库自己的启动方式决定；插件只提供 pet-api 与发现文件。
 
 ## 9. 运行状态怎么判断
 
-桌宠启动后会把 pid 写进 `<安装目录>/run.pid`（退出时删除）；插件优先读它，
-没有就回退到 `~/.dsh/surfcore/pet/pet.pid`。所以「点启动 → 运行中」不依赖父进程拿不拿得到子进程 pid。
-
-「在线」是另一回事：桌宠通过 `/events` 长轮询证明自己活着（60 秒内有轮询 = 在线）。
-主动搭话的回落判断看的是这个，不是 pid。
+「在线」= 桌面桌宠在 60 秒内长轮询过 `/events`（或请求过 pet-api），由 `petChat.online()` 记录；
+设置页显示同一个 `client.online` / `lastSeenAt`，主动搭话的回落判断也看它。
+SurfCore 不再检查 pid 或安装目录。
 
 ---
 
@@ -226,7 +202,7 @@ assets/            tray.png / icon.png
 
 | 现象 | 先看什么 |
 | --- | --- |
-| 对话框一直「没连上 SurfCore」 | `~/.dsh/surfcore/pet/host.json` 是否存在；SurfCore 插件日志；桌宠日志（`pet/start.log`）里的 `[chat] surfcore connected` |
+| 对话框一直「没连上 SurfCore」 | `~/.dsh/surfcore/pet/host.json` 是否存在；SurfCore 插件日志；desktop-pet 侧日志里的 `[chat] surfcore connected` |
 | 设置页测试有回复，但桌宠没气泡 | 「桌宠」页的在线徽章；桌宠是否在跑**新版**（右键菜单里有「文本对话」） |
 | 语音回复没声音 | 「语音」页的 TTS 是否启动（本地 8765 / 云端 8767）；气泡里的播放按钮是否可点；文字回复是否正常（语音失败只降级文字） |
 | 切了本地/云端，桌宠没跟着 | 看「语音」页的「当前」和桌宠设置页的「语音：…」是否一致；改完不需要重启桌宠，下一次合成就重读配置 |
@@ -240,7 +216,6 @@ assets/            tray.png / icon.png
 
 ## 11. 注意
 
-- 安装包来自用户填的地址，插件不做代码签名校验；只填自己信得过的来源。
-- 桌宠是独立 Electron 进程，SurfCore 退出不会自动带走它（需要手动「停止」）。
-- 启动参数固定为 `["." , "--no-sandbox"]`（本机 Chromium sandbox 起不来；普通环境可以去掉）。
+- 桌面桌宠是 desktop-pet 仓库里的独立 PySide6 进程，SurfCore 不安装、不启动、不停止它，也没有安装包来源或 Electron 路径。
+- 它自己读 `host.json` 连过来；SurfCore 退出后它会显示离线，重新打开 DSH 后会自己重连。
 - 对话内容会落在 `pet/chat/history-<角色>.json`，模型调用会算 token；不想要就把「启用桌宠对话」关掉。

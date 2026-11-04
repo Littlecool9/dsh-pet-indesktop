@@ -34,6 +34,7 @@ let lastUsageBody = null;
 let lastFocusOptions = null;
 let lastClaimBody = null;
 let claimResult = null;
+let onlineResult = { online: true, lastSeenAt: 1700000000000 };
 
 const chat = {
   token: () => TOKEN,
@@ -78,6 +79,7 @@ const chat = {
     chat: { enabled: true }, role: { id: 'default' }, proactive: {}, presence: {},
     voice: { route: 'cloud' }, llm: {}, focus: focusState, events: {}, lastError: '',
   }),
+  online: () => onlineResult,
 };
 
 const purpose = {
@@ -93,9 +95,8 @@ const purpose = {
   online: true,
 };
 
-const petService = { status: () => ({ installed: true, running: true, dir: 'D:/fake/pet', skins: ['fish'] }) };
 const api = createPetApiService({
-  chat, purpose, petService, stateDir,
+  chat, purpose, stateDir,
   currentDshUrl: () => BASE,
   pluginLog: () => {},
   version: '0.1.0-test',
@@ -164,7 +165,7 @@ console.log('## 2. 令牌还没生成时：空令牌不得通过');
 {
   const emptyTokenApi = createPetApiService({
     chat: { ...chat, token: () => '' },
-    purpose, petService, stateDir, currentDshUrl: () => BASE, pluginLog: () => {}, version: 't',
+    purpose, stateDir, currentDshUrl: () => BASE, pluginLog: () => {}, version: 't',
   });
   const req = makeReq({ headers: { host: '127.0.0.1:57981' }, });
   const res = makeRes();
@@ -191,7 +192,16 @@ console.log('## 4. 只读接口');
   const health = await call({ headers: loopback });
   ok(health.data?.name === 'surfcore-pet' && health.data?.version === '0.1.0-test', '/health 返回名字与版本');
   const status = await call({ pathname: '/status', headers: loopback });
-  ok(status.data?.pet?.installed === true && status.data?.purpose?.carrier === 'pet', '/status 带桌宠与目的载体状态');
+  ok(status.data?.client?.online === true && status.data?.client?.lastSeenAt === 1700000000000,
+    '/status 带桌面客户端在线状态（online + lastSeenAt）');
+  ok(status.data?.purpose?.carrier === 'pet', '/status 带目的载体状态');
+  ok(!('pet' in (status.data ?? {})), '/status 不再返回旧的 pet.installed/running/dir/skins');
+
+  onlineResult = { online: false, lastSeenAt: 0 };
+  const offline = await call({ pathname: '/status', headers: loopback });
+  ok(offline.data?.client?.online === false && offline.data?.client?.lastSeenAt === 0,
+    '/status 离线时 client.online=false（页面显示桌宠离线）');
+  onlineResult = { online: true, lastSeenAt: 1700000000000 };
   const config = await call({ pathname: '/config', headers: loopback });
   ok(config.data?.chat?.modality === 'text', '/config 返回对话参数');
   const history = await call({ pathname: '/history', headers: loopback, query: '?limit=5' });
