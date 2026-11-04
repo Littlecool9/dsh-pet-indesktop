@@ -19,6 +19,19 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+
+/**
+ * 子进程输出解码：先按 UTF-8 严格解码；不合法时退回 GBK（中文 Windows 上 cmd.exe
+ * 自己的报错走 OEM 代码页 936，按 UTF-8 解就是乱码，例如「'dsh.cmd' 不是内部或外部命令」）。
+ */
+function decodeChildOutput(buf) {
+  if (!buf || !buf.length) return '';
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    try { return new TextDecoder('gbk').decode(buf); } catch { return Buffer.from(buf).toString('utf8'); }
+  }
+}
 import yaml from 'js-yaml';
 import { PRESETS, buildPatches, patchFileFor } from './build-agent-preset-patches.mjs';
 
@@ -414,7 +427,7 @@ function autoInstallProfileBundles() {
     ? ['/d', '/v:off', '/s', '/c', 'dsh.cmd plugin --profile "%QQ_BRIDGE_SETUP_PROFILE%" install']
     : ['plugin', '--profile', PROFILE, 'install'];
   const r = spawnSync(cmd, args, {
-    encoding: 'utf8',
+    encoding: 'buffer',
     timeout: 120000,
     windowsHide: true,
     windowsVerbatimArguments: windows,
@@ -430,10 +443,15 @@ function autoInstallProfileBundles() {
   }
   log(`dsh plugin --profile ${PROFILE} install 返回退出码 ${r.status}。`);
   // 输出已被 spawnSync 捕获；不打出来的话用户只看得到退出码，无从排错。
-  const output = `${r.stdout || ''}\n${r.stderr || ''}`.trim();
+  const output = `${decodeChildOutput(r.stdout)}\n${decodeChildOutput(r.stderr)}`.trim();
   if (output) {
     const tail = output.split(/\r?\n/).slice(-40).join('\n');
     log(`dsh plugin install 输出（末尾 40 行）：\n${tail}`);
+    if (/不是内部或外部命令|is not recognized as an internal or external command/i.test(output)) {
+      log('提示：找不到 dsh 命令行。DSH 桌面版自带 CLI 但不加 PATH，位置是 '
+        + '<DSH 安装目录>\\resources\\runtime\\cli\\bin\\dsh.cmd；把该目录加进 PATH '
+        + '（当前 PowerShell：$env:Path = "<该目录>;$env:Path"）后重跑本脚本。');
+    }
   } else {
     log('dsh plugin install 没有任何输出；可手动运行 `dsh plugin --profile <profile> install` 查看。');
   }
