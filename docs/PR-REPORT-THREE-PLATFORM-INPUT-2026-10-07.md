@@ -242,7 +242,7 @@ X11 / macOS 显示会话的人**。
      ——即**先清再立**真的发生了；
    - **`on_top` 开关的真实触发路径**：`setWindowFlag(WindowStaysOnTopHint, …) + show()`，
      关/开各一次都断言穿透态仍在；
-   - **`--slot N` 窗口能力**（另一条线）：见 [`PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md`](PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md)。
+   - **`--slot N` 窗口能力**（另一条线）：见 [`PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md`](archive/PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md)。
 2. **前提现场复现**：`python -m pytest tests/test_platform_passthrough.py -q`（实现前）
    → `ImportError: cannot import name 'platform_passthrough' from 'pet'`（**收集期
    1 error**）——即"这个能力此前完全不存在"，不是"行为不对"。

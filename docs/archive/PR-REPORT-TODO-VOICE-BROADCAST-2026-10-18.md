@@ -3,10 +3,10 @@
 > **基线**：`a19157f`（`main`，Merge PR #300）
 > **分支**：`feat/todo-voice-broadcast`　**日期**：`2026-10-18`
 > **范围**：9 个文件（实现 6、测试 3；另有 2 个 `docs/` 文档与 1 份本报告）
-> **关联**：设置变更准入记录见 [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md) 的
+> **关联**：设置变更准入记录见 [`SETTINGS-CHANGE-GATES.md`](../SETTINGS-CHANGE-GATES.md) 的
 > 2026-10-18 条目；音频通道复用关系见
 > [`PR-REPORT-TTS-PROVIDERS-2026-10-14.md`](PR-REPORT-TTS-PROVIDERS-2026-10-14.md) 与
-> [`PR-REPORT-DIVINATION-2026-10-17.md`](PR-REPORT-DIVINATION-2026-10-17.md)（同一条
+> [`PR-REPORT-DIVINATION-2026-10-17.md`](../PR-REPORT-DIVINATION-2026-10-17.md)（同一条
 > `_chime_wanted()` 通道生命周期缺口，本刀是第五个消费者）。
 
 ## 一、核心特性

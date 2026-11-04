@@ -1,12 +1,12 @@
 # Desktop Pet Experience
 
-The user-facing desktop-pet experience shared by settings, menus, overlays, and
-their platform-specific presentations.
+The user-facing desktop-pet experience of the Windows-only modular fork: one
+pet, one overlay window, settings, menus, and the SurfCore client seam.
 
 ## Language
 
 **Focus Session**:
-The process-wide Pomodoro runtime, shared by every pet. It owns the current
+The process-wide Pomodoro runtime of the single pet. It owns the current
 focus/break phase, deadline, pause state and completed rounds; a finished phase
 automatically starts the next full phase, with one sound at each boundary.
 Pause/resume stays silent; explicit stop plays an end sound, while application
@@ -20,12 +20,53 @@ menu invoke commands on this one runtime. Focus pauses autonomous walking and
 replaces casual self-talk with persona-aware encouragement or a foreground-window
 observation. Pausing, resting or exiting cancels pending focus speech; existing
 quiet mode remains an independent user choice.
-_Avoid_: Per-pet timers, permanently changing no-move, AI attention score
+_Avoid_: Duplicate focus timers, permanently changing no-move, AI attention score
+
+**Module**:
+A feature package under `pet/modules/<id>/`, registered by one line in
+`pet/modules/__init__.py::MODULES`. Its cheap `__init__.py` declares a
+`ModuleManifest`; runtime, menu, settings page and config schema are reached
+through string entry points (`"pkg.mod:attr"`) resolved with
+`pet.modules.base.load_entry`. Deleting a module means deleting its directory
+and its `MODULES` line, and its defaults, config keys, menu actions and settings
+page disappear with it. Core never imports a concrete module.
+_Avoid_: Plugin bundle, core feature, second module list
+
+**ModuleHost**:
+The only surface a module may use: `pet/module_host.py::AppModuleHost` over the
+generic service table and queued event bus. It offers config, bubbles,
+notifications, dialogs, island contributions and `provide`/`get` services;
+modules never import `pet.app`, `pet.overlay_shell` or another module.
+_Avoid_: Direct shell access, cross-module import
+
+**Companion Line**:
+The dialogue route for quick bubbles, island chat, proactive talk and
+self-talk. It goes through SurfCore's pet-api so persona, memory, daily quota
+and the shared proactive allowance stay in one place; when SurfCore is offline
+the companion line disables itself with a reason (self-talk falls back to local
+presets) and never silently switches to a second direct-API path.
+_Avoid_: Direct-API quick chat, separate companion quota
+
+**Assistant Line**:
+The dialogue route of the full AI chat window and screen-looking requests. It
+calls the user's API provider directly but always takes its persona from the
+SurfCore persona card (last cached card when offline), and reports usage /
+checks budget through `pet/surfcore_link.py` when SurfCore is available.
+_Avoid_: SurfCore chat session, separate persona source
+
+**SurfCore Client**:
+The pet side of SurfCore: `pet/modules/surfcore/` discovers
+`~/.dsh/surfcore/pet/host.json`, talks only to loopback with the pet token,
+long-polls events and exposes the `surfcore` service; `pet/surfcore_link.py` is
+the core seam for persona cache, budget gate, usage labels and proactive claim.
+It reads the service and never imports the SurfCore module. `surfcore/` itself
+is the Node/DSH plugin and is not Python.
+_Avoid_: In-process SurfCore runtime, direct HTTP in the GUI thread
 
 **Shared UX Contract**:
-The cross-platform agreement for information architecture, state semantics,
-interaction meaning, spacing roles, and brand roles. Platform presentation may
-vary without changing this contract.
+The Windows-only agreement for information architecture, state semantics,
+interaction meaning, spacing roles, and brand roles. Native presentation may
+vary within Windows without changing this contract.
 _Avoid_: Pixel parity, identical native chrome
 
 **Settings System**:
@@ -35,18 +76,18 @@ _Avoid_: Modern settings, legacy settings
 
 **Menu Action Model**:
 The shared set of menu commands, canonical labels/icons, callbacks, capability
-availability, and runtime enablement semantics, independent of platform
-presentation.
+availability, and runtime enablement semantics, independent of the widget that
+presents them.
 _Avoid_: Modern menu behavior, legacy menu behavior
 
 **Menu Layout Tree**:
 A versioned tree of stable action IDs and one-level submenus. It owns order and
 user visibility, explicit separators, and optional alias/icon presentation
 overrides, while the Menu Action Model owns canonical presentation, callbacks,
-runtime state, and platform capability. Missing actions from newer versioned
+runtime state, and build capability. Missing actions from newer versioned
 defaults are inserted beside their nearest template sibling; explicit hidden
 nodes and user ordering remain authoritative.
-_Avoid_: Serialized QAction, platform-specific menu order
+_Avoid_: Serialized QAction, presentation-specific menu order
 
 **Menu Presentation Override**:
 An optional Menu Layout Tree decoration. Aliases replace canonical labels only
@@ -68,23 +109,18 @@ menu needs scrolling across a whole screen.
 _Avoid_: Sticky menu, per-item dismissal flag
 
 **Capability Unavailable**:
-An action cannot exist on the current platform or build. The Menu Layout Tree
-retains its position for cross-platform editing, while the current runtime may
-omit it and the editor explains the capability reason.
+An action cannot exist in this Windows build (missing optional runtime,
+dependency, or hardware capability). The Menu Layout Tree retains its position,
+while the current runtime may omit it and the editor explains the capability
+reason.
 _Avoid_: Disabled feature, hidden action
 
 **Runtime Disabled**:
-An action exists on the current platform but its owning feature is currently
-off or has no configured content. It keeps its Menu Layout Tree position and is
-rendered with a disabled style and explanation; changing the feature toggle
-never rewrites or filters the tree.
+An action exists in this build but its owning feature is currently off or has no
+configured content. It keeps its Menu Layout Tree position and is rendered with
+a disabled style and explanation; changing the feature toggle never rewrites or
+filters the tree.
 _Avoid_: Capability unavailable, user-hidden
-
-**Dock Recovery Menu**:
-The native macOS Dock context menu that keeps core recovery actions, especially
-opening the Settings System, reachable when the pet window is hidden or mouse
-input passes through it.
-_Avoid_: Pet context menu, tray menu
 
 **Settings Popup Surface**:
 The shared settings-menu presentation used by selectors and command buttons.
@@ -101,18 +137,8 @@ _Avoid_: Inline settings grid, eager gallery
 
 **Settings Capability Domain**:
 A stable sidebar destination organized by user intent. Every persistent setting
-has one owning domain; platform support changes availability, not ownership.
+has one owning domain; capability changes availability, not ownership.
 _Avoid_: Module page, Windows settings page
-
-**Author Accounts**:
-The author's public accounts are a read-only section at the bottom of the Updates
-page, not a sidebar destination; every pet identity and both chat-capable and
-pet-only builds show it. Copying a handle or opening the GitHub profile does not
-write preferences, and the section never participates in Settings Reset. Account
-display and clipboard text share one static source in `pet/settings_about.py`;
-its icon ink follows the settings window's own theme, not the OS theme.
-_Avoid_: About page (there is no separate About page — the accounts live on the
-Updates page)
 
 **Settings Reset**:
 The whole-settings recovery command in the Settings System sidebar. It restores
@@ -143,8 +169,8 @@ inside it.
 _Avoid_: Hidden advanced panel, per-feature switch list
 
 **Quiet Mode**:
-A process-wide, non-persistent do-not-disturb window covering every pet window
-and sprite at once. It suppresses ordinary reminders and bubbles — the pet
+A process-wide, non-persistent do-not-disturb window covering the pet window and
+sprite. It suppresses ordinary reminders and bubbles — the pet
 bubble and the system notification of that same reminder — while self-talk
 (including click responses), link-state bubbles, and every stateful or
 interactive event (approval, question, error, lifecycle, balance) keep
@@ -153,7 +179,7 @@ reminders are queued with a fixed bound (oldest dropped first) and reported in
 one bubble when quiet ends. A fullscreen application counts as quiet only while
 the persistent `quiet_also_on_fullscreen` preference is on, and it is the same
 fullscreen signal the auto-hide avoidance already uses.
-_Avoid_: Notification mute, global sound mute, per-pet mute
+_Avoid_: Notification mute, global sound mute, separate pet mute
 
 **Session-End Spawn Freeze**:
 The process-wide latch armed when the operating system announces that the

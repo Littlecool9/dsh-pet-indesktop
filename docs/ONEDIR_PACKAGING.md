@@ -9,10 +9,34 @@ AIGC:
     ReservedCode2: 5WS8ZIlf31sY8kOZGi3OuLj7wtTR4orlRD+uQa4vpN/zbG9icu3IcPiWHfrwX3FNAnkDwfOlDoaC6pO5on6QU9u6BhQY8Zvk9FgkMQ7xBy5xT9qvgmVNFq1i/Rd205JLy3QoCQjQoilIbKr0n59e8Zxm5NeUzvEkLeDmjfwJRUMj8DxzCVnfPdOP0Hs=
 ---
 
-# onedir 打包流水线（绿色版 zip + Inno Setup 安装包）
+# onedir 打包流水线（Windows 绿色版 zip + Inno Setup 安装包）
+
+> **现行口径（2026-11-03 硬分叉）**：本仓库只支持 Windows，构建入口只有
+> `scripts/build_onedir.ps1`（四个 Windows 变体）。下文提到 macOS / Linux / Android、
+> TTS 与语音报时、PresentMon / 游戏帧率、在线更新等的段落是硬分叉前的历史记录，相关
+> 代码与构建脚本已删除，**不要照做**；保留它们只为解释曾经的门禁与事故。
+> 模块由字符串入口加载，构建命令必须带 `--collect-submodules pet.modules`
+> （`tests/test_module_packaging.py` 守着这一行并逐个解析模块入口）。
+
+## 模块收集（模块化之后）
+
+`pet/modules/__init__.py::MODULES` 和每个 `MANIFEST` 的 `factory` / `menu_actions` /
+`config_schema` / `settings_page` 都是字符串入口，经 `importlib` 惰性加载；
+PyInstaller 从 `packaging/pet_entry.py` 出发的静态分析看不到它们。因此
+`scripts/build_onedir.ps1` 的 PyInstaller 命令显式收集整个包：
+
+```powershell
+--collect-submodules pet.modules
+```
+
+这会把每个 `pet/modules/<id>/` 及其子模块拉进模块图；新增模块只要在
+`pet/modules/<id>/` 下并登记进 `MODULES`，不需要再改打包参数。设置进程只 import
+模块清单 / 页面代码，不启动模块运行时。改动模块或打包参数后运行
+`pytest -q tests/test_module_packaging.py tests/test_module_architecture.py`；后者不需要
+真的跑 PyInstaller。
 
 Android 原生测试包使用独立 Gradle 工程，共用角色素材；其工具链、资源导出和
-验收见 [Android 悬浮桌宠](ANDROID.md)，不使用下述 PyInstaller 流程。
+验收见 [Android 悬浮桌宠](archive/ANDROID.md)，不使用下述 PyInstaller 流程。
 
 目标：**运行期零解压**——不再产生 `C:\...\Temp\_MEIxxxxxx` 缓存。
 
@@ -234,7 +258,7 @@ onedir 里就是 `_internal/`，安装包整目录拷贝即随分发：
   `.scratch/packaging-final-20261017/evidence.txt`；最小探针，不是产品变体）。
 - **Android 侧同一件事**：`scripts/export_android_assets.py::copy_notices` 把
   `android/NOTICE.txt`、`android/LICENSE-APACHE-2.0.txt` 与仓根
-  `THIRD_PARTY_NOTICES.md` 一起拷进 APK 资产根（见 [Android 文档](ANDROID.md)）。
+  `THIRD_PARTY_NOTICES.md` 一起拷进 APK 资产根（见 [Android 文档](archive/ANDROID.md)）。
 - **新增/替换随包素材或第三方二进制时**：同步维护 `THIRD_PARTY_NOTICES.md` 的对应小节
   （换版本要同时改产品侧常量与本节表格，见各条目的「升级路径」）。
 

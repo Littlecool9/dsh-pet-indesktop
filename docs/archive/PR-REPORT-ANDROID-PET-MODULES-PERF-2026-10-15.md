@@ -7,7 +7,7 @@
 日期：2026-10-15。用途：本地直接安装的 0.2.0 测试 APK，非商店正式发布。
 安装、构建、资源与设置契约见 [Android 文档](ANDROID.md)；首版授权、构建与
 历史性能数字见 [首版报告](PR-REPORT-ANDROID-PET-2026-10-15.md)；交付格式遵循
-[PR 报告模板](PR-REPORT-TEMPLATE.md)。
+[PR 报告模板](../PR-REPORT-TEMPLATE.md)。
 
 ## 一、核心特性
 
@@ -360,7 +360,7 @@ F1–F5 的修复点都写了聚焦测试（`DisplayStateTest`、`WindowGeometry
 ## 九、0.2.1 点击反馈与碰撞修复（2026-10-16）
 
 基线是用户实测有问题的未提交 0.2.0 草稿，不是干净 HEAD；全部原有改动保留。
-当前安装/构建/默认值契约见 [ANDROID.md](ANDROID.md)，索引见 [INDEX.md](INDEX.md)。
+当前安装/构建/默认值契约见 [ANDROID.md](ANDROID.md)，索引见 [INDEX.md](../INDEX.md)。
 本节证据目录为 `.scratch/android-pet/fix-021/`，以下 `logs/`、脚本、PNG、WAV
 均相对于该目录。日期使用 Asia/Shanghai；AVD 屏幕/日志使用其自身时区。
 

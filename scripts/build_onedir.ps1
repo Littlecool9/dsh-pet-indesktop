@@ -340,6 +340,12 @@ if (-not $SkipBuild) {
     # 注：运行中的旧 exe 已在进入本块之前统一停掉（见上面的 $running 段），
     # 否则 PyInstaller 无法覆盖 exe，后续瘦身也会因 DLL 被活进程锁定而失败。
     Write-Host "[1/3] PyInstaller --onedir building $name ..." -ForegroundColor Cyan
+    # 功能模块必须整包收集：模块是由字符串入口（pet/modules/__init__.py 的 MODULES，
+    # 以及每个 MANIFEST 的 factory / menu_actions / config_schema / settings_page）
+    # 经 importlib 惰性加载的，PyInstaller 从入口出发的静态分析一条都看不见。
+    # --collect-submodules pet.modules 把每个模块包及其子模块都拉进模块图；
+    # tests/test_module_packaging.py 静态检查这一行，并逐个 load_entry 验证入口可解析。
+    # （设置页独立进程也只 import 页面代码，不启动模块运行时。）
     # 注入变体标识：配置目录/会话/开机自启按变体隔离（pet/config.py 读取）。
     # 必须写 BOM-free UTF-8：PowerShell 5.1 的 Set-Content -Encoding UTF8 会带
     # BOM，且内容若含中文再被旧编辑器按 GBK 另存就会污染产物（issue #26）。
@@ -359,6 +365,7 @@ if (-not $SkipBuild) {
         --distpath dist-onedir `
         --workpath build-onedir `
         --icon assets\icon.ico `
+        --collect-submodules pet.modules `
         --collect-all imageio_ffmpeg `
         --collect-all certifi `
         --collect-all PySide6.QtMultimedia `

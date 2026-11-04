@@ -57,7 +57,7 @@
 - **根因二（真 bug）**：网易云通过 SMTC **不上报播放进度**，`_on_lyrics_ready` 给的是本地估算位置，却被 `LyricTracker.load` 按 `position is not None` 当成"播放器上报的真值" → `align_available()` 返回假 → 「歌词对齐」子菜单置灰（`registry._music_align_ready`）。既有用例都用 `_tracker.load(position=None)` 直接建状态、**绕过了生产路径**，所以旧实现全绿。
 - **修复**：歌词请求改用显式 `ProxyHandler({})` 的**直连 opener**（三源都是公开接口、两个还是国内域名）；失败原因由 `log.debug` 升到 `log.warning`（带主机、耗时、异常类型），检测到系统代理时记一行 INFO；`load()` 新增 `reported` 参数，生产路径显式传 `reported=reported is not None`。
 - **验证**：同机同曲（代理保持开启）`fetch_lyrics` **9.00s/None → 1.27s/62 行**（第二次命中缓存 0.02s）；真实网易云会话（《蝴蝶》- 陶喆，`position=None`）上实测 **9.01s/None → 0.88s/53 行**，控制器级端到端（真 SMTC + 真网络 + 真 Qt 事件循环）气泡出歌名+歌词、`align_available=True`、「下一句 / 前进5秒 / 回到开头」全部生效。新增 5 条离线用例（3 条代理与日志、2 条对齐闸门），修复前 **4 红 1 绿**；`test_music_lyric.py + test_menu_layout.py + test_now_playing_session.py` **165 passed**；全量 **2866 passed / 11 skipped**；ruff 全清。
-- **边界**：真上报进度的播放器（QQ 音乐 / Chrome）仍**不许**手动对齐（护栏用例钉住）；其余联网功能的代理行为**刻意不动**——实测更新清单（jsdelivr）**只有走代理才能通**、TTS 端点直连/代理都可用，全局绕过代理会踩坏它们。逐条影响面与 30 秒排查法见 [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)。实现细节见 [`PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md`](PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md)。
+- **边界**：真上报进度的播放器（QQ 音乐 / Chrome）仍**不许**手动对齐（护栏用例钉住）；其余联网功能的代理行为**刻意不动**——实测更新清单（jsdelivr）**只有走代理才能通**、TTS 端点直连/代理都可用，全局绕过代理会踩坏它们。逐条影响面与 30 秒排查法见 [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)。实现细节见 [`PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md`](archive/PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md)。
 
 ### PR #180（2026-09-22 合并，MerZlin）——交付证据纪律 + 构建 Qt 排他 + 产物 TTS 自检 + 角色头部框
 
@@ -94,7 +94,7 @@
 
 - **问题**（用户报告）：快进、或从歌曲中途开始播放时歌词必然错位。实测**网易云音乐完全不上报播放进度**（SMTC `position` / `end_time` 恒为 `0.0`，播放中 / 暂停 / 切歌 / 快进四种状态采样结果一致），歌词只能按本地时钟估算；另修「向后拖到第一句歌词之前仍显示旧句」与多会话时跳到浏览器里在播的那首歌。
 - **修复**：右键菜单新增「**音乐 → 歌词对齐**」（回到开头 / 上一句 / 下一句 / 后退 5 秒 / 前进 5 秒；报进度的播放器自动置灰并说明理由）；把「开启功能时歌已经在播」从**静默跳过**（连歌名都不显示）改为**先亮歌名 + 提示一次可对齐**；会话选取改为粘住当前播放器。
-- **验证**：新增 `tests/test_now_playing_session.py`（224 行）与 `tests/test_music_lyric.py` 扩展；性能实测脚本 `scripts/bench_music_lyric_align.py`；完整证据（含网易云「不上报进度」的实机复现记录）见 [`PR-REPORT-music-lyric-align-2026-09-22.md`](PR-REPORT-music-lyric-align-2026-09-22.md)。
+- **验证**：新增 `tests/test_now_playing_session.py`（224 行）与 `tests/test_music_lyric.py` 扩展；性能实测脚本 `scripts/bench_music_lyric_align.py`；完整证据（含网易云「不上报进度」的实机复现记录）见 [`PR-REPORT-music-lyric-align-2026-09-22.md`](archive/PR-REPORT-music-lyric-align-2026-09-22.md)。
 
 ### PR #163 / #169（2026-09-20 合并，MerZlin）——聊天背景取景渲染恢复与入口语义修正
 

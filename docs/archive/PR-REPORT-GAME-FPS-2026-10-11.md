@@ -6,9 +6,9 @@
 > **范围**：本功能按**三段分工**交付——① 后端与探针 ② 设置与岛接线 ③ 打包与文档（本文作者）。
 > 三段的文件与实测数据由各自交接提供；**本文对每一段标注它的来源**，作者本人未复跑的部分不冒充已验。
 > **关联**：后端交接 `.scratch/product-game-fps-20261011/HANDOFF.md`（后端/探针的完整证据）、
-> [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md) 的 2026-10-11 条（设置准入/准出）、
-> [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md)「随包分发的第三方二进制」、
-> [`PRODUCT-STATUS-2026-10-09.md`](PRODUCT-STATUS-2026-10-09.md) §二／§三.12。
+> [`SETTINGS-CHANGE-GATES.md`](../SETTINGS-CHANGE-GATES.md) 的 2026-10-11 条（设置准入/准出）、
+> [`ONEDIR_PACKAGING.md`](../ONEDIR_PACKAGING.md)「随包分发的第三方二进制」、
+> [`PRODUCT-STATUS-2026-10-09.md`](../PRODUCT-STATUS-2026-10-09.md) §二／§三.12。
 > **一句话结论**：链路已实现、可按现有脚本构建、后端与许可随包并有两道构建门；
 > **但本机普通权限下采不到任何真实帧**（ETW `access denied`），因此
 > **本报告不包含任何一个真实 FPS 数字，也不得被读成"FPS 已验收 / 性能已验证"**。
@@ -67,7 +67,7 @@
 | 段 | 文件 | 来源 |
 |---|---|---|
 | 后端与探针 | `pet/game_fps.py`、`pet/fps_monitor.py`、`tests/test_game_fps.py`、`tests/test_fps_monitor.py`（写作时点行数 757 / 1159 / 522 / 1100；**同树有并行分工仍在改这几个文件，数字会再变**，本文不复述） | `.scratch/product-game-fps-20261011/HANDOFF.md`（含权限现场、性能实测、设计取舍与已知边界；**该交接的时点早于树的后续改动**，引用其 argv 等具体值前须复核——本文 §5.1 用的是作者自己复现的那条命令行） |
-| 设置 | `pet/config.py`（2 个键的常量/默认/归一/reload 白名单/set 归一）、`pet/settings_network.py`（3 行 + 保存回写）、`pet/settings_search.py`（口语别名「帧数」）、`pet/settings_default_marks.py` 快照、`tests/test_settings_game_fps.py`（606 行 / 27 例）、`tests/test_settings_default_marks.py`、`tests/test_settings_copy_lint.py` | 见 [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md) 2026-10-11 条；本文 §六 复跑了其中三个测试文件（79 passed） |
+| 设置 | `pet/config.py`（2 个键的常量/默认/归一/reload 白名单/set 归一）、`pet/settings_network.py`（3 行 + 保存回写）、`pet/settings_search.py`（口语别名「帧数」）、`pet/settings_default_marks.py` 快照、`tests/test_settings_game_fps.py`（606 行 / 27 例）、`tests/test_settings_default_marks.py`、`tests/test_settings_copy_lint.py` | 见 [`SETTINGS-CHANGE-GATES.md`](../SETTINGS-CHANGE-GATES.md) 2026-10-11 条；本文 §六 复跑了其中三个测试文件（79 passed） |
 | 岛接线 | `pet/island_segments.py`（`FPS` 段 id 与口径注释）、`pet/island_fps.py`（写作时点 603 行：段状态机 + 进程级唯一采集器宿主）、`pet/dynamic_island.py`（订阅/呈现接线） | 同上（设置页真机布局证据由本文作者复跑，见 §五） |
 
 ### 2.3 未改动（刻意，避免评审误以为漏了）

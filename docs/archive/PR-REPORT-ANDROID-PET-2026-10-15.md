@@ -3,7 +3,7 @@
 基线：`main` / `b55f203` 加本次未提交变更；日期：2026-10-15。
 用途：本地直接安装的 0.1.0 测试 APK，非商店正式发布。
 安装、构建和接口说明见 [Android 文档](ANDROID.md)；交付格式遵循
-[PR 报告模板](PR-REPORT-TEMPLATE.md)。
+[PR 报告模板](../PR-REPORT-TEMPLATE.md)。
 
 ## 一、核心特性
 
@@ -163,11 +163,11 @@ result: PASS
 最终触控修正后的该轮冷启动 `am start -W` 的 TotalTime 为
 6284 / 6267 / 5862 ms（n=3），属于当时共享主机负载下的调试包模拟器结果。
 长按菜单、暂停、锁屏/解锁、授权撤销与恢复均通过真实 Android 输入/系统调用
-验证。截图已检查：[中文竖屏](screenshots/android-pet/settings.png)、
-[深色](screenshots/android-pet/settings-dark.png)、
-[大字体](screenshots/android-pet/settings-large-font.png)、
-[横屏尺寸](screenshots/android-pet/settings-landscape.png)、
-[跨应用悬浮](screenshots/android-pet/overlay-clock.png)。
+验证。截图已检查：[中文竖屏](../screenshots/android-pet/settings.png)、
+[深色](../screenshots/android-pet/settings-dark.png)、
+[大字体](../screenshots/android-pet/settings-large-font.png)、
+[横屏尺寸](../screenshots/android-pet/settings-landscape.png)、
+[跨应用悬浮](../screenshots/android-pet/overlay-clock.png)。
 
 ### 最低版本与最终安装包
 

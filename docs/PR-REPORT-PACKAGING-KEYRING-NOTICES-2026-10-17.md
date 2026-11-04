@@ -4,7 +4,7 @@
 > **分支**：`fix/packaging-tts-keyring-notices`　**日期**：2026-10-17
 > **范围**：见 §二（实现 3、构建/资产 6、测试 3、文档 5 含本报告；共 17 个文件，产品改动最小）
 > **关联**：发布阻断项（4.3.1 发布前收尾）；打包链路见
-> [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md) 第一、四节与 [`ANDROID.md`](ANDROID.md)
+> [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md) 第一、四节与 [`ANDROID.md`](archive/ANDROID.md)
 
 ## 一、核心特性
 

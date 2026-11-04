@@ -1,126 +1,146 @@
 # Engineering guide
 
-> **重构进行中（2026-11-03 起，分支 `refactor/modular`）**：本仓库是个人硬分叉，只支持 Windows，
-> 正在删除大量功能并改造成模块化结构，同时在 `surfcore/` 下合入了 SurfCore（Node DSH 插件 + QQ 桥接）。
-> 需求、决策和阶段计划以 `.scratch/modularization/spec.md` 为准；下面的「Project shape」
-> 仍在描述旧结构（多开、legacy 拓扑、跨平台），会在阶段 4 重写，与 spec 冲突时以 spec 为准。
+> 个人硬分叉：只支持 Windows，结构已模块化（核心 + `pet/modules/<id>/`），SurfCore 以 `surfcore/` 子目录合入。本文件描述现状，不描述上游历史。
 
 ## Project shape
 
-This is a PySide6 desktop-pet application. `python -m pet` enters through
-`pet/__main__.py`; `PetApp` owns application-level services, `PetWindow` owns
-interactive pet behavior, and `MovieLibrary` owns animation media. Keep Qt
-objects on their owning thread and communicate across threads with queued
-signals.
+This is a Windows-only PySide6 desktop pet. `python -m pet` enters through
+`pet/__main__.py`; `--settings` starts a separate settings process that reads
+config and module manifests only (it never starts the module runtime),
+`--ocr-worker` runs the local OCR subprocess, and `--uninstall-cleanup` runs
+without a GUI. The main process builds one `QApplication`, one `Config`, one
+`AppShell`, and one `OverlayShell`. Keep Qt objects on their owning thread and
+communicate across threads with queued signals.
 
 ```mermaid
 classDiagram
-    class PetApp {
+    class AppShell {
       +start()
-      +switch_character()
+      +running_module(id)
+      +module_unavailable_reason(id)
     }
-    class Config
-    class PetWindow {
-      +request_link_anim(name)
-      +show_bubble()
+    class AppModuleHost {
+      +provide(name, service)
+      +get(name)
+      +emit(topic, payload)
+      +subscribe(topic, callback)
     }
-    class MovieLibrary {
-      +movie(name)
-      +movies()
+    class ModuleRegistry {
+      +start_all(host, config)
+      +apply_config(config)
+      +stop_all()
+      +menu_action_specs()
     }
     class OverlayShell {
       +start()
-      +spawn_pet()
-      +exit_pet(sprite)
+      +show_bubble(text, ms)
+      +self_talk_ready()
+    }
+    class ScreenHost {
+      +tick(dt)
+      +set_bounds(rect)
+      +set_activity(rects)
     }
     class PetSprite {
       +advance(dt)
       +set_pos(pos)
     }
-    class SpriteCollisionWorld {
-      +tick(sprites, dt)
-      +add_static_member(id, l, t, w, h)
+    class TickDriver {
+      +start()
+      +tick_sim(dt)
     }
-    class ChatService
+    class SurfCoreLink
 
-    PetApp *-- Config
-    PetApp *-- PetWindow
-    PetApp *-- OverlayShell
-    OverlayShell *-- PetSprite
-    OverlayShell *-- SpriteCollisionWorld
-    PetWindow --> MovieLibrary
-    PetSprite --> MovieLibrary
-    PetApp ..> ChatService : optional UI
+    AppShell *-- AppModuleHost
+    AppShell *-- ModuleRegistry
+    AppShell *-- OverlayShell
+    OverlayShell *-- ScreenHost
+    OverlayShell *-- TickDriver
+    ScreenHost o-- PetSprite
+    AppShell ..> SurfCoreLink
 ```
 
-**Two render topologies, one process.** `PET_RENDER_TOPOLOGY=overlay` (dev env
-flag, read only in `pet/overlay_shell.is_overlay_topology`) renders every pet as a
-`PetSprite` inside an `OverlayWindow`; multi-pet is in-process
-(`AppShell.spawn_in_process_window` / `OverlayShell.spawn_pet`, slot identity via
-`pet/overlay_spawn_state.py`). Each **occupied display** has its own
-`OverlayWindow`, owned by a `pet/screen_host.ScreenHost` that also owns that
-screen's behaviour/collision/physics worlds (screen-local coordinates: equal local
-coordinates on two displays are not the same point), while the shell, the
-`TickDriver` timer and every shared service stay single. `OverlayShell.overlay`
-and the three controllers are the *home* host's views; anything that means
-"every pet/window" enumerates `shell.hosts()`. `host_for_sprite(sprite)` and
-`move_sprite_to_screen(sprite, screen, global_pos=None)` are the per-pet screen
-seams (normal drag crosses screens with them; `ScreenHost` bounds come from the
-profile's `screen_name`/`rx`/`ry`). The whole cross-display capability is gated by
-the global `allow_cross_screen` key (default off, snapshotted once per process like
-`stream_capture_mode`): off = every pet stays on the screen the shell started on,
-one window, drags cannot cross, no second host is created. `screen_name` is the
-pet's *screen assignment*: it is stamped at first placement (every pet, so a child
-never silently follows the main pet to another display) and rewritten only by a
-deliberate cross-screen move (`_remember_sprite_screen`). `_save_child_geometry`
-writes the assignment together with ratios/facing/scale **only while the pet is on
-its assigned screen**; a temporary host (switch off, or the assigned screen
-unplugged) writes no geometry key at all, so neither the assignment nor the ratios
-it recorded on its own screen are eaten — turning the switch back on and restarting
-returns each pet to its own screen at its own position. The topology verdict also reads the persistent
-`stream_capture_mode` key (main `config.json`, snapshotted once per process by
-`pet/overlay_settings_command.is_overlay_topology`): capture mode is a
-restart-level switch to the legacy single-window path, where the pet is a real
-title-bearing window OBS can enumerate (the window capability follows the main
-config), only active slot0 has a capture window. Restoring slot0 is allowed;
-extra pets are refused without modifying the stored child active identities.
-`--slot N` selects an existing active identity, never creates a second instance
-or activates an empty slot. `PetWindow` remains the capture/legacy surface; use
-`SlotRoutedConfig` for its profile/global ownership rather than a second truth.
+**One pet, one overlay window.** The only product topology is the overlay path:
+there is no legacy single-window `PetWindow`, no capture-mode topology switch,
+and no second pet. The pet is slot 0: per-pet preferences live in
+`config-slot-0.json`, global settings in `config.json`, and the profile is
+migrated/backed up by `pet/pet_profiles.py`; a corrupt slot-0 profile degrades
+that slot only and is reported with its path, while global-config damage still
+aborts startup. `OverlayShell` owns the one transparent window whose bounds are
+the union of all connected screens' work areas. A `ScreenHost` holds that
+window's `bounds`, its activity rectangles, the behaviour controller and
+per-screen bookkeeping; `PetSprite` is the single pet drawn inside it.
+`TickDriver` is the single timer that advances behaviour, sprites and island
+animation. Cross-screen is the same window moving the sprite between activity
+rectangles (gated by the global `allow_cross_screen` key, default off); closing
+a pet or the app never promotes another pet.
 
-Pet identities are fixed 0..128. Profiles live only in `config-slot-N.json`,
-global settings in `config.json`, and active membership in versioned
-`overlay-active-pets.json`. Closing a pet preserves its profile and services,
-never promotes another pet or quits the app. Application exit preserves active
-membership. Profile writes/reset share the directory lock and profile generation;
-raw slot `Config.save` is intentionally refused. A corrupt `config-slot-0.json`
-degrades that slot only: it stays empty (kept out of the in-memory active set),
-its file is never touched, and the diagnosis names its path — every other
-non-ok `migrate_slot0_profile` status still aborts startup, because those mean
-the global config or the migration itself is untrustworthy. Active membership is
-written only by explicit user generate/close, and those writes back up a corrupt
-`overlay-active-pets.json` before replacing it (`on_broken="backup-overwrite"`)
-and report a failure visibly; startup and exit never rewrite it. Reset and
-autostart are global-scope settings reachable from every pet's settings page:
-the sidebar exposes per-pet and global reset as two separate actions, and
-`autostart_wanted` is editable everywhere with its "affects all pets" scope
-stated in the row.
+**Modules are the feature layer.** A module is a package under
+`pet/modules/<id>/` registered in `pet/modules/__init__.py::MODULES`. Its
+`__init__.py` only declares `MANIFEST = ModuleManifest(...)` (cheap: no Qt, no
+runtime import). The manifest's string entry points (`factory`,
+`menu_actions`, `config_schema`, `settings_page`) are resolved lazily with
+`pet.modules.base.load_entry`, because the settings process and the menu
+registry must import only the page/menu code, never start a module.
+`ModuleRegistry` (`pet/modules/registry.py`) reads manifests, orders them by
+`requires`/`optional`, starts them with an `AppModuleHost`
+(`pet/module_host.py`), forwards config, and stops them in reverse order; one
+broken module is isolated and its reason is visible. `AppModuleHost` is the
+only surface a module may use: config, bubbles/notifications, dialogs, island
+contributions, a service table (`provide` / `get`) and a queued event bus
+(`emit` / `subscribe`). `pet/module_config.py` merges module config schemas so
+defaults, normalization and key ownership stay with the module instead of the
+global `config.py`.
 
-The multi-process multi-pet layer (cross-process collision IPC, slot file locks,
-instance launcher, child-pet taskkill cleanup, runtime-marker live consumers) was
-deleted in Phase 4.4b; `tests/test_architecture.py` guards that the retired modules
-stay gone and are never imported again. Collision math is pure (`pet/collision.py`
-+ `pet/sprite_collision.py`); the island's stadium clamp lives in
-`sprite_collision.capsule_circles` via `pet/island_bridge.py`.
+Module rules (guarded by `tests/test_module_architecture.py` and
+`tests/test_module_registry.py`):
 
-`pet/multi_window_shared.py` is always on: one process-wide agent_link /
-proactive / fullscreen watcher fanned out to every window or sprite. Under the
-overlay topology the shared fullscreen watcher is not started (the overlay shell
-owns its own `FullscreenCursorWatcher`). The DSH bridge directory has exactly one
-reader: `DshMonitor` (one `DirGlobTailer` + one polling thread; parsed records feed
-both the signal dispatch and the pure 8-state converger in `pet/dsh_state.py`,
-with the DSH port probe folded into the same thread), started by
-`AgentLinkManager.apply_config` only while `agent_link.dsh` is enabled.
+- **Delete a module = delete its directory + remove its `MODULES` line.** Its
+  defaults, config keys, menu actions and settings page disappear with it;
+  dependants render as disabled with a stated reason.
+- **Core never imports `pet.modules.<id>`.** Core reads a module's capability
+  through `pet.module_host.module_service(shell, "<id>")` (or the host's
+  service table); missing/unstarted means the feature is off, not an error.
+- **Modules never import each other.** Cross-module capabilities go through
+  `host.provide` / `host.get` or topics on the host event bus.
+- **The settings process reads manifests only.** It merges menu/page string
+  entries but never constructs `ModuleRegistry`/module runtimes.
+
+Current `MODULES` (registration order; startup order follows dependencies):
+`surfcore`, `harness`, `hotkeys`, `self_talk`, `network_info`, `focus`,
+`quick_launch`, `todo`, `balance`. Core owns application lifecycle, config,
+the overlay/sprite/tick pipeline, animation media (WebM/frame sequences/
+ffmpeg), base interaction, the edge probe, bubbles, dynamic island shell,
+tray, menu/settings frameworks, quiet mode, desktop notifications and
+autostart.
+
+**SurfCore and the two dialogue lines.** `surfcore/` is the whole SurfCore
+Node/DSH plugin (QQ bridge, memory, persona, quota, console) and is not Python;
+it may be edited here but does not import the pet. The pet is its client:
+`pet/modules/surfcore/` discovers `~/.dsh/surfcore/pet/host.json`, talks only
+to loopback with the pet token, long-polls events, exposes the `surfcore`
+service and syncs focus state. `pet/surfcore_link.py` is the core-side seam
+used by direct-API features (cached persona card, budget gate, usage reporting,
+proactive claim); it reads the service and never imports the SurfCore module.
+D5 splits dialogue into a **companion line** (quick bubble, island chat,
+proactive talk, self-talk — through SurfCore) and an **assistant line** (full
+AI chat window and screen-looking — direct API, with persona always from the
+SurfCore persona card). SurfCore being offline disables the companion messages
+with a reason and falls back to cached persona/local self-talk presets; it is
+not a second direct-API path.
+
+**Agent link.** The DSH bridge (`integrations/dsh-pet-bridge/`) tags each
+session with its agent preset. `DshMonitor` in `pet/agent_link.py` drops every
+session whose preset starts with `qq-chat` before state-machine/ingest
+dispatch, so only real agents drive the pet (D7). The bridge directory has
+exactly one reader; parsed records feed both signal dispatch and the pure
+8-state converger in `pet/dsh_state.py`.
+
+Packaging: `scripts/build_onedir.ps1` must collect the whole `pet.modules`
+package with `--collect-submodules pet.modules`, because every module is
+reached through a string entry point. `tests/test_module_packaging.py` guards
+that line and resolves every `MODULES` entry plus every manifest string entry
+point without running PyInstaller. There are no macOS/Linux/Android builds.
 
 ## Change discipline
 
@@ -145,7 +165,7 @@ with the DSH port probe folded into the same thread), started by
 本仓库已是个人硬分叉，不再向上游提 PR：**逐 PR 的三证据报告
 （`docs/PR-REPORT-*`）不再要求**，历史报告只作参考。测试门保留，但要快：
 
-- 任务内：ruff（`ruff check pet/ tests/`）+ 与改动相关的测试文件。
+- 任务内：ruff（`ruff check pet/ tests/ scripts/`）+ 与改动相关的测试文件。
 - 阶段边界 / 合并进集成分支前：全量 pytest（并行，`-n 6`；本机 16GB 内存，
   `-n 12` 时测试进程合计约 8GB、把系统挤到只剩 0.7GB 空闲，别用 `-n auto`），
   失败的用例再单进程复跑一次，区分真失败与并行时序抖动。
@@ -155,9 +175,7 @@ with the DSH port probe folded into the same thread), started by
   + 宽预算，禁止固定 sleep 猜时序、禁止赌目录枚举顺序。
 
 Run focused tests before `python -m pytest -q`. Set
-`QT_QPA_PLATFORM=offscreen` in headless environments. A restricted macOS
-sandbox may deny Unix socket creation; rerun QLocalServer tests with local IPC
-permission rather than treating errno 1 as a product failure.
+`QT_QPA_PLATFORM=offscreen` in headless environments.
 
 ## Agent skills
 
@@ -179,7 +197,7 @@ Use the single-context layout: root `CONTEXT.md` and system ADRs under
 ### Qt UI review
 
 Use `.agents/skills/qt-ui-review/SKILL.md` when reviewing settings, menus,
-overlays, QSS, accessibility, or cross-platform desktop presentation.
+overlays, QSS, accessibility, or desktop presentation.
 
 ### Qt UI development
 
@@ -202,7 +220,7 @@ exact breakpoint there; see `docs/agents/handoff.md`.
   scheduling, or anything that runs during Windows shutdown/logoff
   (`session_watcher`, `match_shutdown`, `AppShell._on_session_end`).
 - Read `docs/ONEDIR_PACKAGING.md` when changing PyInstaller specs, bundled
-  resources, or platform build scripts.
+  resources, module collection, or Windows build scripts.
 - Read `docs/PR-REPORT-FRAMESEQ-ALPHA-FLOOR-2026-10-16.md` when changing the
   frame-sequence encode grade or unblend chain
   (`pet/frameseq_provision.py`: `ENCODER_DESC` / `UNBLEND_MARK` / `unblend_v3` /
@@ -211,22 +229,6 @@ exact breakpoint there; see `docs/agents/handoff.md`.
   byte-identical to the runtime ones), or when deciding whether frame-sequence
   material must be re-generated. Current grade is `unblend-white-v5` (v3 is
   history); v4 (hole restore) is suspended and is **not** a grade.
-- Read `docs/ONEDIR_PACKAGING.md` §「随包分发的第三方二进制」and
-  `docs/PR-REPORT-GAME-FPS-2026-10-11.md` when touching the game-FPS chain
-  (`pet/game_fps.py`, `pet/fps_monitor.py`, `pet/island_fps.py`), the bundled
-  PresentMon backend under `resources/presentmon/` (Windows-only, x64-only,
-  digests gated by `scripts/verify_presentmon.py` at build time; never installed
-  as an MSI/service), or the `fps` member of `island_metrics` and the two
-  process-level `game_fps_*` keys. Real frame readings are **not** verified on
-  this machine: capture runs with **plain user permissions only** — the pet never
-  self-elevates and runs no resident elevated helper. The only elevation is the
-  user-clicked, one-time settings button (`pet/fps_permission.py`) that adds the
-  current account (token SID) to Performance Log Users via one UAC prompt; it
-  takes effect after re-logon. Until then, where the user is not in that
-  group the segment shows the raw `access denied` reason
-  from the capture backend and keeps no value (never a fake `0`). No ETW session
-  or real frame reading has ever been exercised here — do not cite any measured
-  FPS as verified.
 - Read `docs/STABLE_BUILDS.md` when changing release/build workflows.
 - Read `docs/CONTEXT-MENU-RESEARCH-AND-REFACTOR-2026-08-25.md` when changing
   context-menu structure, styling, interaction, or platform behavior.
@@ -236,29 +238,18 @@ exact breakpoint there; see `docs/agents/handoff.md`.
   dialogue preset files (`pet/persona_presets/*.json`), phrase loading
   (`persona_phrases.py`), or expression-style semantics
   (`dialogue_mode`/`dialogue_phrases`).
-- Read `docs/PR-MERGE-LESSONS-2026-09-12.md` before merging PRs: stacked-PR
-  conflicts after squashing the parent, budget/red-line changes that only break
-  when two PRs combine, and timing-test flake discipline (poll state with a wide
-  budget instead of fixed sleeps).
+- Read `docs/PR-MERGE-LESSONS-2026-09-12.md` before merging stacked branches:
+  conflicts after squashing a parent, budget/red-line changes that only break
+  when two changes combine, and timing-test flake discipline (poll state with a
+  wide budget instead of fixed sleeps).
 - Read `docs/NETWORK-PROXY-AND-VPN-2026-09-22.md` when touching any networked
-  feature (music lyrics, edge-tts voice, updater, balance, vision, chat) or when
-  a report sounds like "X worked yesterday and now it doesn't": the Windows
-  system proxy / VPN is a first-class suspect — it made lyric fetching 20-41s
-  (all three sources timed out) on 2026-09-22, while jsdelivr update checks only
-  work *through* the proxy. Lyric requests try direct first and fall back to the
-  system proxy exactly once — only on a transport failure or HTTP 500/502/504,
-  sharing `fetch_lyrics`' single deadline budget (`pet/music_lyric.py`:
-  `_build_opener` / `_may_switch_to_proxy` / `_fallback_proxy` /
-  `_attempt_timeout`; 404/429/503 and other definitive answers never switch
-  routes, and neither does any response carrying `Retry-After`). The fallback
-  only counts when the URL's own scheme (http/https) has a proxy that the system
-  `proxy_bypass` list does not exempt — a `NO_PROXY`-only or other-scheme config
-  is not a second route. Never log proxy addresses, credentials, or raw
-  exception/URL text: route names, exception type, HTTP status and `Retry-After`
-  only. Other features keep following the proxy.
+  feature (balance, vision/screen APIs, AI chat, SurfCore loopback discovery) or
+  when a report sounds like "X worked yesterday and now it doesn't": the Windows
+  system proxy / VPN is a first-class suspect. Never log proxy addresses,
+  credentials, tokens, or raw exception/URL text.
 - Treat `assets/characters/<id>/videos/` plus its manifest as one character
-  package; preserve relative paths and case because packaged platforms differ.
-  The manifest may declare `body_box` (`[x1, y1, x2, y2]` in source pixels,
-  mirror-symmetrized): the stable body rect used as the placement/edge-clamp
-  anchor (`pet/catalog.py character_body_box`); measure it at alpha≥128 to
-  match the mask/visual edge, and omit it to fall back to full-canvas behavior.
+  package; preserve relative paths and case. The manifest may declare
+  `body_box` (`[x1, y1, x2, y2]` in source pixels, mirror-symmetrized): the
+  stable body rect used as the placement/edge-clamp anchor
+  (`pet/catalog.py character_body_box`); measure it at alpha≥128 to match the
+  mask/visual edge, and omit it to fall back to full-canvas behavior.

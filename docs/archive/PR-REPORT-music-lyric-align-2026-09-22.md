@@ -4,7 +4,7 @@
 > **分支**：`feat/music-lyric-align`　**日期**：2026-09-22
 > **范围**：12 个文件（实现 7、测试 3、基准脚本 1、本报告 1）
 > **上游文档**：[`PR-REPORT-music-lyric-2026-09-16.md`](PR-REPORT-music-lyric-2026-09-16.md)（歌词显示本体）
-> **结构**：按 [`DEV-HANDOVER.md`](DEV-HANDOVER.md) §8.3，并落实「修改文件说明 / 性能分析 / 实机运行记录」三段硬要求。
+> **结构**：按 [`DEV-HANDOVER.md`](../DEV-HANDOVER.md) §8.3，并落实「修改文件说明 / 性能分析 / 实机运行记录」三段硬要求。
 
 ---
 

@@ -200,7 +200,7 @@
      （契约层 `unregister_segment` 已是这个口径）。
 4. **OBS 真实验证**【待实验】：WGC / BitBlt 后端 + **用 OBS 录像**验证枚举、呈现、alpha 与动态帧。
    **禁止静默整屏捕获**（用户没选的画面不许被采集）；**禁止先拍一个后端**再去找证据。
-   参考 [`PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md`](PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md)。
+   参考 [`PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md`](archive/PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md)。
 5. **游戏帧率（灵动岛 `fps` 段）**【已实现（源码）；真实读数待解阻塞】（2026-10-11 追记）：
    官方 PresentMon 独立控制台程序**随 Windows 包分发**（构建期两道门校验文件名/sha256/架构，
    MIT 许可随包；**不装 MSI / 服务 / 驱动 / 注册表**），主值口径 = **目标应用的 Present 帧率**
@@ -256,7 +256,7 @@
 4. **修复后重冻**，受影响面**复验**（改一处必须重跑它的门）。
 5. 发布形态逐项实测：**同包新装 / 更新 / 预转 106 素材无首次转换 / 真实 GUI / 歌词真实播放器 /
    正常退出 / 资源占用 / OBS**；打包口径见 [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md)，
-   在线更新见 [`ONLINE-UPDATE.md`](ONLINE-UPDATE.md)。
+   在线更新见 [`ONLINE-UPDATE.md`](archive/ONLINE-UPDATE.md)。
 6. **三端与产品 bug 检查（2026-10-11 用户补充，交付必需）**：Windows、macOS、Linux 分别在真实对应 OS 环境执行测试与打包验证，绑定同一候选源码 SHA/清单；不得用 monkeypatch 平台值、Windows 下离屏测试或 WSL 代替三端桌面验收。现有 `pr-test.yml` 已有三 OS runner 矩阵，但配置存在不等于本候选运行通过。逐端记录自动化结果、构建/资源完整性、启动/退出、设置保存与迁移、多宠恢复、平台支持能力及诚实降级；另按用户实际操作做产品级 bug 检查。CI 离屏通过与原生桌面人工/Computer Use 验收分开标注。
    **skip 与平台不可测**：如实标"阻断"或留待用户裁决，**不可虚报**。某功能为 Windows 专属时，其它平台验正确禁用/降级，不要求伪造等价能力。
 7. **【裁决】按文首 2026-10-11 授权执行**：本地开发 / 测试 / 构建 / 部署已授权；本版收口、
