@@ -1681,6 +1681,14 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       const [voiceBranch, setVoiceBranch] = useState("voice-local");
       const [launchResult, setLaunchResult] = useState(null);
       const [launchErr, setLaunchErr] = useState(null);
+      const [compat, setCompat] = useState(null);
+      const [compatError, setCompatError] = useState(null);
+      const [gateData, setGateData] = useState(null);
+      const [gateAlert, setGateAlert] = useState(null);
+      const dismissedGates = useRef(new Set());
+      const [snowError, setSnowError] = useState(null);
+      // 手动导入 SnowLuma：先说明"导入的是什么"，再开选择框
+      const [snowImport, setSnowImport] = useState(false);
       // 插件冲突体检：只读扫描；结果必须带“未覆盖项”，不能把“没查到”说成“兼容”。
       const runCompat = async () => {
         setBusy("compat");

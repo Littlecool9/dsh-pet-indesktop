@@ -6,6 +6,7 @@
 
 | 日期 | 案例 | 一句话 | 版本 |
 | --- | --- | --- | --- |
+| 2026-11-04 | [设置页整页空白：删自更新时误删 OverviewTab 状态声明](2026-11-04-settings-blank-missing-state.md) | 恢复 7 个声明；新增 setter 声明守卫测试 | 待发布 |
 | 2026-11-04 | [setup-dsh：dsh plugin install 失败只报退出码 / 中文乱码](2026-11-04-setup-dsh-install-output.md) | 打印输出末尾、GBK 回退解码、找不到 dsh 时提示 CLI 位置 | 待发布 |
 | 2026-11-04 | [桌面桌宠替代 surfpet：移除安装/更新，桌宠页显示客户端在线状态](2026-11-04-desktop-pet-replaces-surfpet.md) | 删除 pet.js/updates.js 与路由；只报 client.online/lastSeenAt | 待发布 |
 | 2026-11-04 | [共享主动说话额度 + QQ 主人专注上下文](2026-11-04-proactive-claim-and-qq-focus.md) | `/proactive/claim` 共用 daily/gap/quiet/focus；QQ 只加专注状态行 | 待发布 |
