@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -29,8 +28,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QObject, QRect, QTimer, Qt, Signal
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
+from PySide6.QtCore import QRect, QTimer, Qt
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import autostart as autostart_mod
 from . import catalog
@@ -41,7 +40,6 @@ from .desktop_notify import DesktopNotification, position_stack
 from .library import MovieLibrary
 from .runtime_cleanup import cleanup_stale_runtime_dirs
 from .session_watcher import install_session_watcher
-from .todo_reminder import TodoReminderService
 from .persona_phrases import PhrasePicker
 
 
@@ -55,74 +53,6 @@ _persona_pickers = weakref.WeakKeyDictionary()
 # "Garbage-collecting / <no Python frame>"）。WeakSet 只弱引用 shell 本身，
 # 测试收口时逐对象停表并释放反向引用。
 _LIVE_SHELLS: "weakref.WeakSet" = weakref.WeakSet()
-
-
-class _BackgroundResult(QObject):
-    done = Signal(bool, object)
-
-
-def _presentation_available(host) -> bool:
-    """这个宿主现在还能不能承载一次**呈现**（迟到的服务结果用）。
-
-    ``_SpriteServicePresenter``（overlay 菜单的手动余额/天气落点）自带"发起的那一只
-    还在吗"的判据；普通宿主（PetWindow / 壳 / 测试替身）没有这一面，一律按可用——
-    它们本来就是"这一份就是唯一落点"的形态。判据是对象身份（同一槽重建出来的是另一只
-    宠），比槽号 + 代次更强：旧结果绝不投给新住客（规范 §一「关闭后的迟到结果」）。
-    """
-    check = getattr(host, "presentation_available", None)
-    if not callable(check):
-        return True
-    try:
-        return bool(check())
-    except RuntimeError:
-        # 已销毁的原生窗口/壳：按不可用处理（不冒险触碰）
-        return False
-
-
-class _BalanceBridge(_BackgroundResult):
-    def __init__(self, win, owner=None):
-        super().__init__()
-        self.win = win
-        self.owner = owner
-        self.done.connect(self._show)
-
-    def _show(self, ok: bool, payload) -> None:
-        # 异步回调可能晚于窗口销毁（切角色/退出），先探活再触碰 Qt 对象
-        if self.win is None or not shiboken6.isValid(self.win):
-            return
-        if not _presentation_available(self.win):
-            # 发起的那一只已经不在了（或换成了另一只）：**只取消这次呈现**。
-            # 数据侧不受影响——内存/文件缓存由 worker 落好，岛卡片是全局面，
-            # 用户问的余额信息仍然到位（规范 §一「只取消宠物呈现」）。
-            logging.info("余额结果到达时发起桌宠已不在，取消本次呈现（缓存仍更新）")
-            if ok and self.owner is not None and hasattr(self.owner, "_update_island_balance"):
-                self.owner._update_island_balance(payload)
-            return
-        if not ok:
-            self.win.show_bubble(str(payload), duration_ms=6000)
-            return
-        _show_balance_payload(self.win, payload)
-        if self.owner is not None and hasattr(self.owner, "_update_island_balance"):
-            self.owner._update_island_balance(payload)
-
-
-class _QuietBalanceBridge(_BackgroundResult):
-    """灵动岛卡片展开时的静默余额查询：只更新岛卡片，不冒泡、不播余额动画。"""
-
-    def __init__(self, owner):
-        super().__init__()
-        self.owner = owner
-        self.done.connect(self._apply)
-
-    def _apply(self, ok: bool, payload) -> None:
-        owner = self.owner
-        island = getattr(owner, "island", None) if owner is not None else None
-        if island is None or not shiboken6.isValid(island):
-            return
-        if ok:
-            owner._update_island_balance(payload, animate=False)
-        else:
-            island.set_balance_info(owner._island_tier_hint(), "余额查询失败")
 
 
 def _persona_picker(win):
@@ -155,57 +85,6 @@ def _persona_text(win, key: str, fallback: str, **values) -> str:
     # legacy / whale_maid：命中内置 JSON 预设即渲染，未命中回退调用方原文案
     text = picker.get(mode, key, fallback, **values)
     return fallback.format(**values) if text is fallback else text
-
-
-def _show_balance_payload(win, payload) -> None:
-    """展示余额气泡（含峰谷副标题）并按余额档位触发余额动画。
-
-    网络查询、内存缓存、文件缓存三条路径统一走这里，避免缓存命中时
-    没有副标题/不播动画导致的行为不一致。
-
-    pet.balance 按需导入（内存瘦身第二刀）：该模块自带整套档位文案/价格提示
-    表，实测独占 4.75MB Python 堆（tools/import_cost.py），而余额查询在
-    默认配置下从不发生（balance_refresh_minutes=0 且用户没点"看余额"）——
-    启动就不该为它付这份常驻。函数内 import 只在真正要显示余额时才付。
-    """
-    from . import balance as balance_mod
-
-    if win is None or not shiboken6.isValid(win):
-        return
-    if isinstance(payload, dict):
-        text = str(payload.get("text") or "余额信息为空")
-        info = payload.get("info") or {}
-    else:
-        text = str(payload)
-        info = {}
-    cfg = getattr(win, "cfg", None)
-    if cfg is not None:
-        text = _persona_text(win, "balance.result", "余额情况：{text}", text=text)
-    cfg = getattr(win, "cfg", None)
-    mode = str(cfg.get("balance_tier_labels_mode", "default") or "default") if cfg is not None else "default"
-    custom_peak = str(cfg.get("balance_tier_label_peak", "") or "") if cfg is not None else ""
-    custom_idle = str(cfg.get("balance_tier_label_idle", "") or "") if cfg is not None else ""
-    peak_label, idle_label = balance_mod.resolve_tier_labels(mode, custom_peak, custom_idle)
-    color_enabled = bool(cfg.get("balance_tier_color_enabled", True)) if cfg is not None else True
-    if color_enabled:
-        subtitle = balance_mod.deepseek_pricing_hint_html(
-            peak_label=peak_label, idle_label=idle_label,
-        )
-    else:
-        subtitle = balance_mod.deepseek_pricing_hint(
-            peak_label=peak_label, idle_label=idle_label,
-        )
-    win.show_bubble(
-        text, duration_ms=6000,
-        subtitle=subtitle,
-    )
-    # 按余额档位播放上游余额动画（仅当素材存在时静默跳过）
-    p = balance_mod.balance_percent(info.get("total"))
-    if p is not None:
-        idx = balance_mod.balance_event_index(p)
-        name = balance_mod.BALANCE_EVENT_NAMES[idx]
-        if name and hasattr(win, "request_link_anim"):
-            win.request_link_anim(name)
 
 
 def _instance_config_identity(instance) -> str:
@@ -703,9 +582,7 @@ class PetInstance:
             if self.win is not None:
                 self.win.refresh_pet_settings()
             shell._sync_dynamic_island()
-            shell._apply_balance_timer()
-            # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
-            shell._sync_todo_service()
+            # 模块运行时配置（余额定时器 / 待办服务 / 菜单开关等）在同一处收敛。
             apply_modules = getattr(shell, "_apply_module_config", None)
             if callable(apply_modules):
                 apply_modules()
@@ -816,13 +693,6 @@ class AppShell:
         self._toast_windows: list[DesktopNotification] = []
         self.island = None
         self.island_chat = None  # 岛对话气泡：桌宠隐藏时的交互面（island_chat.py）
-        self._balance_busy = False
-        # 静默余额查询（岛卡片展开）独立忙标志与节流时间戳；
-        # None = 从未查询过（不用 monotonic 绝对值做回拨算术）
-        self._quiet_balance_busy = False
-        self._quiet_balance_last: float | None = None
-        self._balance_cache = None
-        self._balance_bridge = None
         self._on_about_to_quit_connected = False
         # 唯一渲染拓扑的产品壳（4.1a）：start() 时构造。
         self._overlay_shell = None
@@ -830,22 +700,10 @@ class AppShell:
         # 构造 AppShell 的测试路径才会拿到 None）。释放挂在会话结束路径
         # （_on_session_end）与 main() 的 finally。
         self._overlay_gate = overlay_gate
-        self._balance_timer = QTimer()
-        self._balance_timer.timeout.connect(self.show_balance)
-        self._update_bridge = None
-        self._balance_cache_path = config.dir / 'balance_cache.json'  # 跨实例共享余额缓存（按 provider 绑定）
-        # 待办提醒：进程级单例（多窗共用一个调度器，避免每窗一个定时器重复通知），
-        # Phase 1 门控：默认懒创建——配置关闭时不构造、不跑 30s 定时器；关闭且
-        # 无面板打开时释放。win 引用在服务 tick 时经本类 win 属性动态读主窗，
-        # 角色热切换重建窗口后无需重绑（PR72 上游版挂 PetApp；本分支归 AppShell）。
-        self.todo_service = None
-        self.todo_panel = None
         # 功能模块：start() 里按 MODULES 建表并启动；运行期配置收敛与退出收口
         # 都经同一个注册表（模块失败只影响自己，原因可查）。
         self._module_registry = None
         self._module_host = None
-        if self._todo_wanted():
-            self._ensure_todo_service()
         # 4.4b：`experimental_single_process_spawn` 键删除——进程内多窗从
         # "实验开关"升格为**唯一**多宠形态（多进程多宠退役层已删除），
         # 原先依赖该 flag 快照的窗级逻辑（runtime 标记版本化、日志前缀、
@@ -1037,35 +895,6 @@ class AppShell:
         inst = getattr(self, 'instance', None)
         return getattr(inst, 'chat_settings_dialog', None) if inst is not None else None
 
-    # ------------------------------------------------------------ 功能门控（待办提醒）
-    def _todo_wanted(self) -> bool:
-        return bool(self.config.get("todo_reminder_enabled", True))
-
-    def _ensure_todo_service(self):
-        """懒创建待办提醒服务（仅在使用待办/打开面板时创建）。"""
-        if getattr(self, "todo_service", None) is None:
-            self.todo_service = TodoReminderService(self)
-        return self.todo_service
-
-    def _sync_todo_service(self) -> None:
-        """按配置启停待办提醒服务；关闭且无面板打开时释放服务对象。"""
-        if self._todo_wanted():
-            service = self._ensure_todo_service()
-            timer = getattr(service, "_timer", None)
-            if timer is not None and callable(getattr(timer, "isActive", None)) and timer.isActive():
-                # 已在运行：设置保存只刷新偏好/条目，不重置 30s tick。
-                service.apply_config()
-            elif callable(getattr(service, "start", None)):
-                service.start()
-        elif getattr(self, "todo_service", None) is not None:
-            try:
-                self.todo_service.stop()
-            except Exception:
-                logging.exception("停止待办提醒服务失败")
-            # 面板持有 app 引用并动态读取 todo_service；面板还开着时保留对象。
-            if getattr(self, "todo_panel", None) is None:
-                self.todo_service = None
-
     # ------------------------------------------------------------ DSH 联动门
     def _dsh_tracker_wanted(self) -> bool:
         """DSH 联动的功能门：``agent_link.dsh``（默认关）。
@@ -1107,10 +936,7 @@ class AppShell:
             # 设置页/独立设置进程保存也不生效）。legacy 走窗链，这里不执行。
             self._sync_shared_optional_services()
         self._sync_dynamic_island()
-        self._apply_balance_timer()
-        # Phase 1/2：设置保存后按配置同步可选服务（todo 懒启停）与动画预热
-        self._sync_todo_service()
-        # 模块运行时配置（菜单开关等）与进程内服务同一处收敛；harness 模块
+        # 模块运行时配置（余额定时器 / 待办服务 / 菜单开关等）与进程内服务同一处收敛；harness 模块
         # 在自己的 apply_config 里按 agent_link.dsh 收口自拉起的 dsh web（后台线程）。
         self._apply_module_config()
         for inst in getattr(self, "_instances", []):
@@ -1507,11 +1333,9 @@ class AppShell:
         # 无需窗——环则空转）；flag 关时 _shared 为 None，no-op。
         if self._shared is not None:
             self._shared.start()
-        # 功能模块在壳就绪后启动：模块的菜单入口/弹窗父窗都依赖壳。
-        self._start_modules()
+        # 功能模块在壳与灵动岛就绪后启动：菜单入口/弹窗父窗/岛卡片订阅都依赖它们。
         self._sync_dynamic_island()
-        self._apply_balance_timer()
-        self._sync_todo_service()
+        self._start_modules()
         # 设置页进程隔离：启动即装 config 目录 watcher，独立设置进程落盘后由它
         # 合并进运行期（开关关闭时不装，完全走旧路径）。
         self._install_config_watcher()
@@ -1746,9 +1570,7 @@ class AppShell:
             self.island_chat = None
         # 会话异步写盘（B8）：全部会话已保存，再永久关闭写盘 worker
         #（关掉后迟到的 queued 回调提交会被明确拒绝）。
-        if self.todo_service is not None:
-            self.todo_service.stop()
-        # harness 自拉起进程与全局热键的收口都由各自模块的 stop() 负责
+        # 待办服务、harness 自拉起进程与全局热键的收口都由各自模块的 stop() 负责
         # （_stop_modules 在本槽前段已执行）；这里不再保留逐功能接线。
         try:
             from .chat import session_store as _session_store
@@ -1786,15 +1608,6 @@ class AppShell:
         """
         for shell in tuple(_LIVE_SHELLS):
             try:
-                service = getattr(shell, "todo_service", None)
-                if service is not None:
-                    try:
-                        service.stop()
-                    except Exception:
-                        logging.debug("测试收口待办服务失败", exc_info=True)
-                    shell.todo_service = None
-                # 模块先停：全局热键是系统级注册，测试里直接 start() 过的壳不摘，
-                # 注册会活到进程结束；harness 的自拉起收口也由模块负责。
                 stop_modules = getattr(shell, "_stop_modules", None)
                 if callable(stop_modules):
                     try:
@@ -1926,8 +1739,7 @@ class AppShell:
             self.island.open_settings_requested.connect(self._open_settings_from_island)
             # 桌宠隐藏时单击岛：弹/收锚定岛的对话气泡（hidden_chat 开启时）
             self.island.chat_requested.connect(self._chat_from_island)
-            # 卡片展开 → 静默刷新余额（不冒泡、不播动画，只更新岛卡片）
-            self.island.card_expanded.connect(self._quiet_balance_refresh)
+            # 卡片展开 → 余额模块在启动时自行挂接（静默刷新，不冒泡/不播动画）。
             # 进程级聊天完成订阅：AI 回复到达 → 岛播事件动效并记录最近消息。
             # 无聊天功能的打包变体会排除 pet.chat（参照 config.py 的同款守卫），
             # 那里跳过订阅即可，灵动岛本体照常可用。
@@ -2294,12 +2106,6 @@ class AppShell:
         if getattr(self, "island", None) is not None:
             self.island.set_pet_visible(not any_visible)
 
-    def _apply_balance_timer(self) -> None:
-        self._balance_timer.stop()
-        minutes = max(0, int(self.config.get("balance_refresh_minutes", 0) or 0))
-        if minutes:
-            self._balance_timer.start(minutes * 60000)
-
     def _island_icon_pixmap(self):
         """灵动岛"鱼本体头像"：取首个桌宠窗的当前帧图标；无窗/无帧返回 None（岛侧会重试）。
 
@@ -2320,211 +2126,6 @@ class AppShell:
             if pm is not None and not pm.isNull():
                 return pm
         return None
-
-    def _island_tier_hint(self) -> str:
-        """灵动岛余额峰谷提示文案（与 _update_island_balance / 静默查询共用）。
-
-        pet.balance 按需导入：本函数只在"岛卡片展开 / 余额查询返回"时才被调用，
-        启动路径（_sync_dynamic_island）不碰它（见 _show_balance_payload）。
-        """
-        from . import balance as balance_mod
-
-        peak_label, idle_label = balance_mod.resolve_tier_labels(
-            str(self.config.get("balance_tier_labels_mode", "default") or "default"),
-            str(self.config.get("balance_tier_label_peak", "") or ""),
-            str(self.config.get("balance_tier_label_idle", "") or ""),
-        )
-        return balance_mod.deepseek_pricing_hint(
-            peak_label=peak_label, idle_label=idle_label,
-        )
-
-    def _update_island_balance(self, payload, *, animate: bool = True) -> None:
-        """把余额文本/峰谷提示同步给灵动岛（若有）。
-
-        animate=False 用于静默刷新路径（卡片展开后的缓存命中/后台查询）：
-        只更新文本不播余额弹跳动画——弹跳会把展开卡片顶出窗口截边。
-        """
-        if getattr(self, "island", None) is None:
-            return
-        text = "余额 --"
-        if isinstance(payload, dict):
-            text = str(payload.get("text") or "余额 --")
-        self.island.set_balance_info(self._island_tier_hint(), text)
-        if animate:
-            self.island.notify_event("balance")
-
-    def _quiet_balance_refresh(self, *, force: bool = False) -> None:
-        """灵动岛卡片展开时的静默余额刷新：不冒泡、不播动画，只更新岛卡片。
-
-        30s 内存/文件缓存命中直接用；否则后台查询（60s 节流，查询忙时跳过）。
-        未配置 API Key 时明确提示，不再停留 "余额 --"。
-        """
-        island = getattr(self, "island", None)
-        if island is None or getattr(self, "_quiet_balance_busy", False):
-            return
-        if not getattr(self, "enable_chat", True):
-            island.set_balance_info(self._island_tier_hint(), "此版本无余额查询")
-            return
-        now = time.monotonic()
-        import hashlib
-        settings = self.config.chat_settings()
-        provider = settings.active_config
-        provider.api_key = self.config.resolve_api_key(provider)
-        if not provider.api_key:
-            island.set_balance_info(
-                self._island_tier_hint(), "未配置 API Key（设置 → 聊天）")
-            return
-        key_digest = hashlib.sha256(str(provider.api_key or '').encode()).hexdigest()[:12]
-        provider_key = '|'.join([
-            str(getattr(provider, 'id', '') or ''),
-            str(provider.base_url or ''),
-            key_digest,
-        ])
-        if self._balance_cache is not None and now - self._balance_cache[0] < 30.0 \
-                and self._balance_cache[2] == provider_key:
-            self._update_island_balance(self._balance_cache[1], animate=False)
-            return
-        file_payload = self._read_balance_file_cache(provider_key)
-        if file_payload is not None:
-            self._balance_cache = (now, file_payload, provider_key)
-            self._update_island_balance(file_payload, animate=False)
-            return
-        last = getattr(self, "_quiet_balance_last", None)
-        if not force and last is not None and now - last < 60.0:
-            # 节流命中且缓存已过期：明示状态，不停留在旧值上装死
-            island.set_balance_info(self._island_tier_hint(), "刚刚查询过，稍后自动更新")
-            return
-        self._quiet_balance_last = now
-        island.set_balance_info(self._island_tier_hint(), "查询中…")
-        bridge = _QuietBalanceBridge(owner=self)
-        self._quiet_balance_bridge = bridge
-        self._quiet_balance_busy = True  # 独立忙标志：不占显式查询的闸门
-        try:
-            threading.Thread(
-                target=self._balance_worker,
-                args=(bridge, provider.base_url, provider.api_key, provider.verify_ssl, provider_key),
-                kwargs={"quiet": True},
-                daemon=True, name='pet-balance-quiet',
-            ).start()
-        except Exception as exc:  # noqa: BLE001 - 启动失败也必须释放忙状态
-            self._quiet_balance_busy = False
-            QTimer.singleShot(0, lambda message=str(exc): bridge.done.emit(False, message))
-
-    # ------------------------------------------------------------ 余额
-    def show_balance(self, parent=None) -> None:
-        # 宿主判定：必须是能冒泡的 pet 形宿主。overlay 菜单把合成窗
-        # （OverlayWindow，无 show_bubble）当 parent 传下来，直接用它会在
-        # _show_balance_payload 里 AttributeError；overlay 拓扑下 ``instance.win``
-        # 又恒为 None——两条都收敛到 ``self.win``（原生 Win 或 sprite 壳）。
-        win = parent
-        if win is None or not callable(getattr(win, "show_bubble", None)):
-            win = self.win
-        if win is None or self._balance_busy or not win.isVisible():
-            return
-        now = time.monotonic()
-        # 余额缓存绑定 provider 身份（id + base_url + key 摘要）：同地址不同账号也不串号；
-        # 摘要不可逆推原 key，不落敏感信息。
-        import hashlib
-        settings = self.config.chat_settings()
-        provider = settings.active_config
-        provider.api_key = self.config.resolve_api_key(provider)
-        key_digest = hashlib.sha256(str(provider.api_key or '').encode()).hexdigest()[:12]
-        provider_key = '|'.join([
-            str(getattr(provider, 'id', '') or ''),
-            str(provider.base_url or ''),
-            key_digest,
-        ])
-        if self._balance_cache is not None and now - self._balance_cache[0] < 30.0 \
-                and self._balance_cache[2] == provider_key:
-            self._update_island_balance(self._balance_cache[1])
-            _show_balance_payload(win, self._balance_cache[1])
-            return
-        file_payload = self._read_balance_file_cache(provider_key)
-        if file_payload is not None:
-            self._balance_cache = (now, file_payload, provider_key)
-            self._update_island_balance(file_payload)
-            _show_balance_payload(win, file_payload)
-            return
-        self._balance_busy = True
-        # 延迟到事件循环空闲再冒泡：macOS 菜单跟踪会话内新建/显示窗口会被
-        # 系统原生菜单会话抑制（与设置对话框首次点击无反应同源），singleShot 在 macOS
-        # 上要等菜单关闭后才派发，Windows 上立即派发也无害。
-        QTimer.singleShot(0, lambda: win.show_bubble('让我看看余额…', duration_ms=6000))
-        bridge = _BalanceBridge(win, owner=self)
-        self._balance_bridge = bridge
-        try:
-            threading.Thread(
-                target=self._balance_worker,
-                args=(bridge, provider.base_url, provider.api_key, provider.verify_ssl, provider_key),
-                daemon=True, name='pet-balance',
-            ).start()
-        except Exception as exc:  # noqa: BLE001 - 启动失败也必须释放忙状态
-            self._balance_busy = False
-            error_message = f'余额查询失败：{exc}'
-            QTimer.singleShot(0, lambda message=error_message: bridge.done.emit(False, message))
-
-    def _balance_worker(self, bridge, base_url: str, api_key: str, verify_ssl: bool, provider_key: str = '', *, quiet: bool = False) -> None:
-        from . import balance as balance_mod  # 按需导入（见 _show_balance_payload）
-        try:
-            info = balance_mod.fetch_balance(base_url, api_key, verify_ssl=verify_ssl)
-            text = balance_mod.format_balance(info)
-            payload = {"text": text, "info": info}
-            self._balance_cache = (time.monotonic(), payload, provider_key)
-            self._write_balance_file_cache(payload, provider_key)
-            bridge.done.emit(True, payload)
-        except Exception as exc:  # noqa: BLE001 - 任何失败走气泡提示
-            bridge.done.emit(False, f'余额查询失败：{exc}')
-        finally:
-            if quiet:
-                self._quiet_balance_busy = False
-            else:
-                self._balance_busy = False
-
-    def _read_balance_file_cache(self, provider_key: str = '') -> dict | None:
-        """读取跨实例共享的余额缓存（30s 内有效，且必须是同一 provider 的缓存）。
-
-        返回 {"text": ..., "info": {...}}；兼容旧版只存 text 字符串的缓存。
-        """
-        try:
-            data = json.loads(self._balance_cache_path.read_text(encoding='utf-8'))
-            if not isinstance(data, dict):
-                return None
-            if str(data.get('provider', '') or '') != provider_key:
-                return None
-            if time.time() - float(data.get('ts', 0) or 0) >= 30.0:
-                return None
-            text = str(data.get('text', '') or '')
-            if not text:
-                return None
-            info = data.get('info')
-            return {
-                'text': text,
-                'info': info if isinstance(info, dict) else {},
-            }
-        except (OSError, ValueError, TypeError):
-            pass
-        return None
-
-    def _write_balance_file_cache(self, payload: dict, provider_key: str = '') -> None:
-        """写入跨实例共享的余额缓存（原子替换，绑定 provider）。
-
-        同时保存 text 和 info，使缓存命中时也能显示峰谷副标题并播放余额动画。
-        """
-        try:
-            self._balance_cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._balance_cache_path.with_suffix(f'.{os.getpid()}.tmp')
-            tmp.write_text(
-                json.dumps({
-                    'ts': time.time(),
-                    'text': str(payload.get('text') or ''),
-                    'info': payload.get('info') or {},
-                    'provider': provider_key,
-                }, ensure_ascii=False),
-                encoding='utf-8',
-            )
-            tmp.replace(self._balance_cache_path)
-        except OSError:
-            pass
 
     def _settings_window_releasable(self, instance: PetInstance) -> bool:
         """不可逆收口**之前**：把这张窗的进程内设置页过一遍关闭闸门。
@@ -2575,31 +2176,6 @@ class AppShell:
         self.app.quit()
 
 
-
-    def open_todo_panel(self) -> None:
-        """打开待办管理面板（非模态单例；条目增删改即时落盘）。"""
-        from .todo_panel import TodoPanelDialog
-
-        # Phase 1：即使总开关关闭，用户主动打开面板也需要服务对象（懒创建）。
-        self._ensure_todo_service()
-        if self.todo_panel is None:
-            # parent 必须是 QWidget：overlay 拓扑下 self.win 是 sprite 壳（QObject），
-            # 直接当 parent 会在 QDialog 构造期 TypeError。
-            parent = self.win
-            dialog = TodoPanelDialog(
-                self, parent=parent if isinstance(parent, QWidget) else None)
-            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-            dialog.finished.connect(self._todo_panel_finished)
-            self.todo_panel = dialog
-        # 展示走主窗实例的 _present_dialog（复用其置顶/聚焦与防重入逻辑）
-        inst = self.instance
-        if inst is not None:
-            inst._present_dialog(self.todo_panel)
-        else:
-            self.todo_panel.show()
-
-    def _todo_panel_finished(self, _result: int) -> None:
-        self.todo_panel = None
 
     def system_notify(self, title: str, message: str, *, on_click=None, duration_ms: int = 5000) -> None:
         """Show a bottom-right desktop notification (self-drawn, tray-independent)."""

@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from pet import balance
+from pet.modules.balance import balance
 from pet.chat.models import ChatSession
 
 _BJ = timezone(timedelta(hours=8))
@@ -239,43 +239,60 @@ def test_chat_session_title_roundtrip():
     assert ChatSession.from_dict(data).title == ""
 
 
+def _module_with_config(tmp_path, win):
+    from types import SimpleNamespace
+
+    from pet.config import Config
+    from pet.modules.balance.module import BalanceModule
+
+    cfg = Config(base=tmp_path)
+    host = SimpleNamespace(
+        config=cfg,
+        shell=SimpleNamespace(win=win, enable_chat=True, island=None),
+    )
+    module = BalanceModule()
+    module.start(host)
+    return module
+
+
 def test_balance_worker_start_failure_never_leaves_busy(monkeypatch, tmp_path):
     from PySide6.QtWidgets import QApplication
-    from pet.app import PetApp
-    from pet.config import Config
     app = QApplication.instance() or QApplication([])
-    owner = PetApp(app, Config(base=tmp_path))
-    owner.win = type("Win", (), {
+    win = type("Win", (), {
         "isVisible": lambda self: True,
-        # 线程启动失败路径会排队 singleShot(done.emit(错误文案))：
-        # 弹窗桩方法必须存在，且队列必须在本测试内清空（见结尾 processEvents），
-        # 否则事件泄漏到下一个测试的 processEvents 里引爆（Win 桩无 show_bubble）。
         "show_bubble": lambda self, *a, **k: None,
         "show_alert": lambda self, *a, **k: None,
     })()
-    monkeypatch.setattr(owner, "_read_balance_file_cache", lambda *_: None)
+    module = _module_with_config(tmp_path, win)
+    monkeypatch.setattr(module, "_read_balance_file_cache", lambda *_: None)
     class Settings:
         active_config = type("Provider", (), {"id":"x", "base_url":"https://x", "api_key":"k", "verify_ssl":True})()
-    monkeypatch.setattr(owner.config, "chat_settings", lambda: Settings())
-    monkeypatch.setattr(owner.config, "resolve_api_key", lambda p: "k")
+    monkeypatch.setattr(module.config, "chat_settings", lambda: Settings())
+    monkeypatch.setattr(module.config, "resolve_api_key", lambda p: "k")
     class BrokenThread:
         def __init__(self, *a, **k): pass
         def start(self): raise RuntimeError("cannot start")
-    monkeypatch.setattr("pet.app.threading.Thread", BrokenThread)
-    owner.show_balance(owner.win)
-    assert owner._balance_busy is False
+    monkeypatch.setattr("pet.modules.balance.module.threading.Thread", BrokenThread)
+    module.show_balance(win)
+    assert module._balance_busy is False
     # 清空本测试排队的 singleShot(done.emit(...))，不泄漏给下一个测试
     app.processEvents()
+    module.stop()
 
 
 def test_menu_balance_action_calls_bound_window_callback():
     from PySide6.QtWidgets import QApplication, QMenu
-    from pet.context_menus.shared import add_balance
+    from pet.modules.balance.menu import actions
     app = QApplication.instance() or QApplication([])
     calls = []
-    pet = type("Pet", (), {"on_show_balance": lambda self, parent=None: calls.append(parent)})()
+    pet = type("Pet", (), {
+        "cfg": type("Cfg", (), {"get": lambda self, key, default=None: default})(),
+        "running_module": lambda self, module_id: module,
+        "module_unavailable_reason": lambda self, module_id: "",
+    })()
+    module = type("Module", (), {"show_balance": lambda self, parent=None: calls.append(parent)})()
     menu = QMenu()
-    action = add_balance(menu, pet, icons=False)
+    action = actions()["balance"].build(menu, pet)
     assert action is not None
     action.trigger()
     app.processEvents()

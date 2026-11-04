@@ -1,16 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Configurable application shortcuts used only by the modern menu."""
+"""「快捷启动」右键菜单条目与运行时（Qt 侧，按需加载）。"""
 from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QFileInfo, QRectF, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QIcon, QPainter, QPixmap, QRegion
+from PySide6.QtCore import QFileInfo, QUrl
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import QFileIconProvider, QMenu
 
-from ..config import DEFAULT_QUICK_LAUNCH_APPS
-from .icons import vector_menu_icon
-from .shared import add_submenu, connect_action
+from ...context_menus.icons import fitted_application_icon, vector_menu_icon
+from ...context_menus.registry import MenuActionSpec
+from ...context_menus.shared import add_submenu, connect_action
+from .config import DEFAULT_QUICK_LAUNCH_APPS
+
+MODULE_ID = "quick_launch"
+LABEL = "快捷启动"
+ICON = "application"
+DISABLED_REASON = "尚未配置快捷启动应用"
 
 
 def configured_quick_apps(config) -> list[dict]:
@@ -38,31 +44,6 @@ def quick_app_icon(menu: QMenu, item: dict) -> QIcon:
     return icon
 
 
-def fitted_application_icon(icon: QIcon, size: int, widget) -> QIcon:
-    """Crop provider padding and fill the requested logical icon canvas."""
-    if icon.isNull():
-        return icon
-    dpr = max(1.0, widget.devicePixelRatioF())
-    source_size = max(32, round(size * dpr * 2))
-    source = icon.pixmap(source_size, source_size)
-    source.setDevicePixelRatio(1.0)
-    bounds = QRegion(source.mask()).boundingRect()
-    if bounds.isEmpty():
-        return icon
-    canvas = QPixmap(max(1, round(size * dpr)), max(1, round(size * dpr)))
-    canvas.setDevicePixelRatio(dpr)
-    canvas.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(canvas)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    painter.drawPixmap(
-        QRectF(0.5, 0.5, size - 1.0, size - 1.0),
-        source,
-        QRectF(bounds),
-    )
-    painter.end()
-    return QIcon(canvas)
-
-
 def launch_quick_app(item: dict) -> bool:
     if item.get("kind") == "default_browser":
         return bool(QDesktopServices.openUrl(QUrl("https://www.google.com/")))
@@ -88,3 +69,37 @@ def add_quick_launch_menu(menu: QMenu, config) -> QMenu:
         action.setProperty("closeOnTrigger", True)
         connect_action(action, lambda item=dict(item): launch_quick_app(item))
     return submenu
+
+
+def _pet_reachable(pet) -> bool:
+    """所有菜单宿主（窗口 / sprite facade）都能给出 ``cfg``。"""
+    return callable(getattr(getattr(pet, "cfg", None), "get", None))
+
+
+def _enabled(pet) -> bool:
+    cfg = getattr(pet, "cfg", None)
+    return bool(configured_quick_apps(cfg)) if cfg is not None else False
+
+
+def _build(menu, pet):
+    return add_quick_launch_menu(menu, pet.cfg)
+
+
+def actions() -> dict[str, MenuActionSpec]:
+    return {
+        MODULE_ID: MenuActionSpec(
+            _build,
+            available=_pet_reachable,
+            enabled=_enabled,
+            disabled_reason=DISABLED_REASON,
+            label=LABEL,
+            icon=ICON,
+        ),
+    }
+
+
+__all__ = [
+    "DISABLED_REASON", "LABEL", "MODULE_ID", "actions",
+    "add_quick_launch_menu", "configured_quick_apps", "launch_quick_app",
+    "quick_app_icon",
+]

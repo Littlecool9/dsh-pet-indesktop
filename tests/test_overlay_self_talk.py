@@ -214,13 +214,16 @@ def test_click_with_self_talk_off_keeps_bubble_quiet(tmp_path):
         _cleanup(shell)
 
 
-def test_click_show_balance_routes_to_shell_show_balance(tmp_path):
-    """click_show_balance 优先：转 ``AppShell.show_balance``（window.py:3370-3371）。"""
+def test_click_show_balance_routes_to_balance_module(tmp_path):
+    """click_show_balance 优先：转运行中的余额模块（window.py:3370-3371 的模块等价物）。"""
     shell, _config = _make_shell(
         tmp_path, _talk_values(click_show_balance=True))
     calls: list = []
-    shell._instance.shell = type(
-        "_Shell", (), {"show_balance": lambda self, parent=None: calls.append(parent)})()
+    module = type("_BalanceModule", (), {
+        "show_balance": lambda self, parent=None: calls.append(parent)})()
+    shell._instance.shell = type("_Shell", (), {
+        "running_module": lambda self, module_id: module if module_id == "balance" else None,
+    })()
     try:
         shell.overlay.show()
         _click_sprite(shell)

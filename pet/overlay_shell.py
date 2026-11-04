@@ -338,13 +338,13 @@ class _SpriteConfig:
 class _SpritePetHost:
     """被点 sprite 的 pet 形宿主（余额/识屏等 host 形消费方的 per-sprite 落点）。
 
-    ``_show_balance_payload`` / ``window_alerts`` 这类消费方按 PetWindow 面取值
+    余额模块的呈现函数 / ``window_alerts`` 这类消费方按 PetWindow 面取值
     （``show_bubble`` / ``cfg`` / ``isVisible``），旧架构每窗各有一个这样的宿主，
     所以"点小肥鱼 → 气泡出现在小肥鱼头顶"。这里给子 sprite 一只最小宿主，主
     sprite 仍直接用壳本身（行为与历史逐点一致）。
 
     刻意不暴露 ``request_link_anim``：联动动作链的落点是主 sprite 的行为控制器，
-    子宠没有等价面（``_show_balance_payload`` 对该属性本就有 hasattr 守卫）。
+    子宠没有等价面（余额模块的呈现函数对该属性本就有 hasattr 守卫）。
     """
 
     def __init__(self, shell, sprite) -> None:
@@ -392,7 +392,7 @@ class _SpritePetHost:
 class _SpriteServicePresenter(_SpritePetHost):
     """手动余额查询结果的**代次呈现器**（2026-10-10 终审 A10）。
 
-    菜单旁路此前把整个壳交给 ``AppShell.show_balance``，落点由壳的
+    菜单旁路此前把整个壳交给余额查询入口，落点由壳的
     ``alert_target_sprite()``（= 最小可见槽）在结果到达时**动态决定**：右击子肥鱼
     查余额，气泡冒在主肥鱼头上；请求在飞时把发起的那一只关掉，结果还会落到别宠身上。点击路径（``_on_sprite_click`` → ``_sprite_host(target)``）早就按
     发起 sprite 收口了，同一个意图在菜单旁路没有收口。
@@ -428,7 +428,7 @@ class _SpriteServicePresenter(_SpritePetHost):
         """余额档位动画的落点（仅主 sprite 有等价链）。
 
         子 sprite 没有联动动作控制器，静默跳过——把动画播在主肥鱼身上等于"点了子肥鱼
-        却让主肥鱼转圈"，比不播更不像话。消费方（``_show_balance_payload``）本就对该
+        却让主肥鱼转圈"，比不播更不像话。消费方（余额模块的呈现函数）本就对该
         属性有 ``hasattr`` 守卫，不缺这条也能跑。
         """
         if self._sprite is not self._shell.sprite:
@@ -2856,8 +2856,15 @@ class OverlayShell(QObject):
             self._sound.on_click(target)
         cfg = self._sprite_config(target)
         if bool(cfg.get("click_show_balance", False)):
-            handler = getattr(getattr(self._instance, "shell", None),
-                              "show_balance", None)
+            shell = getattr(self._instance, "shell", None)
+            getter = getattr(shell, "running_module", None)
+            module = None
+            if callable(getter):
+                try:
+                    module = getter("balance")
+                except Exception:
+                    module = None
+            handler = getattr(module, "show_balance", None)
             if callable(handler):
                 # 余额气泡锚在**被点那一只**的宿主上（主宠 = 壳本身，行为不变）
                 handler(self._sprite_host(target))

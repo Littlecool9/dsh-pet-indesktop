@@ -865,13 +865,6 @@ def add_screen_capture_menu(menu: QMenu, pet, *, icons: bool = True):
                       callback, close_on_trigger=True)
 
 
-def add_balance(menu: QMenu, pet, *, icons: bool = True):
-    callback = getattr(pet, "on_show_balance", None)
-    if callback is None:
-        return None
-    return add_action(menu, "DeepSeek 余额", "balance" if icons else None, lambda: callback(pet), close_on_trigger=True)
-
-
 def add_no_move(menu: QMenu, pet, *, icons: bool = True):
     action = add_action(menu, "不移动", "pause" if icons else None)
     action.setCheckable(True)

@@ -280,8 +280,6 @@ def test_apply_external_config_change_fans_out_to_all_instances(tmp_path, monkey
     shell = _bare_shell(Config(base=tmp_path))
     shell._instances = [_Inst(), _Inst()]
     shell._sync_dynamic_island = lambda: None
-    shell._apply_balance_timer = lambda: None
-    shell._sync_todo_service = lambda: None
     shell._apply_external_config_change()
     for inst in shell._instances:
         inst.win.refresh_pet_settings.assert_called_once_with()

@@ -1336,7 +1336,7 @@ def test_modern_menu_adds_quick_launch_submenu_and_uses_saved_appearance(monkeyp
     from PySide6.QtGui import QPixmap
     from PySide6.QtWidgets import QApplication, QMenu
 
-    import pet.context_menus.quick_launch as quick_launch_mod
+    import pet.modules.quick_launch.menu as quick_launch_mod
     class Config:
         values = {
             "character": "shenshen",

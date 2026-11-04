@@ -54,6 +54,31 @@ def custom_icon_file_error(path: str | Path) -> str:
     return ""
 
 
+def fitted_application_icon(icon: QIcon, size: int, widget) -> QIcon:
+    """Crop provider padding and fill the requested logical icon canvas."""
+    if icon.isNull():
+        return icon
+    dpr = max(1.0, widget.devicePixelRatioF())
+    source_size = max(32, round(size * dpr * 2))
+    source = icon.pixmap(source_size, source_size)
+    source.setDevicePixelRatio(1.0)
+    bounds = QRegion(source.mask()).boundingRect()
+    if bounds.isEmpty():
+        return icon
+    canvas = QPixmap(max(1, round(size * dpr)), max(1, round(size * dpr)))
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    painter.drawPixmap(
+        QRectF(0.5, 0.5, size - 1.0, size - 1.0),
+        source,
+        QRectF(bounds),
+    )
+    painter.end()
+    return QIcon(canvas)
+
+
 def custom_file_menu_icon(widget, spec: dict, size: int = 18) -> QIcon:
     """Render a validated local image into the square menu icon slot."""
     path = Path(str(spec.get("path") or "")).expanduser()

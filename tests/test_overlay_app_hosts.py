@@ -26,14 +26,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QLockFile
 from PySide6.QtWidgets import QApplication
 
-import pet.app as app_mod
+import pet.modules.balance.module as balance_module
 import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
 from pet.app import AppShell, PetInstance
 from pet.config import Config
 from pet.overlay_shell import OverlayShell, _SettingsIdentity
 from pet.pet_sprite import PetSprite
-from pet.todo_reminder import TodoReminderService
+from pet.modules.todo.todo_reminder import TodoReminderService
 
 app = QApplication.instance() or QApplication([])
 
@@ -218,19 +218,23 @@ def test_show_balance_uses_overlay_host(tmp_path, monkeypatch):
     shell, inst, overlay = _make_overlay_app(tmp_path)
     try:
         overlay.overlay.show()
-        monkeypatch.setattr(app_mod.threading, "Thread", _NoThread)
+        monkeypatch.setattr(balance_module.threading, "Thread", _NoThread)
         monkeypatch.setattr(shell.config, "resolve_api_key", lambda provider: "")
-        assert shell._balance_busy is False
+        shell._start_modules()
+        module = shell.running_module("balance")
+        assert module is not None
+        assert module._balance_busy is False
 
-        shell.show_balance()
+        module.show_balance()
 
-        assert shell._balance_busy is True, "余额链路在 overlay 下被提前 return 掉了"
+        assert module._balance_busy is True, "余额链路在 overlay 下被提前 return 掉了"
         app.processEvents()          # 派发 singleShot 的"让我看看余额…"气泡
         assert "余额" in _bubble_text(overlay)
-        # 异步结果回填同样走壳（缓存/网络两条路径共用 _show_balance_payload）
-        shell._balance_bridge.done.emit(True, {"text": "余额 12.34", "info": {"total": 12.34}})
+        # 异步结果回填同样走壳（缓存/网络两条路径共用同一呈现函数）
+        module._balance_bridge.done.emit(True, {"text": "余额 12.34", "info": {"total": 12.34}})
         assert "12.34" in _bubble_text(overlay)
     finally:
+        shell._stop_modules()
         _teardown(overlay)
 
 
@@ -274,20 +278,21 @@ def test_win_consumers_stay_safe_with_overlay_host(tmp_path):
     ``app.win`` 只有三处消费（三个提醒服务之外）：
 
     - ``win.agent_link_manager``：壳持有的是同一个共享 agent_link（DSH 离线收口照常）；
-    - ``open_todo_panel``：壳是 QObject，不能当 QDialog 的 parent（必须回落 None）。
+    - 待办模块的 ``open_panel``：壳是 QObject，不能当 QDialog 的 parent（必须回落 None）。
     """
     shell, inst, overlay = _make_overlay_app(tmp_path)
     try:
         assert shell.win is overlay
         assert shell.win.agent_link_manager is shell._shared.agent_link
 
-        shell.open_todo_panel()
+        shell._start_modules()
+        module = shell.running_module("todo")
+        assert module is not None
+        module.open_panel()
 
-        assert shell.todo_panel is not None
+        assert module._panel is not None
     finally:
-        if shell.todo_panel is not None:
-            shell.todo_panel.close()
-            shell.todo_panel = None
+        shell._stop_modules()
         _teardown(overlay)
 
 

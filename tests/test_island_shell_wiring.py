@@ -61,14 +61,15 @@ def test_quiet_balance_refresh_paths(tmp_path, monkeypatch):
     import time as _time
     from types import SimpleNamespace
 
+    from pet.modules.balance.module import BalanceModule
+
     app = _qapp()
     shell = _make_shell(tmp_path)
-    shell._balance_busy = False
-    shell._balance_cache = None
-    shell._balance_cache_path = Path(shell.config.dir) / "balance_cache.json"
     try:
         shell._sync_dynamic_island()
         island = shell.island
+        module = BalanceModule()
+        module.start(SimpleNamespace(config=shell.config, shell=shell))
 
         provider = SimpleNamespace(id="p", base_url="http://x", api_key="", verify_ssl=True)
         monkeypatch.setattr(shell.config, "chat_settings",
@@ -76,7 +77,7 @@ def test_quiet_balance_refresh_paths(tmp_path, monkeypatch):
         monkeypatch.setattr(shell.config, "resolve_api_key", lambda _p: "")
 
         # 1) 未配置 API Key → 明确提示，不再停留 "余额 --"
-        island.expand_card()  # card_expanded → _quiet_balance_refresh
+        island.expand_card()  # card_expanded → 模块挂接的静默刷新
         assert island._balance_text.startswith("未配置 API Key")
 
         # 2) 有 Key + 新鲜内存缓存 → 直接命中，不起后台查询
@@ -84,21 +85,21 @@ def test_quiet_balance_refresh_paths(tmp_path, monkeypatch):
         monkeypatch.setattr(shell.config, "resolve_api_key", lambda _p: "sk-test")
         digest = hashlib.sha256(b"sk-test").hexdigest()[:12]
         provider_key = "|".join(["p", "http://x", digest])
-        shell._balance_cache = (_time.monotonic(), {"text": "余额 ¥9.9", "info": {}}, provider_key)
-        shell._quiet_balance_refresh()
+        module._balance_cache = (_time.monotonic(), {"text": "余额 ¥9.9", "info": {}}, provider_key)
+        module.refresh_island()
         assert island._balance_text == "余额 ¥9.9"
 
         # 3) 无缓存 → 后台查询：结果回来只更新岛卡片（不冒泡/不播动画）
         island._finish_animations()  # 展开动画落定（动画表停），隔离基线
         assert not island._anim_timer.isActive()
-        shell._balance_cache = None
-        shell._quiet_balance_last = None
+        module._balance_cache = None
+        module._quiet_balance_last = None
 
         def fake_worker(bridge, base_url, api_key, verify_ssl, provider_key='', **_kw):
             bridge.done.emit(True, {"text": "余额 ¥8.8", "info": {}})
 
-        monkeypatch.setattr(shell, "_balance_worker", fake_worker)
-        shell._quiet_balance_refresh()
+        monkeypatch.setattr(module, "_balance_worker", fake_worker)
+        module.refresh_island()
         for _ in range(50):
             QApplication.processEvents()
             _time.sleep(0.02)
@@ -107,7 +108,7 @@ def test_quiet_balance_refresh_paths(tmp_path, monkeypatch):
         assert island._balance_text == "余额 ¥8.8"
         assert not island._anim_timer.isActive()  # 静默路径不播动画
     finally:
-        shell._balance_busy = False
+        module.stop()
         _teardown_shell(shell)
         app.processEvents()
 

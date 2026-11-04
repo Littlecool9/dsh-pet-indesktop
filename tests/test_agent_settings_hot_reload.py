@@ -194,10 +194,8 @@ def _start_shell(tmp_path, monkeypatch, *, dsh=True, win=None):
     shell = AppShell(app, config)
     shell.instance._apply_spawn_offset = lambda: None
     shell.instance._refresh_chat_windows = lambda: None
-    shell._apply_balance_timer = lambda: None
     shell._sync_dynamic_island = lambda: None
     shell._install_session_watcher = lambda: None
-    shell._sync_todo_service = lambda: None
     shell._sync_festival_service = lambda: None
     if win is not None:
         shell.instance.win = win

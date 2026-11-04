@@ -15,6 +15,9 @@ MODULES: tuple[str, ...] = (
     "pet.modules.hotkeys",
     "pet.modules.network_info",
     "pet.modules.focus",
+    "pet.modules.quick_launch",
+    "pet.modules.todo",
+    "pet.modules.balance",
 )
 
 __all__ = ["MODULES"]

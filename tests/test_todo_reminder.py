@@ -11,7 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from pet.config import Config
-from pet.todo_reminder import (
+from pet.modules.todo.todo_reminder import (
     DEFAULT_GRACE_MINUTES,
     TODO_ITEMS_LIMIT,
     TODO_ITEMS_VERSION,
@@ -551,7 +551,7 @@ def test_service_warns_when_bubble_blocked_and_notify_off(tmp_path, caplog):
     service = TodoReminderService(app)
     service.apply_config()
 
-    with caplog.at_level(logging.WARNING, logger="pet.todo_reminder"):
+    with caplog.at_level(logging.WARNING, logger="pet.modules.todo.todo_reminder"):
         service._on_tick(now=datetime(2026, 9, 4, 10, 6))
 
     assert app.win.bubbles == [] and app.notifies == []
@@ -596,34 +596,47 @@ def test_service_once_archive_persists(tmp_path):
 
 # ------------------------------------------------------------ PetApp 接线
 
-def test_petapp_settings_finish_applies_todo_prefs(tmp_path, monkeypatch):
+def test_settings_finish_applies_todo_prefs_through_module(tmp_path):
+    """设置保存 → 模块 apply_config：总开关关闭且无面板时释放服务对象。"""
+    from types import SimpleNamespace
+
     import pet.app as app_mod
-    from pet.app import AppShell, PetInstance
+    from pet.modules.todo.module import TodoModule
 
     qapp = _qapp()
-    owner = PetInstance.__new__(PetInstance)
-    owner.shell = AppShell.__new__(AppShell)
+    cfg = Config(tmp_path)
+    shell = SimpleNamespace(
+        config=cfg,
+        win=None,
+        system_notify=lambda *a, **k: None,
+        modern_settings_dialog=None,
+        chat_settings_dialog=None,
+        _sync_dynamic_island=lambda: None,
+    )
+    module = TodoModule()
+    module.start(SimpleNamespace(config=cfg, shell=shell))
+    module._service = TodoReminderService(module)
+    shell._apply_module_config = lambda: module.apply_config(cfg)
+
+    owner = app_mod.PetInstance.__new__(app_mod.PetInstance)
+    owner.shell = shell
     owner.modern_settings_dialog = None
     owner.chat_settings_dialog = None
     owner.win = None
-    owner.config = Config(tmp_path)
-    owner.shell.config = owner.config
-    owner.shell._apply_balance_timer = lambda: None
-    owner.shell._sync_dynamic_island = lambda: None
+    owner.config = cfg
     owner._refresh_chat_windows = lambda: None
-    # 本分支 todo_service 是进程级单例，挂在 AppShell 上
-    owner.shell.todo_service = TodoReminderService(owner.shell)
-    owner.shell.todo_panel = None
-    owner.config.set("todo_reminder_enabled", False)
-    PetInstance._modern_settings_finished(owner, 0)
-    # Phase 1 门控：待办总开关关闭且无面板打开时，服务对象应被释放
-    assert owner.shell.todo_service is None
+
+    cfg.set("todo_reminder_enabled", False)
+    app_mod.PetInstance._modern_settings_finished(owner, 0)
+    # 门控：待办总开关关闭且无面板打开时，服务对象应被释放
+    assert module.todo_service is None
+    module.stop()
 
 
 # ------------------------------------------------------------ 管理面板
 
 def _make_panel(tmp_path):
-    from pet.todo_panel import TodoPanelDialog
+    from pet.modules.todo.todo_panel import TodoPanelDialog
 
     _qapp()
     app = _FakeApp(tmp_path)

@@ -1244,10 +1244,7 @@ def test_modern_settings_finished_refreshes_even_on_rejected(tmp_path, monkeypat
     owner.config = Config(tmp_path)
     # 真实壳恒有 config（应用链末尾无条件走一次台词预缓存，入口自己按开关收敛）
     owner.shell.config = owner.config
-    owner.shell._apply_balance_timer = lambda: None
     owner.shell._sync_dynamic_island = lambda: None
-    # Phase 1 门控后 todo 服务走 _sync_todo_service（懒启停）；测试只测桌宠刷新
-    owner.shell._sync_todo_service = lambda: None
     owner.shell._sync_festival_service = lambda: None  # 节日提醒同样懒启停
     owner.shell._sync_divination_service = lambda: None  # 每日一签同属懒启停族（无定时器，仍按开关建/释放）
     owner._refresh_chat_windows = lambda: None

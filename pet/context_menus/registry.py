@@ -10,12 +10,10 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMenu, QWidgetAction
 
 from .icons import custom_file_menu_icon, vector_menu_icon
-from .quick_launch import add_quick_launch_menu, configured_quick_apps
 from .shared import (
     add_action,
     add_agent_link_menu,
     add_autostart,
-    add_balance,
     add_edge_probe,
     add_hide_pet,
     add_look_screen,
@@ -44,8 +42,7 @@ ACTION_LABELS = {
     "return_corner": "回到右下角", "hide_pet": "隐藏桌宠",
     "edge_probe": "边缘探头",
     "agent_cost": "显示本轮消费",
-    "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
-    "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
+    "proactive_screen": "主动识屏",
     "quiet_mode": "免打扰",
     "modern_settings": "桌宠设置", "quit": "退出",
 }
@@ -65,8 +62,8 @@ ACTION_ICONS = {
     "return_corner": "corner", "hide_pet": "hide",
     "edge_probe": "corner",
     "agent_cost": "balance",
-    "quick_launch": "application", "balance": "balance", "harness": "harness",
-    "proactive_screen": "screen", "todo_panel": "todo",
+    "harness": "harness",
+    "proactive_screen": "screen",
     "quiet_mode": "pause",
     "modern_settings": "settings", "quit": "quit",
 }
@@ -111,10 +108,6 @@ def _build_settings(menu, pet):
     return add_action(menu, "桌宠设置", "settings", pet.on_open_modern_settings, close_on_trigger=True)
 
 
-def _build_todo_panel(menu, pet):
-    return add_action(menu, "待办提醒", "todo", pet.on_open_todo_panel, close_on_trigger=True)
-
-
 class MenuActionRegistry:
     """Resolve capability-aware action IDs and render a resolved menu tree."""
 
@@ -141,12 +134,6 @@ class MenuActionRegistry:
             # 始终可用：消费统计与其它开关无关。
             "agent_cost": MenuActionSpec(add_agent_cost),
             "edge_probe": MenuActionSpec(add_edge_probe),
-            "quick_launch": MenuActionSpec(
-                lambda menu, pet: add_quick_launch_menu(menu, pet.cfg),
-                enabled=lambda pet: bool(configured_quick_apps(pet.cfg)),
-                disabled_reason="尚未配置快捷启动应用",
-            ),
-            "balance": MenuActionSpec(add_balance, _callback_available("on_show_balance")),
             "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,
@@ -157,9 +144,6 @@ class MenuActionRegistry:
             "quiet_mode": MenuActionSpec(add_quiet_mode_menu),
             "modern_settings": MenuActionSpec(
                 _build_settings, _callback_available("on_open_modern_settings")
-            ),
-            "todo_panel": MenuActionSpec(
-                _build_todo_panel, _callback_available("on_open_todo_panel")
             ),
             "quit": MenuActionSpec(add_quit),
         }

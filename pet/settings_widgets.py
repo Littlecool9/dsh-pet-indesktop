@@ -38,15 +38,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .config import (
-    DEFAULT_QUICK_LAUNCH_APPS,
-)
 from .context_menus.icons import (
     CUSTOM_ICON_SUFFIXES,
     THEMED_ICON_REQUEST,
     vector_widget_icon,
 )
-from .context_menus.quick_launch import fitted_application_icon
+from .context_menus.icons import fitted_application_icon
 
 
 def _system_font_families() -> tuple[str, ...]:
@@ -1915,7 +1912,11 @@ class QuickLaunchEditor(QWidget):
 
     def _add_default_browser(self) -> None:
         if not any(item.get("kind") == "default_browser" for item in self.apps()):
-            self.add_app(DEFAULT_QUICK_LAUNCH_APPS[0])
+            from .module_config import module_defaults
+
+            defaults = module_defaults().get("quick_launch_apps") or []
+            if defaults:
+                self.add_app(defaults[0])
 
     def _sync_content_height(self) -> None:
         count = self.list.count()

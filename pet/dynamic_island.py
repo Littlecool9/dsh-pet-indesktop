@@ -1046,7 +1046,7 @@ class DynamicIsland(QWidget):
 
         不依赖余额查询；档位标签使用设置里的高峰/空闲（或梁文峰/梁文谷/自定义）。
         """
-        from . import balance as balance_mod
+        from . import balance_pricing as balance_mod
 
         now = balance_mod.beijing_now()
         peak_label, idle_label = balance_mod.resolve_tier_labels(
@@ -1076,7 +1076,7 @@ class DynamicIsland(QWidget):
             self._tier_tick_timer.stop()
             return
         try:
-            from . import balance as balance_mod
+            from . import balance_pricing as balance_mod
 
             _next_tier, next_time = balance_mod.next_pricing_switch()
             now = balance_mod.beijing_now()
@@ -2235,7 +2235,7 @@ class DynamicIsland(QWidget):
         if not bool(self.config.get("balance_tier_color_enabled", True)):
             return fallback
         try:
-            from . import balance as balance_mod
+            from . import balance_pricing as balance_mod
 
             tier = balance_mod.deepseek_pricing_tier()
         except Exception:
