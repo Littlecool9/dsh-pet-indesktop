@@ -123,6 +123,8 @@ const tests = [
   'test-config-save-stamps.mjs',
   // B站沉默逛 + 评论年龄闸：工具硬拦、带 code/hint。
   'test-bili-interact.mjs',
+  // 跨会话发送：活跃会话令牌可发白名单目标、额度记来源、读端点仍严格绑定；提示只列可达目标。
+  'test-cross-session.mjs',
   // 记忆卡：重要度评分 / 主人锚点 / 每日模糊与遗忘 / 80·90·100% 容量 / 提示词裁剪 / 隐私 scope。
   'test-memory-card.mjs', 'test-memory-card-wiring.mjs', 'test-memory-sharing.mjs',
   // 角色人格：多角色目录隔离 / 切换 epoch / 快照回档 / 旧数据迁移（含凭证不进角色包）。

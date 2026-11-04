@@ -27,6 +27,7 @@ import { synthesizeToFile } from '../src/voice-tts.js';
 import * as presetPrompt from '../src/preset-prompt.js';
 import * as fishGuard from '../src/fish-guard.js';
 import * as tokenGuard from '../src/token-guard.js';
+import * as crossSession from '../src/cross-session.js';
 import * as tokenBudget from '../src/token-budget.js';
 import * as turnGuard from '../src/turn-guard.js';
 import * as gateEvents from '../src/gate-events.js';
@@ -202,6 +203,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     fishChatWindows, evaluateConversationFishGuard, fishGuardSendBlock, recordFishWindow,
     tokenGuardWakeBlock, tokenGuardSendBlock, bridgeDailyUsage, learnerBudgetBlock,
     buildWakePromptV2, buildWakeSnapshotV2, wakeFoldedNoticeV2, sendWakePromptV2, scheduleWakeV2, socialV2,
+    crossSessionPromptInfo, crossSessionPromptLine, crossSessionTargets,
     currentRoleHint, currentRoleHintV2, adminPromptLine, ownerMessageTag,
     memoryCardPromptBlock, recordMemoryInboxEvent, recordSelfMemoryEvent,
     refreshMode, modeAllowed, trackTurnEvent, replayPendingWakeReasonsV2,
@@ -260,7 +262,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     probeDshBaseUrl: async () => true,
     discoverDshBaseUrl: async () => null,
     ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...selfIdentity, ...slang, ...sticker,
-    ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...fishGuard, ...tokenGuard,
+    ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...fishGuard, ...tokenGuard, ...crossSession,
     ...qqAt,
     ...modelOptions,
     ...dshModelFollow,

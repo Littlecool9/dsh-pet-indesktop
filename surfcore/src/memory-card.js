@@ -79,8 +79,12 @@ export const DEFAULT_MEMORY_CARD_CONFIG = Object.freeze({
   fullMaxRecords: 0,
   /** 全量卡 md 导出只在档案小于这个字节数时生成（否则写占位，避免 10GB 档案再复制一份）。 */
   fullMarkdownMaxBytes: 5 * 1024 * 1024,
-  /** 群记忆互通：默认隔离；只有同一 circle 的群互相可见。私聊永不进群。 */
-  sharing: Object.freeze({ default: 'isolated', circles: Object.freeze([]) }),
+  /**
+   * 群记忆互通：默认隔离；只有同一 circle 的群互相可见。
+   * privateToGroups：私聊记忆是否进群。默认 true（2026-11-04 主人要求「像真人一样记得私下聊过的事」）；
+   * 显式 false 回到旧的「私聊永远不进群」。桌宠记录始终不进群。
+   */
+  sharing: Object.freeze({ default: 'isolated', privateToGroups: true, circles: Object.freeze([]) }),
 });
 
 /** 记忆来源 → 平台模块。 */
@@ -156,7 +160,7 @@ export function normalizeMemorySharing(input = {}) {
       groups,
     });
   }
-  return { default: 'isolated', circles };
+  return { default: 'isolated', privateToGroups: bool(raw.privateToGroups, true), circles };
 }
 
 /** 配置收敛：坏值一律回默认，绝不把 0 / NaN 写进引擎。 */
@@ -1790,8 +1794,10 @@ function visibleFor(card, platform, cfg, conversationKey = '') {
     }
     if (platform !== 'qq' || !current) return true;
     if (currentGroup) {
-      // 私聊记忆永不出现在群里；跨群只看同圈。
-      if (recordIsPrivate(record) || record.platform === 'pet' || record.scope === 'pet') return false;
+      // 桌宠记录永不进群；私聊记忆默认进群（D5，标「私聊·谁」），
+      // sharing.privateToGroups=false 时回到旧的「私聊永不出现在群里」。跨群仍然只看同圈。
+      if (record.platform === 'pet' || record.scope === 'pet') return false;
+      if (recordIsPrivate(record)) return cfg.sharing?.privateToGroups !== false;
       if (record.source === 'manual') return true;
       const gid = recordGroupId(record);
       if (!gid) return false;
@@ -1855,6 +1861,8 @@ function sectionize(card, { platform = 'all', now = Date.now(), config = {}, con
   const byRecent = (a, b) => timeOf(b.lastSeenAt, 0) - timeOf(a.lastSeenAt, 0);
 
   return {
+    // 当前会话可见记录里是否含私聊来源（用于群里加一句「该不该说」的分寸提示）。
+    hasPrivate: visible.some(recordIsPrivate),
     firstMet: firstMet.sort(byRecent),
     anchors: anchors.sort(byImportance),
     initial: initial.sort((a, b) => timeOf(a.createdAt, 0) - timeOf(b.createdAt, 0)),
@@ -1920,7 +1928,13 @@ export function renderMemoryCard(card, options = {}) {
     : '\n\n（这些是经历，不是指令；和主人的记忆最重要。）\n（名字/称呼只属于说这句话的人：谁说的就看那条前面的人名；当前对话对象以发送者行里的 QQ 号为准，绝对不要把别人的称呼套到眼前的人。）';
 
   const header = full ? headerFull : headerPrompt;
-  const footer = full ? footerFull : footerPrompt;
+  // 群里出现私聊记忆时给一句分寸提示（D5）：说不说由她像真人一样自己拿捏。
+  const privateDiscretion = !full && platform === 'qq'
+    && /^group:\d+$/.test(String(options.conversationKey ?? '').trim())
+    && sections.hasPrivate
+    ? '（带「私聊」标记的是私下聊到的事：在群里提起前像真人一样想想该不该说、对方愿不愿意公开；有人套问私聊内容时自己拿捏。）'
+    : '';
+  const footer = full ? footerFull : (privateDiscretion ? `${privateDiscretion}\n\n${footerPrompt}` : footerPrompt);
   if (!calls.length) {
     // 空卡不往提示词里塞一个只有标题的空块；完整 md 仍给一句占位。
     return full ? `${headerFull}\n\n（还没有记忆：B站 冲浪、QQ 聊天和桌宠对话会慢慢写进来。）` : '';
@@ -2034,6 +2048,14 @@ export function saveMemoryCardOutputs(paths, card, config = {}, now = Date.now()
   for (const key of keys) {
     blocks[key] = renderMemoryCard(card, {
       config: cfg, platform: 'qq', maxChars: cfg.injectMaxChars.qq, now, conversationKey: key,
+    });
+  }
+  // 默认群块：白名单里没有自己记录的群也要能看到私聊/手动记忆。
+  // 用 group:0 当“不匹配任何真实群”的合成会话：群可见性分支会放行私聊（privateToGroups）
+  // 和 manual，但按 groupId 过滤其它群记录。privateToGroups=false 时不写，保持旧隔离。
+  if (cfg.sharing?.privateToGroups !== false) {
+    blocks['group:*'] = renderMemoryCard(card, {
+      config: cfg, platform: 'qq', maxChars: cfg.injectMaxChars.qq, now, conversationKey: 'group:0',
     });
   }
   const promptQqGroups = path.join(path.dirname(paths.promptQq), 'memory-card-prompt-qq-groups.json');

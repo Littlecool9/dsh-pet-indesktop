@@ -13,6 +13,11 @@
   "role": {
     "maxInjectChars": 6000
   },
+  "memoryCard": {
+    "sharing": {
+      "privateToGroups": true
+    }
+  },
   "biliBridge": {
     "enabled": true,
     "memory": {
@@ -178,6 +183,9 @@
     "autoReplyCheckMs": 30000,
     "agentPreset": "qq-chat-v2",
     "provideRecommendations": true,
+    "crossSession": {
+      "enabled": true
+    },
     "tools": {
       "getPrompt": true,
       "getUnread": true,

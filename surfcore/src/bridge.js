@@ -74,6 +74,7 @@ import { normalizeAllowlist, pickBacklogSessions } from './allowlist.js';
 import { pickPeerAlias, buildPeerAliasTag } from './callname.js';
 import { buildPersonaIdentity, personaNameFromCard } from './persona-identity.js';
 import { evaluateWakeBudget, evaluateOutbound, isFreeWakeReason, localDayStart } from './token-guard.js';
+import { crossSessionEnabled, reachableTargets, resolveSendToken } from './cross-session.js';
 import {
   blockMessage, evaluateBudget, localDayKey, readBudget, readDailyUsage,
 } from './token-budget.js';
@@ -979,6 +980,8 @@ function loadConfig() {
       autoReplyCheckMs: 30000,
       agentPreset: 'qq-chat-v2',
       provideRecommendations: true,
+      // 跨会话发送（2026-11-04 主人要求）：默认开；false 回退到「令牌必须属于目标会话」。
+      crossSession: { enabled: true },
       tools: {
         getPrompt: true,
 
@@ -2516,8 +2519,28 @@ async function main() {
     }
   }
 
+  // 跨会话消息的来源字段与模型可见标记。
+  // viaLabel 在写入时就算好：主人私聊显示「主人私聊」，其余用 key，避免把 ownerQQ 带给模型。
+  function crossSessionOriginFields(viaKey) {
+    const key = String(viaKey ?? '').trim();
+    if (!key) return {};
+    const owner = String(cfg.ownerQQ ?? '').trim();
+    return { viaKey: key, viaLabel: owner && key === `private:${owner}` ? '主人私聊' : key };
+  }
+
+  function crossSessionViaNote(message) {
+    const label = String(message?.viaLabel || message?.viaKey || '').trim();
+    return label ? `（你在 ${label} 那边决定发到这里的）` : '';
+  }
+
+  /** 给模型看的 recent/快照条目补一句出处；没有 viaKey 的消息原样返回。 */
+  function withCrossSessionNote(message) {
+    const note = crossSessionViaNote(message);
+    return note ? { ...message, viaNote: note } : message;
+  }
+
   /** 把「我发了条语音」写进二代会话的 recentMessages，让 AI 自己知道刚发过什么。 */
-  function recordVoiceSentV2(key, sent, label) {
+  function recordVoiceSentV2(key, sent, label, { viaKey = '' } = {}) {
     const st = getSocialV2State(key);
     const display = label || `[语音 ${sent.detail}]`;
     const entry = {
@@ -2529,6 +2552,7 @@ async function main() {
       isOwner: true,
       ownerLabel: '我',
       isSelf: true,
+      ...crossSessionOriginFields(viaKey),
       at: Date.now()
     };
     st.recentMessages.push(entry);
@@ -2582,7 +2606,7 @@ async function main() {
    * AI 通道入口：解析引用 → 限流 → 发送 → 记账 → 回读校验。
    * 返回 { messageId, detail, verified, readback }。
    */
-  async function sendVoiceForV2(key, voiceRef, { label = '', verify = null, readback = false, audio = null, resolved = null } = {}) {
+  async function sendVoiceForV2(key, voiceRef, { label = '', verify = null, readback = false, audio = null, resolved = null, viaKey = '' } = {}) {
     const vc = voiceCfg();
     if (!vc.enabled) throw new Error('语音功能已关闭（socialV2.voice.enabled=false）');
     // resolved：调用方已经拿到文件（如 text→TTS），就跳过「语音库查找」这一步。
@@ -2592,7 +2616,7 @@ async function main() {
     voiceBudgetCheck(key, vc);
     const sent = await sendVoiceV2(key, target.path, { guard: true, audit: true, audio });
     voiceBudgetCommit(key);
-    recordVoiceSentV2(key, sent, label);
+    recordVoiceSentV2(key, sent, label, { viaKey });
     log(`[voice] ${key} 已发送语音 ${path.basename(target.path)} (${sent.detail}, messageId=${sent.messageId ?? '?'})`);
     appendActivity(`${key} [voice] 发送语音 ${path.basename(target.path)} (${sent.detail})`);
     let readbackText = null;
@@ -4460,6 +4484,21 @@ async function main() {
       }
       return false;
     };
+    /**
+     * 发送端点的令牌判定（2026-11-04 跨会话发送）。
+     *
+     * 读端点仍然用 agentTokenOk(key, token) 严格绑定本会话；只有发送端点调用这里：
+     * 默认允许任意活跃会话令牌发往白名单内的目标（socialV2.crossSession.enabled=false
+     * 可回退到「令牌必须属于目标」）。白名单、静默、暂停、限频等其余闸门在端点里
+     * 仍按**目标会话**判定，不在这里放宽。
+     */
+    const resolveSendAuth = (key, token) => resolveSendToken({
+      targetKey: key,
+      token: typeof token === 'string' ? token : '',
+      conversations: socialV2.conversations,
+      cfg,
+      eq: tokenEq,
+    });
     // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
     // 语音包服务实例：按 config.json 的 mtime 缓存（既热生效，又保住安装进度）。
@@ -6411,6 +6450,8 @@ async function main() {
               const profile = groupProfile(key, getSocialV2State(key));
               return { key, kind: 'group', name: profile.name || '', memberCount: Number(profile.memberCount) || 0 };
             })(),
+            // D4：开启跨会话发送时，qq_get_prompt 也要告诉模型能发到哪些会话。
+            crossSession: crossSessionPromptInfo(),
             role: (() => {
               const personaMode = url.searchParams.get('mode') === 'full' ? 'full' : (key.startsWith('group:') ? 'tone' : 'full');
               return { name: roleState.role ?? null, mode: personaMode, hint: currentMode === 'reserved2' ? currentRoleHintV2(key, personaMode) : currentRoleHint(key, personaMode) };
@@ -6522,7 +6563,7 @@ async function main() {
           const st = getSocialV2State(key);
           const start = Math.max(0, st.recentMessages.length - offset - limit);
           const end = Math.max(0, st.recentMessages.length - offset);
-          const messages = st.recentMessages.slice(start, end);
+          const messages = st.recentMessages.slice(start, end).map(withCrossSessionNote);
           const readThroughSeq = req.headers['x-agent-token'] ? noteModelMessagesV2(st, messages) : readThroughSeqV2(st);
           sendJson({ ok: true, key, messages, readThroughSeq, ...(unreadNoticeV2(st) || {}) });
           return;
@@ -6955,7 +6996,8 @@ async function main() {
             sendJson({ ok: false, error: '已禁用多条发送，请合并为一条消息' }, 403);
             return;
           }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const sendAuthBurst = resolveSendAuth(key, req.headers['x-agent-token']);
+          if (req.headers['x-agent-token'] && !sendAuthBurst.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('sendBurst')) { sendJson({ ok: false, error: '工具未启用：qq_send_burst' }, 403); return; }
           if (currentMode !== 'reserved2') {
@@ -6996,10 +7038,14 @@ async function main() {
             }
           }
           const st = getSocialV2State(key);
+          // 跨会话发送的每回合名额记到令牌所属会话（D3）；限频/鱼群仍按目标会话算。
+          const quotaKey = sendAuthBurst.crossSession ? sendAuthBurst.sourceKey : key;
+          const quotaSt = quotaKey === key ? st : getSocialV2State(quotaKey);
           const fishBlock = fishGuardSendBlock(key, st);
           if (fishBlock) { sendJson({ ok: false, ...fishBlock }, 403); return; }
-          const tokenBlock = tokenGuardSendBlock(key, st, messages.length);
+          const tokenBlock = tokenGuardSendBlock(quotaKey, quotaSt, messages.length);
           if (tokenBlock) { sendJson({ ok: false, ...tokenBlock }, 429); return; }
+          const viaKey = sendAuthBurst.crossSession ? sendAuthBurst.sourceKey : '';
           const now = Date.now();
           try {
             const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
@@ -7013,7 +7059,7 @@ async function main() {
             if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
             const delays = computeGapsV2(messages, 'auto', undefined, undefined, sendCfg);
             const sentMessages = await sendMessagesV2(key, messages, delays);
-            recordSentMessagesV2(key, sentMessages);
+            recordSentMessagesV2(key, sentMessages, { viaKey });
             st.lastAiReplyAt = now;
             st.lastActionAt = now;
             st.wakeConfig.noActionCount = 0;
@@ -7027,7 +7073,7 @@ async function main() {
             sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
           } catch (error) {
             if (error?.sent?.length) {
-              recordSentMessagesV2(key, error.sent);
+              recordSentMessagesV2(key, error.sent, { viaKey });
               log(`[reserved2] 工具分条发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
             }
             // 失败/未发出的消息回滚预占的发送额度，避免假 429。
@@ -7086,7 +7132,8 @@ async function main() {
             sendJson({ ok: false, error: '已禁用多条发送，请合并为一条消息' }, 403);
             return;
           }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const sendAuthMessage = resolveSendAuth(key, req.headers['x-agent-token']);
+          if (req.headers['x-agent-token'] && !sendAuthMessage.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('sendMessage')) { sendJson({ ok: false, error: '工具未启用：qq_send_message' }, 403); return; }
           if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
@@ -7131,10 +7178,15 @@ async function main() {
           const delays = computeGapsV2(messages, gapMode, gapMs, gaps, sendCfg);
           // 先做发送频率检查并预占额度，再解析引用目标，避免未限流的引用查询打爆 OneBot。
           const st = getSocialV2State(key);
+          // 跨会话发送：每回合发送名额记到「token 所属的那个会话」（真正醒着烧预算的回合），
+          // 限频/鱼群/静默仍按目标会话算。见 D3 / cross-session.js。
+          const quotaKey = sendAuthMessage.crossSession ? sendAuthMessage.sourceKey : key;
+          const quotaSt = quotaKey === key ? st : getSocialV2State(quotaKey);
           const fishBlock = fishGuardSendBlock(key, st);
           if (fishBlock) { sendJson({ ok: false, ...fishBlock }, 403); return; }
-          const tokenBlock = tokenGuardSendBlock(key, st, messages.length);
+          const tokenBlock = tokenGuardSendBlock(quotaKey, quotaSt, messages.length);
           if (tokenBlock) { sendJson({ ok: false, ...tokenBlock }, 429); return; }
+          const viaKey = sendAuthMessage.crossSession ? sendAuthMessage.sourceKey : '';
           const now = Date.now();
           const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
           const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
@@ -7164,7 +7216,7 @@ async function main() {
           }
           try {
             const sentMessages = await sendMessagesV2(key, messages, delays, actualReplyToMessageId, atUserId);
-            recordSentMessagesV2(key, sentMessages);
+            recordSentMessagesV2(key, sentMessages, { viaKey });
             st.lastAiReplyAt = now;
             st.lastActionAt = now;
             st.wakeConfig.noActionCount = 0;
@@ -7178,7 +7230,7 @@ async function main() {
             sendJson({ ok: true, key, sent: sentMessages.length, failed: messages.length - sentMessages.length, delays, quoted: quotedInfo, ...(burstHint ? { hint: burstHint } : {}), ...(spaceWarn ? { warn: spaceWarn } : {}), ...(splitWarn ? { splitWarn } : {}) });
           } catch (error) {
             if (error?.sent?.length) {
-              recordSentMessagesV2(key, error.sent);
+              recordSentMessagesV2(key, error.sent, { viaKey });
               log(`[reserved2] 工具统一发送部分成功 ${error.sent.length}/${messages.length} 条，已记录已发消息`);
             }
             // 失败/未发出的消息回滚预占的发送额度，避免假 429。
@@ -7201,7 +7253,8 @@ async function main() {
           if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
           if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
           if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送拍一拍必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const sendAuthPoke = resolveSendAuth(key, req.headers['x-agent-token']);
+          if (!sendAuthPoke.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (!v2ToolEnabled('sendPoke')) { sendJson({ ok: false, error: '工具未启用：qq_send_poke' }, 403); return; }
           if (socialV2.paused) { sendJson({ ok: false, error: '二代 AI 已暂停，不能发送拍一拍' }, 403); return; }
@@ -7228,10 +7281,13 @@ async function main() {
             if (memberError) { sendJson({ ok: false, error: memberError }, 403); return; }
           }
           const st = getSocialV2State(key);
+          const quotaKey = sendAuthPoke.crossSession ? sendAuthPoke.sourceKey : key;
+          const quotaSt = quotaKey === key ? st : getSocialV2State(quotaKey);
           const fishBlock = fishGuardSendBlock(key, st);
           if (fishBlock) { sendJson({ ok: false, ...fishBlock }, 403); return; }
-          const tokenBlock = tokenGuardSendBlock(key, st, 1);
+          const tokenBlock = tokenGuardSendBlock(quotaKey, quotaSt, 1);
           if (tokenBlock) { sendJson({ ok: false, ...tokenBlock }, 429); return; }
+          const viaKey = sendAuthPoke.crossSession ? sendAuthPoke.sourceKey : '';
           const sendCfg = cfg.socialV2?.send ?? {};
           const now = Date.now();
           const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
@@ -7280,6 +7336,7 @@ async function main() {
               forwardIds: [],
               hasForward: false,
               poke: { targetId: targetUserId || String(id), targetIsSelf: false, groupId: kind === 'group' ? String(id) : null },
+              ...crossSessionOriginFields(viaKey),
               time: Date.now()
             });
             const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -7755,7 +7812,7 @@ async function main() {
           return;
         }
 
-        // ── 语音发送（AI 通道：reserved2 + agent token，只能发自己那个会话） ────
+        // ── 语音发送（AI 通道：reserved2 + agent token；跨会话开关开启时可用任意活跃会话令牌） ────
         if (req.method === 'POST' && url.pathname === '/api/socialV2/send-voice') {
           const body = await readBody();
           const token = String(body.token ?? req.headers['x-agent-token'] ?? '').trim();
@@ -7772,7 +7829,8 @@ async function main() {
           if (!key) { sendJson({ ok: false, error: 'key 不能为空（格式 group:群号 或 private:QQ号）' }, 400); return; }
           if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
           if (!token) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          if (!agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const sendAuthVoice = resolveSendAuth(key, token);
+          if (!sendAuthVoice.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (!v2ToolEnabled('sendVoice')) {
             sendJson({
               ok: false, code: 'VOICE_TOOL_DISABLED',
@@ -7804,10 +7862,13 @@ async function main() {
             return;
           }
           const st = getSocialV2State(key);
+          const quotaKey = sendAuthVoice.crossSession ? sendAuthVoice.sourceKey : key;
+          const quotaSt = quotaKey === key ? st : getSocialV2State(quotaKey);
           const fishBlock = fishGuardSendBlock(key, st);
           if (fishBlock) { sendJson({ ok: false, ...fishBlock }, 403); return; }
-          const tokenBlock = body.dryRun === true ? null : tokenGuardSendBlock(key, st, 1);
+          const tokenBlock = body.dryRun === true ? null : tokenGuardSendBlock(quotaKey, quotaSt, 1);
           if (tokenBlock) { sendJson({ ok: false, ...tokenBlock }, 429); return; }
+          const viaKey = sendAuthVoice.crossSession ? sendAuthVoice.sourceKey : '';
           // 两条来源：text（现场合成，需要本地 voxd）与 voice/file（语音库现成音频）。二选一。
           const sayText = String(body.text ?? '').trim();
           const libRef = body.voice ?? body.file ?? '';
@@ -7850,6 +7911,7 @@ async function main() {
               verify: body.verify,
               readback: body.readback === true,
               resolved,
+              viaKey,
               // AI 也可以调音量（默认走 config 的 defaultVolume）
               audio: (body.volume !== undefined || body.normalize === true || body.loudness !== undefined)
                 ? { volume: body.volume, normalize: body.normalize === true, loudness: body.loudness }
@@ -7891,7 +7953,8 @@ async function main() {
             sendJson({ ok: false, error: '表情消息不能附带文字；请先用 qq_send_message / qq_reply 把想说的话作为单独气泡发送，再单独 qq_send_sticker 发表情' }, 400);
             return;
           }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const sendAuthSticker = resolveSendAuth(key, req.headers['x-agent-token']);
+          if (req.headers['x-agent-token'] && !sendAuthSticker.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('sendSticker')) { sendJson({ ok: false, error: '工具未启用：qq_send_sticker' }, 403); return; }
           if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
@@ -7926,10 +7989,13 @@ async function main() {
           const now = Date.now();
           try {
             const st = getSocialV2State(key);
+            const quotaKey = sendAuthSticker.crossSession ? sendAuthSticker.sourceKey : key;
+            const quotaSt = quotaKey === key ? st : getSocialV2State(quotaKey);
             const fishBlock = fishGuardSendBlock(key, st);
             if (fishBlock) { sendJson({ ok: false, ...fishBlock }, 403); return; }
-            const tokenBlock = tokenGuardSendBlock(key, st, 1);
+            const tokenBlock = tokenGuardSendBlock(quotaKey, quotaSt, 1);
             if (tokenBlock) { sendJson({ ok: false, ...tokenBlock }, 429); return; }
+            const viaKey = sendAuthSticker.crossSession ? sendAuthSticker.sourceKey : '';
             const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
             const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
             const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
@@ -7959,6 +8025,7 @@ async function main() {
               forwardIds: [],
               hasForward: false,
               sticker: { id: sent.entry?.id || stickerId, desc: sent.entry?.desc || '', localNote: sent.entry?.localNote || '' },
+              ...crossSessionOriginFields(viaKey),
               time: Date.now()
             });
             const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -8627,7 +8694,7 @@ async function main() {
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('getMyRecent')) { sendJson({ ok: false, error: '工具未启用：qq_get_my_recent_messages' }, 403); return; }
           const st = getSocialV2State(key);
-          const mine = st.recentMessages.filter((m) => m.isSelf).slice(-limit);
+          const mine = st.recentMessages.filter((m) => m.isSelf).slice(-limit).map(withCrossSessionNote);
           sendJson({ ok: true, key, messages: mine, readThroughSeq: readThroughSeqV2(st) });
           return;
         }
@@ -9253,7 +9320,8 @@ async function main() {
             return;
           }
           if (currentMode === 'reserved2' && !token) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
-          if (token && !agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const sendAuthLegacy = resolveSendAuth(key, token);
+          if (token && !sendAuthLegacy.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           const flag = isPrivate ? 'sendPrivate' : (isReply ? 'reply' : 'sendGroup');
           if (token && !v2ToolEnabled(flag)) { sendJson({ ok: false, error: `工具未启用：${flag}` }, 403); return; }
           if (shouldBlockSilentReply(key)) {
@@ -9295,6 +9363,13 @@ async function main() {
           // 且部分成功的已发消息不会被记进 recentMessages。
           const st = getSocialV2State(key);
           const now = Date.now();
+          const viaKey = sendAuthLegacy.crossSession ? sendAuthLegacy.sourceKey : '';
+          // 这个旧发送端点原本没有「每回合最多发 N 条」;跨会话时至少把名额记到正在醒着的来源会话，
+          // 免得借 /api/send/* 绕过 D3 的额度。同会话行为保持不变。
+          if (sendAuthLegacy.crossSession) {
+            const tokenBlock = tokenGuardSendBlock(sendAuthLegacy.sourceKey, getSocialV2State(sendAuthLegacy.sourceKey), 1);
+            if (tokenBlock) { sendJson({ ok: false, ...tokenBlock }, 429); return; }
+          }
           try {
             const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
             const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
@@ -9305,7 +9380,7 @@ async function main() {
             st.sendTimes.push(now);
             if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
             const sentMessages = await sendMessagesV2(key, [message], [], actualReplyToMessageId, atUserId);
-            recordSentMessagesV2(key, sentMessages);
+            recordSentMessagesV2(key, sentMessages, { viaKey });
             st.lastAiReplyAt = now;
             st.lastActionAt = now;
             st.wakeConfig.noActionCount = 0;
@@ -9316,7 +9391,7 @@ async function main() {
             sendJson({ ok: true, key, sent: sentMessages.length, failed: sentMessages.length ? 0 : 1, quoted: quotedInfo });
           } catch (error) {
             if (error?.sent?.length) {
-              recordSentMessagesV2(key, error.sent);
+              recordSentMessagesV2(key, error.sent, { viaKey });
               log(`[send] ${url.pathname} ${key} 部分成功 ${error.sent.length}/1 条，已记录已发消息`);
             }
             // 失败/未发出的消息回滚预占的发送额度，避免假 429。
@@ -13516,8 +13591,15 @@ async function main() {
         }
       } catch {}
       if (mapFound) {
-        const text = memoryCardGroupsCache.blocks?.[target];
-        return typeof text === 'string' ? text.trim() : '';
+        const blocks = memoryCardGroupsCache.blocks ?? {};
+        const text = blocks[target];
+        if (typeof text === 'string') return text.trim();
+        // 没有自己记录的群：用默认块（私聊 + 手动全局记忆），否则白名单里的新群永远看不到私聊。
+        // privateToGroups=false 时插件不写 group:*，这里自然回退为空，保持旧隔离。
+        if (/^group:\d+$/.test(target) && typeof blocks['group:*'] === 'string') {
+          return blocks['group:*'].trim();
+        }
+        return '';
       }
       // v2 会话在没有按会话 map 时绝不回退全局块：那会把别的群/私聊记忆带进来。
       if (currentMode === 'reserved2') return '';
@@ -14174,7 +14256,7 @@ async function main() {
     return msg;
   }
 
-  function recordSentMessagesV2(key, messages) {
+  function recordSentMessagesV2(key, messages, { viaKey = '' } = {}) {
     const st = getSocialV2State(key);
     const now = Date.now();
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
@@ -14189,6 +14271,9 @@ async function main() {
         isOwner: true,
         ownerLabel: '我',
         isSelf: true,
+        // 跨会话发送的出处：目标会话下次醒来时能看到「这条是我从 private:X 发过来的」，
+        // 而不是以为自己一直在这个群里说过。见 D3。
+        ...crossSessionOriginFields(viaKey),
         time: now + i * 1000
       });
     }
@@ -14586,6 +14671,36 @@ async function main() {
     return `【当前群】QQ 群${name ? `「${name}」` : '（群名未取到）'}｜group:${gid}${members ? `｜成员 ${members}` : ''}\n\n`;
   }
 
+  // 跨会话发送的可达目标（D4）：只列白名单群 + 主人私聊，最多 12 条，绝不列别人的令牌。
+  function crossSessionTargets() {
+    if (!crossSessionEnabled(cfg)) return [];
+    return reachableTargets({
+      cfg,
+      groupName: (gid) => groupNameForMemory(`group:${gid}`),
+      isAllowed: (key, kind, id) => modeAllowed(key, kind, id, cfg, currentMode),
+    });
+  }
+
+  function crossSessionPromptInfo() {
+    if (!crossSessionEnabled(cfg)) return null;
+    const targets = crossSessionTargets();
+    const list = targets
+      .map((t) => (t.kind === 'group' ? `${t.key}${t.name ? `「${t.name}」` : ''}` : `${t.key}（主人私聊）`))
+      .join('、');
+    return {
+      enabled: true,
+      targets,
+      hint: '调用 qq_send_message / qq_reply / qq_send_burst / qq_send_sticker / qq_send_voice / qq_send_poke 时，把 key 换成目标会话，token 仍然用你当前这个【会话令牌】（桥接认任意活跃会话令牌）。',
+      line: list ? `可发目标：${list}；也可以用你原本的 key 发回当前会话。` : '当前没有额外可达目标；仍可用你原本的 key 发回当前会话。',
+    };
+  }
+
+  function crossSessionPromptLine() {
+    const info = crossSessionPromptInfo();
+    if (!info) return '';
+    return `【跨会话发送】你可以主动把消息发到别的会话，像真人想到「这件事也该让那边知道」。${info.hint}${info.line}只发你真想说的，别刷屏。\n\n`;
+  }
+
   // 把 QQ 昵称/号落给 B站 侧：B站 会话跑在插件进程里，拿不到网关登录信息，
   // 认「自己的 QQ 资料卡截图」就缺这两个锚点（2026-10-23 用户要求跨平台互认）。
   // 只在内容变化时写盘，失败不影响主流程（B站 侧读不到时会退化成只有 B站 锚点）。
@@ -14729,12 +14844,14 @@ async function main() {
     const memoryCardText = memoryCardPromptBlock(key);
     const memoryCardLine = memoryCardText ? `${memoryCardText}\n\n` : '';
     const conversationLine = conversationIdentityLineV2(key);
+    const crossSessionLine = crossSessionPromptLine();
     const voiceLine = voiceStatusLine();
-    const base = roleLine + identityLine + conversationLine + provenanceLine + adminLine + biliLine + memoryCardLine + voiceLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + closureLine + stickerLine + stickerMatchLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + fishGuardLine + tokenGuardLine + preSleepLine;
+    const base = roleLine + identityLine + conversationLine + crossSessionLine + provenanceLine + adminLine + biliLine + memoryCardLine + voiceLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + closureLine + stickerLine + stickerMatchLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + fishGuardLine + tokenGuardLine + preSleepLine;
     lastWakePromptMeta = {
       role: roleLine.length,
       identity: identityLine.length,
       conversation: conversationLine.length,
+      crossSession: crossSessionLine.length,
       provenance: provenanceLine.length,
       admin: adminLine.length,
       bili: biliLine.length,

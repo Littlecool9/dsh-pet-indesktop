@@ -27,6 +27,7 @@ function textOf(m) {
 
 function messageItem(m, caps) {
   const text = textOf(m);
+  const viaLabel = String(m?.viaLabel || m?.viaKey || '').trim();
   return {
     seq: Number.isSafeInteger(m?.seq) ? m.seq : null,
     messageId: m?.messageId ? String(m.messageId) : '',
@@ -36,6 +37,7 @@ function messageItem(m, caps) {
     textTruncated: text.length > caps.textChars,
     isSelf: m?.isSelf === true,
     isOwner: m?.isOwner === true,
+    ...(viaLabel ? { viaNote: `（你在 ${viaLabel} 那边决定发到这里的）` } : {}),
     flags: [
       m?.quoteTargetIsSelf ? 'quoteSelf' : '',
       Array.isArray(m?.media) && m.media.length ? 'media' : '',

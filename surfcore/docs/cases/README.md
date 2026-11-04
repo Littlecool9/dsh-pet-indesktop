@@ -6,6 +6,7 @@
 
 | 日期 | 案例 | 一句话 | 版本 |
 | --- | --- | --- | --- |
+| 2026-11-04 | [跨会话发送 + 私聊记忆进群：让她像真人一样串起两边](2026-11-04-cross-session-human-like.md) | 发送令牌可跨会话（额度记来源、目标历史带 viaKey）；私聊记忆默认进群 + 分寸提示，两个 config 开关可回滚 | 待发布 |
 | 2026-11-04 | [「每次醒来最多发 8 条」改为按对方新消息重新计](2026-11-04-turn-quota-per-message.md) | 直呼类新消息并入回合时刷新名额；目的回合投递前清零 | 待发布 |
 | 2026-11-04 | [目的「立即试一次」假报已投递：目的回合绕过 QQ 发送通道门](2026-11-04-purpose-run-channel-gate.md) | `runPurposeOnce` 复用 `qqSendChannelStatus()`；拦下带 code/hint，设置页红字 | 待发布 |
 | 2026-11-04 | [设置页整页空白：删自更新时误删 OverviewTab 状态声明](2026-11-04-settings-blank-missing-state.md) | 恢复 7 个声明；新增 setter 声明守卫测试 | 待发布 |

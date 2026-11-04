@@ -77,6 +77,18 @@ try {
   fs.writeFileSync(path.join(memoryDir, 'memory-card-prompt-qq.md'), '【测试记忆卡】主人第一次对角色说话，要永远记得。');
   assert.match(harness.memoryCardPromptBlock(), /测试记忆卡/, '桥接没有读到记忆卡注入块');
   assert.match(harness.currentRoleHint(), /测试记忆卡/, 'v1/chat 角色提示没有拼上记忆卡');
+
+  // 按会话 map：具体群块优先；没有自己记录的群回退到 group:*；没有 group:* 时保持旧隔离（空）。
+  const groupMapPath = path.join(memoryDir, 'memory-card-prompt-qq-groups.json');
+  fs.writeFileSync(groupMapPath, JSON.stringify({
+    version: 1,
+    blocks: { 'group:*': '【默认群记忆】私聊·主人：私下说过的事', 'group:456': '【456自己的记忆】' },
+  }));
+  assert.match(harness.memoryCardPromptBlock('group:456'), /456自己的记忆/, '具体群块应优先');
+  assert.match(harness.memoryCardPromptBlock('group:444'), /默认群记忆/, '没有自己记录的群应回退到 group:*');
+  assert.match(harness.memoryCardPromptBlock('group:444'), /私聊/, '默认块里应有私聊记录');
+  fs.writeFileSync(groupMapPath, JSON.stringify({ version: 1, blocks: { 'group:456': '【456自己的记忆】' } }));
+  assert.equal(harness.memoryCardPromptBlock('group:444'), '', '没有 group:* 时保持旧隔离（空块）');
   harness.recordMemoryInboxEvent({
     key: 'private:123',
     kind: 'private',

@@ -43,6 +43,9 @@ function compactMedia(media, canResolveByMessage) {
 export function compactModelMessage(message) {
   if (!isRecord(message)) return message;
   const result = { ...message };
+  // 跨会话发送的出处：写入时存 viaKey/viaLabel，模型侧统一转成一句可读标记。
+  const viaLabel = String(result.viaLabel || result.viaKey || '').trim();
+  if (viaLabel) result.viaNote = `（你在 ${viaLabel} 那边决定发到这里的）`;
   // No trimming or truncation: differing plain text can contain resolved quote
   // context, and tail can carry the end of a long message absent from text.
   const seenText = new Set();
