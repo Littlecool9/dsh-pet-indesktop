@@ -104,7 +104,7 @@ def _dirty_config(base: Path) -> Config:
             "self_talk_enabled": True,
             "self_talk_texts": ["自定义台词"],
             "click_sound_volume": 0.2,
-            "collision_restitution": 0.1,
+            "drop_gravity": True,
             "todo_reminder_lead_minutes": 30,
             "network_info_menu_enabled": False,
             "character_aliases": {"default": "小名"},

@@ -4,14 +4,13 @@
 旧架构每只桌宠是**独立进程**，各读自己的 ``config-slot-N.json``：缩放/速度/
 拖拽物理/抛掷力度/音效门与音量/气泡族/角色全部逐只独立，各自一个气泡、
 各自计时自言自语，右键菜单与设置页都作用在**被点的那一只**身上。单进程
-overlay 壳此前只有碰撞资格位走了 slot 配置，其余键一律推主配置（审计
-C1/C2/C3/C5/F1：给子宠改设置"保存后毫无反应"，甚至改到主宠头上）。
+overlay 壳此前一律推主配置（审计 C1/C2/C3/C5/F1：给子宠改设置"保存后毫无反应"，
+甚至改到主宠头上）。
 
 本文件锁新的逐只契约（真壳 + 真 ``PetSprite`` + 真落盘 ``Config``）：
 
 1. slot 配置事件只重下发**那一个 slot** 的设置，别的宠一个键都不动；
-2. 逐只音效：门/音量/音源取触发 sprite 自己那份配置（点击按被点的那只，
-   碰撞按参与的第一只宠物）；
+2. 逐只音效：门/音量/音源取触发 sprite 自己那份配置（点击按被点的那只）；
 3. 逐只气泡：点击台词/余额/识屏的落点 = 被点/发起的那一只；
 4. 逐只自言自语：每只子宠一个**单发**定时器、按它自己的间隔与文本池；
 5. 逐只角色：``switch_character(cid, sprite)`` 只换被点那只的库并写它的 slot；
@@ -32,7 +31,7 @@ import pytest
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
-import tests.test_overlay_collision_toggle as toggle
+from tests.helpers import overlay_shell as toggle
 import tests.test_sprite_menu_facade as fac
 from pet import catalog
 from pet import click_sound
@@ -251,43 +250,6 @@ def test_click_sound_uses_clicked_sprite_config(tmp_path, monkeypatch):
         shell._on_sprite_click(child, "")
         _pump()
         assert plays[-1] == 0.1                 # 子宠自己的音量
-    finally:
-        toggle._teardown(shell)
-
-
-def test_collision_sound_uses_participating_sprite_config(tmp_path, monkeypatch):
-    """碰撞音效：按事件成员 id 解析出的**参与宠物**的配置取门/音量。"""
-    plays = _silence_sound(monkeypatch)
-    shell, cfg = toggle._make_slot_shell(
-        tmp_path, collision_sound_volume=0.5, collision_sound_enabled=True)
-    try:
-        shell.spawn_pet()
-        main, child = list(shell.overlay.sprites)
-        _write_slot(cfg, 1, collision_sound_volume=0.2, collision_sound_enabled=True)
-        _notify(shell)
-
-        from pet.sprite_collision import SpriteCollisionWorld
-
-        child_id = SpriteCollisionWorld._member_id(child)
-        event = type("E", (), {"a": child_id, "b": "island", "j": 999.0})()
-        shell._sound._last_play = 0.0
-        shell._sound.on_collision(event)
-        _pump()
-        assert plays == [0.2]                   # 子宠自己那份音量
-
-        _write_slot(cfg, 1, collision_sound_enabled=False)
-        _notify(shell)
-        shell._sound._last_play = 0.0
-        shell._sound.on_collision(event)
-        _pump()
-        assert plays == [0.2]                   # 子宠门关了 → 不再响
-
-        main_id = SpriteCollisionWorld._member_id(main)
-        shell._sound._last_play = 0.0
-        shell._sound.on_collision(
-            type("E", (), {"a": main_id, "b": "island", "j": 999.0})())
-        _pump()
-        assert plays == [0.2, 0.5]              # 主宠照旧按主配置
     finally:
         toggle._teardown(shell)
 

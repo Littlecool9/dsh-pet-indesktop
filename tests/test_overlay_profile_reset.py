@@ -9,7 +9,7 @@ from pet import catalog, overlay_settings_command as commands, pet_profiles as p
 from pet import settings_reset_defaults
 from pet.config import Config
 from pet.settings_slot_config import SlotRoutedConfig
-from tests import test_overlay_collision_toggle as toggle
+from tests.helpers import overlay_shell as toggle
 from tests import test_sprite_menu_facade as fac
 
 

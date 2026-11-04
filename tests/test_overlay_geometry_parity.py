@@ -27,7 +27,6 @@ from PySide6.QtWidgets import QApplication
 
 import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
-from pet import collision as collision_mod
 from pet.overlay_shell import OverlayShell
 from pet.pet_sprite import PetSprite
 from pet.sprite_bubble import sprite_anchor_rect_global
@@ -442,59 +441,5 @@ def test_set_origin_keeps_hidden_bubble_hidden(tmp_path):
         assert bubble.isVisible() is False, "隐态不得被 set_origin 显示"
         assert calls == [], "隐态不重定位"
         assert follower._origin == QPoint(80, 50)
-    finally:
-        shell._delete_runtime_marker()
-
-
-# ---------------------------------------------------------------- 岛墙原点（同一次 _sync_geometry）
-def _island_in_origin_frame(island, origin: QPoint) -> tuple[int, int, int, int]:
-    geo = island.geometry()
-    return (geo.x() - origin.x(), geo.y() - origin.y(), geo.width(), geo.height())
-
-
-def test_island_wall_geometry_tracks_origin_change(tmp_path):
-    """开态岛墙：同屏原点变化后墙的局部几何必须按新原点重算（岛本体不动）。"""
-    from pet.config import Config
-    from pet.dynamic_island import DynamicIsland
-
-    screen = FakeScreen((0, 0, 1024, 768), (0, 0, 1024, 728))
-    shell = _make_shell(tmp_path, screen)
-    island = DynamicIsland(Config(base=tmp_path))
-    try:
-        island.setGeometry(300, 200, 220, 44)
-        island.show()
-        shell.attach_island(island)
-        assert shell.island_bridge is not None
-        assert shell.island_bridge.registered is True
-        member = shell.collision._static_members[collision_mod.ISLAND_MEMBER_ID]
-        assert tuple(member) == _island_in_origin_frame(island, QPoint(0, 0))
-        island_geo_before = QRect(island.geometry())
-
-        delta = QPoint(120, 90)
-        screen.set_rects((delta.x(), delta.y(), 1024, 768),
-                         (delta.x(), delta.y(), 1024, 728))
-        shell.handle_geometry_changed()
-
-        assert island.geometry() == island_geo_before, "岛本体不动（只有坐标原点跳变）"
-        member = shell.collision._static_members[collision_mod.ISLAND_MEMBER_ID]
-        assert tuple(member) == _island_in_origin_frame(island, delta)
-        assert tuple(member) != _island_in_origin_frame(island, QPoint(0, 0)), "墙不得留旧原点"
-    finally:
-        shell.attach_island(None)
-        island.close()
-        shell._delete_runtime_marker()
-
-
-def test_no_island_bridge_means_no_wall_restart(tmp_path):
-    """无桥（岛碰撞关/无岛）时几何同步不得凭空建桥或重启岛墙。"""
-    screen = FakeScreen((0, 0, 1024, 768), (0, 0, 1024, 728))
-    shell = _make_shell(tmp_path, screen)
-    try:
-        assert getattr(shell, "island_bridge", None) is None
-        screen.set_rects((40, 30, 1024, 768), (40, 30, 1024, 728))
-        shell.handle_geometry_changed()
-        shell.handle_geometry_changed()
-        assert getattr(shell, "island_bridge", None) is None, "不得凭空建桥"
-        assert collision_mod.ISLAND_MEMBER_ID not in shell.collision._static_members
     finally:
         shell._delete_runtime_marker()

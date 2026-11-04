@@ -126,7 +126,7 @@ def test_per_slot_value_applies_to_that_pet_only(tmp_path):
     「逐只设置」的物质基础（审计 C1/B7b）。本用例用真落盘 config + 真壳验证
     ``drop_gravity`` 在名单里：改子宠 slot 只影响它自己，主宠一个键都不动。
     """
-    import tests.test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
     import tests.test_overlay_per_slot_settings as per_slot
 
     shell, cfg = toggle._make_slot_shell(tmp_path, drop_gravity=False)

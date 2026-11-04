@@ -17,9 +17,8 @@
 RETURNING``；进入条件 = 边缘 + 持续静止（``EDGE_REST_SECONDS``，「拖着经过
 边缘」不算）；过渡动画是角度/曝光 tween，**时间基是注入时钟而不是 tick
 计数**；点击真实角色 → 拉直（0°/``EDGE_ENGAGE_EXPOSURE``）→
-``EDGE_IDLE_SECONDS`` 后自动退回探头姿态；拖拽开始/碰撞真撞击/抛掷态 →
-``cancel``；多 sprite 各自独立；隐藏时 ``pause`` 冻结进度、``resume`` 从原处
-继续（同旧机）。
+``EDGE_IDLE_SECONDS`` 后自动退回探头姿态；拖拽开始/抛掷态 → ``cancel``；
+多 sprite 各自独立；隐藏时 ``pause`` 冻结进度、``resume`` 从原处继续（同旧机）。
 
 与旧机的两处刻意差异（sprite 世界无对应物，已在测试里固化）：
 
@@ -31,8 +30,7 @@ RETURNING``；进入条件 = 边缘 + 持续静止（``EDGE_REST_SECONDS``，「
    （旧 ``_restore_x`` 的等价物），不需要记账进入前的坐标。
 
 tick 链挂载建议（壳层接线）：行为控制器之后（探头姿态是位置/角度的最终写
-入口）、抛掷物理之前；``collision.add_collision_listener`` 里把命中事件翻译
-成 ``on_sprite_collision_hit``，overlay 鼠标路由接
+入口）、抛掷物理之前；overlay 鼠标路由接
 ``on_sprite_drag_started``/``on_sprite_drag_released``/``on_sprite_clicked``
 （点击返回值 True 表示被探头消费，壳层据此抑制点击音效），sprite 移除监听
 接 ``forget``。本模块不 import overlay/shell，bounds 由集成层传入，offscreen
@@ -63,7 +61,7 @@ EDGE_ENTER_MS = 300
 EDGE_STRAIGHTEN_MS = 250
 EDGE_RETURN_MS = 300
 EDGE_IDLE_SECONDS = 5.0
-# 碰撞撞飞/抛掷取消后允许重新进入探头吸附前的等待秒数（旧批 A 语义）。
+# 抛掷取消后允许重新进入探头吸附前的等待秒数（旧批 A 语义）。
 EDGE_REENTRY_SECONDS = 5.0
 # 进入前的持续静止时长（sprite 版「停在边缘」判据）：拖着经过边缘不算静止。
 EDGE_REST_SECONDS = 0.35
@@ -81,9 +79,9 @@ STRAIGHTENED = "STRAIGHTENED"
 RETURNING = "RETURNING"
 
 _TRANSITION_MODES = frozenset({ENTERING, STRAIGHTENING, RETURNING})
-# 触发「等待落地停稳后重新进入」的取消原因（旧机只有碰撞撞飞 arm；抛掷是
-# sprite 世界的独立触发源，同样给 5 秒缓冲，避免刚摔回来又被吸住）。
-_REENTRY_REASONS = frozenset({"collision_throw", "throw"})
+# 触发「等待落地停稳后重新进入」的取消原因（抛掷给 5 秒缓冲，避免刚摔回来
+# 又被吸住）。
+_REENTRY_REASONS = frozenset({"throw"})
 
 
 def edge_side_at_rest(sprite: Any, bounds: QRect) -> str | None:
@@ -156,8 +154,8 @@ class _ProbeState:
 class SpriteEdgeProbeWorld:
     """一组 sprite 的边缘探头世界：``tick(sprites, dt)`` 推进状态机。
 
-    与现有三控制器（BehaviorController / SpriteCollisionWorld /
-    ThrowPhysicsController）同构：纯 tick + 事件入口，bounds 由集成层传入，
+    与现有控制器（BehaviorController / ThrowPhysicsController）同构：纯 tick +
+    事件入口，bounds 由集成层传入，
     不查 QScreen。``config`` 每次进入判定前热读 ``edge_probe_enabled``（设置页
     热切换生效）；关闭且无会话时整条 tick 只做一次 dict 取值即返回。
 
@@ -285,27 +283,11 @@ class SpriteEdgeProbeWorld:
             st.last_tick_time = now
         return True
 
-    def on_sprite_collision_hit(self, sprite: Any) -> bool:
-        """碰撞真撞击（碰撞世界 listener 接线入口）：取消会话并 arm 重进倒计时。
-
-        返回是否**真的取消了本次活跃探头会话**：True = 执行了
-        ``cancel(sprite, "collision_throw")``；未在探头/功能关/隐藏等早退路径
-        返回 False（重进倒计时是 cancel 的产物、会残留 5 秒，不能反过来当作
-        「本次撞击取消了会话」的证据）。
-        """
-        if self._hidden or not self._enabled():
-            return False
-        st = self._states.get(sprite)
-        if st is None or st.mode == OFF:
-            return False  # 未在探头：普通碰撞不需要重进倒计时
-        self.cancel(sprite, "collision_throw")
-        return True
-
     def cancel(self, sprite: Any, reason: str = "", restore: bool = False) -> None:
         """取消会话（幂等）：清探头姿态（角度 0/曝光 1）→ 常规钳制把身体钳回屏内。
 
         ``restore`` 保留只为对齐旧机签名：sprite 世界没有窗口 x 恢复值，清姿态
-        本身就是恢复（旧 ``_restore_x`` 的等价物）。碰撞/抛掷取消会 arm
+        本身就是恢复（旧 ``_restore_x`` 的等价物）。抛掷取消会 arm
         ``EDGE_REENTRY_SECONDS`` 重进倒计时（旧批 A 语义）。
         """
         del restore  # 见 docstring：sprite 世界不需要窗口坐标恢复

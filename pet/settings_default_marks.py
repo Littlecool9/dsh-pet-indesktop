@@ -80,7 +80,6 @@ _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
     "dynamic_island_hidden_chat": "dynamic_island.hidden_chat",
     "dynamic_island_event_effects": "dynamic_island.event_effects",
     "dynamic_island_edge_dock": "dynamic_island.edge_dock",
-    "dynamic_island_collision": "dynamic_island.collision_enabled",
     # 菜单外观（嵌套 dict）
     "menu_theme": "context_menu_appearance.theme",
     "menu_density": "context_menu_appearance.density",
@@ -96,7 +95,6 @@ _ROW_DEFAULT_PATHS: dict[str, str | tuple[str, float]] = {
     "click_balance": "click_show_balance",
     # 桌宠
     "edge_probe": "edge_probe_enabled",
-    "collision_sound_volume": ("collision_sound_volume", 100),
     # 常规
     "autostart": "autostart_wanted",
     "cross_screen": "allow_cross_screen",

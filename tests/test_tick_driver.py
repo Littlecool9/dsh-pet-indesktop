@@ -150,7 +150,7 @@ class FakeClock:
 
 # ---------------------------------------------------------------- 两段拆分与顺序协议
 def test_tick_sim_order_and_members_aggregate_across_overlays():
-    """T2：成员快照聚合自全部 overlay；顺序协议行为→碰撞→物理不变。"""
+    """T2：成员快照聚合自全部 overlay；顺序协议行为→物理不变。"""
     driver = TickDriver()
     s1, s2, s3 = FakeSprite(), FakeSprite(), FakeSprite()
     first = FakeOverlay([s1, s2], screen=FakeScreen(60.0))
@@ -159,11 +159,11 @@ def test_tick_sim_order_and_members_aggregate_across_overlays():
     driver.attach(second)
 
     calls: list = []
-    driver.set_controllers(Recorder("behavior", calls), Recorder("collision", calls),
+    driver.set_controllers(Recorder("behavior", calls),
                            Recorder("physics", calls))
     driver.on_tick(dt=0.02)
 
-    assert [c[0] for c in calls] == ["behavior", "collision", "physics"]
+    assert [c[0] for c in calls] == ["behavior", "physics"]
     for _name, sprites, dt in calls:
         assert sprites == [s1, s2, s3]      # 两个 overlay 的成员都在（聚合完整）
         assert dt == 0.02
@@ -182,13 +182,13 @@ def test_controllers_attached_means_no_compat_hook_call():
     overlay = FakeOverlay(screen=FakeScreen(60.0))
     driver.attach(overlay)
     calls: list = []
-    driver.set_controllers(Recorder("behavior", calls), Recorder("collision", calls),
+    driver.set_controllers(Recorder("behavior", calls),
                            Recorder("physics", calls))
 
     driver.on_tick(dt=0.016)
 
     assert overlay.hook_calls == []
-    assert [c[0] for c in calls] == ["behavior", "collision", "physics"]
+    assert [c[0] for c in calls] == ["behavior", "physics"]
     assert overlay.advance_calls == [0.016]
 
 

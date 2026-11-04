@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pet import click_sound  # noqa: E402
 from pet.speech_bubble import PetSpeechBubble  # noqa: E402
-from tests.test_overlay_collision_toggle import _make_slot_shell  # noqa: E402
+from tests.helpers.overlay_shell import _make_slot_shell  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
 

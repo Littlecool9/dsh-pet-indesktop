@@ -2,7 +2,7 @@
 """架构红线断言（结构线纪律的机器化）。
 
 三条红线，红了就是架构倒退，不许靠改测试放行：
-1. 依赖方向：纯逻辑层（collision/physics）不依赖 Qt；
+1. 依赖方向：纯逻辑层（physics）不依赖 Qt；
    decode_fanout 不反向依赖 window/webm_clip（钩子经 movie 属性注入）。
 2. 私有面冻结：window 私有成员（win._xxx）在 app.py / agent_link.py /
    context_menus/ 中零命中（S2 已清零，防回潮）。
@@ -197,7 +197,7 @@ def test_pure_logic_modules_do_not_import_qt():
     # network_info.py 是「网络信息」弹窗的数据层（属地解析/连通性/文案），必须零
     # Qt——弹窗只在打开时取一次数据，数据层不碰 GUI。
     for name in (
-        "collision.py", "physics.py",
+        "physics.py",
         "overlay_settings_command.py",
         "network_info.py",
         # 2026-10-07 加入 island_segments（灵动岛段契约）：段注册契约与宽度/四态
@@ -406,13 +406,13 @@ def test_pet_tree_has_zero_retired_legacy_menu_references():
 
 
 def _overlay_new_path_modules() -> tuple[str, ...]:
-    """新路径模块清单：overlay_* / sprite_* / pet_sprite / tick_* / island_bridge。
+    """新路径模块清单：overlay_* / sprite_* / pet_sprite / tick_*。
 
     按目录枚举（而不是硬编码文件名）——新路径新增模块自动纳入守卫，
     不会因为"忘了加名单"漏掉一次回潮。
     """
     patterns = ("overlay_*.py", "sprite_*.py", "tick_*.py")
-    names = {"pet_sprite.py", "island_bridge.py"}
+    names = {"pet_sprite.py"}
     for pattern in patterns:
         names.update(p.name for p in PET_DIR.glob(pattern))
     return tuple(sorted(names))
@@ -422,7 +422,7 @@ def test_overlay_new_path_has_zero_retired_layer_imports():
     """4.4a 停用刀：新路径零 import 多进程多宠退役层（T6）。"""
     offenders = []
     modules = _overlay_new_path_modules()
-    assert "overlay_shell.py" in modules and "sprite_collision.py" in modules, (
+    assert "overlay_shell.py" in modules and "sprite_physics.py" in modules, (
         "新路径模块枚举失效（目录变动？），守卫清单必须非空"
     )
     for name in modules:

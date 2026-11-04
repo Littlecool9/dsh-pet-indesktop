@@ -449,38 +449,13 @@ def test_drag_started_cancels_and_restores_normal_clamp():
     assert sprite.body_rect().left() >= BOUNDS.left()
 
 
-def test_collision_hit_cancels_and_reenters_after_delay():
-    """碰撞真撞击：取消会话并按 EDGE_REENTRY_SECONDS 延迟重进（旧批 A 语义）。"""
-    world, clock = _world()
-    sprite = _sprite((0.0, 300.0))
-    _drive_to_peeking(world, clock, [sprite])
-
-    assert world.on_sprite_collision_hit(sprite) is True
-    assert world.mode_of(sprite) == OFF
-    assert world.reentry_remaining_of(sprite) == pytest.approx(EDGE_REENTRY_SECONDS)
-
-    _run(world, clock, [sprite], EDGE_REENTRY_SECONDS - 0.5, step=0.1)
-    assert world.mode_of(sprite) == OFF  # 倒计时内不重进
-
-    _run(world, clock, [sprite], 0.5 + EDGE_ENTER_MS / 1000.0 + 0.1, step=0.05)
-    assert world.mode_of(sprite) == PEEKING
-
-
-def test_collision_on_non_probing_sprite_is_ignored():
-    world, clock = _world()
-    sprite = _sprite((0.0, 300.0))
-    # 未在探头：普通碰撞不取消任何会话 → 返回 False
-    assert world.on_sprite_collision_hit(sprite) is False
-    assert world.mode_of(sprite) == OFF
-    assert world.reentry_remaining_of(sprite) == 0.0
-
-
 def test_drag_during_reentry_countdown_voids_it():
     """重进倒计时期间拖拽 → 作废倒计时，改走常规静止阈值（不等剩余 5 秒）。"""
     world, clock = _world()
     sprite = _sprite((0.0, 300.0))
     _drive_to_peeking(world, clock, [sprite])
-    assert world.on_sprite_collision_hit(sprite) is True
+    sprite.interaction_state = INTERACTION_THROWN
+    world.tick([sprite], 1 / 60)
     assert world.reentry_remaining_of(sprite) > 0.0
 
     sprite.interaction_state = INTERACTION_DRAG

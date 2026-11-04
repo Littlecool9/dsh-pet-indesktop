@@ -105,7 +105,7 @@ def test_failed_claim_rotates_then_expires_after_three_attempts(tmp_path, caplog
 
 
 def test_profile_apply_is_outside_lock_and_b_executes(tmp_path, monkeypatch):
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     ctx = multiprocessing.get_context("spawn")

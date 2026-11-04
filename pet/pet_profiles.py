@@ -19,12 +19,6 @@ overlay、legacy与设置路由共同使用本模块的固定身份档案、活�
 
 每宠键集唯一来源在本模块，overlay_spawn_state只re-export兼容子集；设置路由含位置与朝向。
 
-规范 §五 的每宠类别里，**碰撞物理参数**（``collision_restitution`` /
-``collision_friction`` / ``collision_mass_scale`` / ``collision_impulse_cap``）
-今天仍只有全局读点（设置页写主配置、``collision.py`` 读主配置），本批**不**把它们
-悄悄塞进每宠集（那会立刻造出第二份有效真值），而是登记在
-:data:`DEFERRED_PER_PET_KEYS` 交给接线批裁决。
-
 ## 二、活跃集合 v2 的三种状态必须分开（规范 §一）
 
 | 盘上状态 | 视图 | 说明 |
@@ -117,7 +111,6 @@ __all__ = [
     "ACTIVE_SET_VERSION",
     "ActiveSet",
     "CapacityFullError",
-    "DEFERRED_PER_PET_KEYS",
     "GENERATION_FILENAME",
     "GENERATION_FILE_VERSION",
     "LEGACY_ACTIVE_SET_VERSION",
@@ -195,18 +188,14 @@ _SLOT_PROFILE_RE = re.compile(r"^config-slot-(\d+)\.json$")
 
 # ------------------------------------------------------------------ 每宠键集
 #: 每宠设置键 = 旧 per-slot 取源集（``overlay_spawn_state.PER_SLOT_SETTING_KEYS``
-#: 的**临时副本**，见模块 docstring「每宠键集的临时双份」）**加上**
-#: ``collision_enabled``——它的逐宠读点不在 ``_SpriteConfig.get`` 的第一分支，而在
-#: ``overlay_shell._sprite_collision_enabled`` → ``read_slot_collision_enabled``
-#: （读这只宠的 slot 文件、缺文件继承主配置）。与
+#: 的**临时副本**，见模块 docstring「每宠键集的临时双份」）。与
 #: ``settings_slot_config.SLOT_ROUTED_KEYS`` 同构，测试有逐字漂移守卫。
 PER_PET_SETTING_KEYS = frozenset({
     # 几何 / 运动
     "scale", "playback_speed", "drag_physics", "drop_gravity", "throw_strength",
     "ffmpeg_recycle_minutes",
-    # 音效（点击与碰撞各一对门/音量；音源包 click_sound_pack 两者共用）
+    # 音效（点击门/音量；音源包 click_sound_pack）
     "click_sound_enabled", "click_sound_volume", "click_sound_pack",
-    "collision_sound_enabled", "collision_sound_volume",
     # 气泡 / 自言自语族
     "self_talk_enabled", "self_talk_texts", "self_talk_duration_seconds",
     "self_talk_image_dir", "self_talk_image_scale", "self_talk_image_chance",
@@ -215,7 +204,7 @@ PER_PET_SETTING_KEYS = frozenset({
     "click_show_balance",
     # 角色（per-pet 素材库）
     "character",
-}) | {"collision_enabled"}
+})
 
 #: slot 档案的本地键：只有落种/身份逻辑读它，运行期一个都不看（同 ``SLOT_LOCAL_KEYS``）。
 SLOT_LOCAL_KEYS = frozenset({"user_customized"})
@@ -230,13 +219,6 @@ PER_PET_PREFERENCE_KEYS = PER_PET_SETTING_KEYS | {"facing"}
 
 #: 每宠键全集 = 偏好 + 位置（几何自存写的就是这些键）。
 PER_PET_KEYS = PER_PET_PREFERENCE_KEYS | set(POSITION_KEYS)
-
-#: 规范 §五「物理 / 碰撞」里**尚未**按每宠路由的键（今天只有全局读点）。
-#: 本批只登记不采纳：把它们迁进每宠集之前，必须先有逐宠读点（否则是第二份真值）。
-DEFERRED_PER_PET_KEYS = frozenset({
-    "collision_restitution", "collision_friction",
-    "collision_mass_scale", "collision_impulse_cap",
-})
 
 #: 几何写入允许的键（顺序即写入顺序）。
 GEOMETRY_KEYS = ("rx", "ry", "screen_name", "facing", "scale")

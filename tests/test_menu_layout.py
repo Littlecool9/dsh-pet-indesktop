@@ -945,46 +945,6 @@ def test_click_sound_rows_return_to_interaction_click_feedback(tmp_path, monkeyp
         app.processEvents()
 
 
-def test_collision_sound_rows_return_to_pet_collision_groups(tmp_path, monkeypatch):
-    """碰撞音效 2 行回「桌宠」：开关紧随碰撞开关（多开碰撞组），音量随物理参数进
-    「碰撞参数（高级）」。"""
-    from PySide6.QtWidgets import QApplication
-
-    from pet import modern_settings_dialog as settings_mod
-    from pet.config import Config
-    from pet.modern_settings_dialog import ModernSettingsDialog
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(settings_mod.autostart_mod, "is_enabled", lambda: False)
-    dialog = ModernSettingsDialog(Config(tmp_path), include_ai=True)
-    try:
-        labels = [dialog.sidebar.item(i).text() for i in range(dialog.sidebar.count())]
-        pet_page = dialog.pages.widget(labels.index("桌宠"))
-
-        primary = _section_of(dialog, settings_mod, "collision_sound_enabled")
-        assert _section_title(primary) == "多开碰撞"
-        assert pet_page.isAncestorOf(primary)
-        assert [r.objectName() for r in primary.rows] == [
-            "settingRow_collision_enabled",
-            "settingRow_collision_sound_enabled",
-        ], "碰撞音效开关必须紧跟在碰撞开关之后"
-
-        advanced = _section_of(dialog, settings_mod, "collision_sound_volume")
-        assert _section_title(advanced) == "碰撞参数（高级）"
-        assert advanced.toggle is not None, "碰撞参数是高级折叠组"
-        assert "settingRow_collision_sound_volume" in [
-            r.objectName() for r in advanced.rows
-        ]
-
-        for setting_id in ("collision_sound_enabled", "collision_sound_volume"):
-            item = dialog.findChild(settings_mod.SettingRow, f"settingRow_{setting_id}")
-            assert item is not None, f"{setting_id} 行必须存在"
-            assert pet_page.isAncestorOf(item)
-    finally:
-        dialog.reject()
-        app.processEvents()
-
-
 def test_agent_sound_rows_stay_in_agent_link_fold(tmp_path, monkeypatch):
     """Agent 提示音效 6 行按主人拍板留在「自动化与联动」的 Agent 联动折叠框内。"""
     from PySide6.QtWidgets import QApplication
@@ -1041,16 +1001,13 @@ def test_sound_search_jumps_to_owning_domains(tmp_path, monkeypatch):
         # 所在的折叠框 / advanced 组展开、再把页内标签切到它所在的那一页
         #（``modern_settings_dialog._search_settings``），所以「行藏在默认收起的
         # 后面」已不是命中行不可见的理由；真正还不可见的只有被前置开关挡住的行，
-        # 那类行搜索状态栏会写明「需先开启「X」」。第三列的 False（碰撞音量）是
-        # 第一刀之前的留痕：当时它在默认收起的「碰撞参数（高级）」后面、搜索也不
-        # 展开，故没给它可见断言；现在它随页内标签一起可见，这一条只是不再断言。
+        # 那类行搜索状态栏会写明「需先开启「X」」。（碰撞音效 / 碰撞音量两行随
+        # 1c-a2 删除碰撞一起删掉了。）
         cases = (
             ("点击音效", "互动", True),
             ("音效音源", "互动", True),
             ("试听音效", "互动", True),
             ("click_sound_volume", "互动", True),
-            ("碰撞音效", "桌宠", True),
-            ("碰撞音量", "桌宠", False),
             ("agent_sound_enabled", "自动化与联动", True),
         )
         for query, domain, should_be_visible in cases:

@@ -11,8 +11,8 @@
 - **活动区（精灵可站立域）= 各屏可用工作区平移到窗口局部坐标后的矩形集合**
   （``ScreenHost.activity`` + ``PetSprite.set_clamp_rects``），不是单个包围矩形：
   错位拼接的屏间空洞没有显示器，单矩形会让宠走进看不见的地方；
-- **每宿主一份**三控制器（BehaviorController/SpriteCollisionWorld/
-  ThrowPhysicsController），由**统一 tick 驱动器**（tick_driver.TickDriver，M-2/T2）
+- **每宿主一份**控制器（BehaviorController/ThrowPhysicsController），由**统一 tick
+  驱动器**（tick_driver.TickDriver，M-2/T2）
   在同一个 QTimer 里推进；``self.overlay`` / ``_bounds`` / 三控制器就是这张窗的面；
 - 进程级共享面仍只有一份：壳、驱动器时钟、音效池、联动/主动搭话、托盘、监视器、
   配置文件；
@@ -1101,11 +1101,6 @@ class OverlayShell(QObject):
         return host.behavior if host is not None else None
 
     @property
-    def collision(self):
-        host = self._main_host
-        return host.collision if host is not None else None
-
-    @property
     def physics(self):
         host = self._main_host
         return host.physics if host is not None else None
@@ -1167,22 +1162,16 @@ class OverlayShell(QObject):
             # ``_main_host`` 仍是"启动那块屏"。
             order = [self._initial_screen]
             order += [s for s in self._screens() if s is not self._initial_screen]
-            host = self._create_host(order[0])
+            self._create_host(order[0])
             for extra in order[1:]:
                 self._create_host(extra)
         else:
-            host = self._create_host(self._initial_screen)
-        # 4.1c 音效：点击 + 碰撞（click_sound 默认包，静默降级）。门/音量/音源都按
-        # **触发 sprite** 的身份配置取源（B7b）：碰撞事件带成员 id，由壳解析成
-        # sprite；点击由壳在 _on_sprite_click(sprite) 里带身份调用。播放器进程级
-        # 一个（`_wire_host` 已按宿主注册监听）。
+            self._create_host(self._initial_screen)
+        # 4.1c 音效：点击（click_sound 默认包，静默降级）。门/音量/音源都按
+        # **触发 sprite** 的身份配置取源（B7b）：点击由壳在
+        # _on_sprite_click(sprite) 里带身份调用。播放器进程级一个。
         self._sound = SpriteSoundPlayer(
-            self._config, host.collision,
-            config_for=self._sprite_config,
-            sprite_for_event=self._sound_sprite_for_event)
-        # 灵动岛与它的宿主归属（AppShell 建岛后 attach_island 接线）
-        self._island = None
-        self._island_host = None
+            self._config, config_for=self._sprite_config)
         # 4.1b 窗口能力状态（on_top/穿透复合/全屏与光标监视/runtime 避让标记）。
         # 必须在**复活宠物之前**就位：主宠记着别的屏时，`_spawn_slot` 复活它的
         # 那一步就会走宿主换屏（`_migrate_to_screen`），而换屏里要重下发窗口能力。
@@ -1332,14 +1321,8 @@ class OverlayShell(QObject):
         """宿主接线：控制器回调、屏信号、overlay 上的壳层钩子、投喂。
 
         这里是"哪些壳层面挂在窗口上"的唯一清单——漏挂哪个，那一路就静默丢失。
-
-        三条碰撞监听是**壳自己的绑定方法**（与单世界时代同一对象、同一签名），
-        属唯一世界的一份。
         """
         host.behavior.on_flight_changed = self._on_sprite_flight_changed
-        host.collision.add_collision_listener(self._on_collision_squash)
-        host.collision.add_collision_listener(self._on_collision_probe)
-        host.collision.add_collision_listener(self._on_collision_sound)
         # 边缘探头（edge_probe 移植）：tick 尾段（姿态最终写入口）；config 键
         # edge_probe_enabled（默认 False）世界内每次进入判定前热读，设置页即切即生效
         from .sprite_edge_probe import create_edge_probe_world
@@ -1377,8 +1360,8 @@ class OverlayShell(QObject):
         """点击音效通道（overlay 的 ``click_feedback``，无参）。
 
         绑壳方法而不是 ``self._sound.on_click``：宿主在 ``_build`` 里先于播放器
-        建出来（播放器要拿主宿主的碰撞世界当缺省世界），绑定对象必须等得及。
-        逐宠身份的那一份由 ``_on_sprite_click`` 另行播放（同一处判定通道）。
+        建出来，绑定对象必须等得及。逐宠身份的那一份由 ``_on_sprite_click``
+        另行播放（同一处判定通道）。
         """
         self._sound.on_click()
 
@@ -1934,7 +1917,7 @@ class OverlayShell(QObject):
         """一只 sprite 的配置来源（主 sprite = 主配置对象本身，子 = slot 视图）。
 
         子 sprite 的视图带 per-slot 快照，只在配置同步边界重建
-        （``_invalidate_sprite_configs``）——点击/碰撞事件链上逐次读文件是磁盘税。
+        （``_invalidate_sprite_configs``）——点击事件链上逐次读文件是磁盘税。
         """
         view = self._sprite_cfg_cache.get(sprite)
         if view is None:
@@ -1945,28 +1928,6 @@ class OverlayShell(QObject):
     def _invalidate_sprite_configs(self) -> None:
         """配置同步边界：丢弃 per-slot 快照（下一次取源重新读文件）。"""
         self._sprite_cfg_cache = {}
-
-    def _sound_sprite_for_event(self, event):
-        """碰撞事件 → 参与的宠物 sprite（音效按触发 sprite 的身份配置取门/音量）。
-
-        事件只带成员 id（``SpriteCollisionWorld._member_id``）。旧架构每只宠各自
-        按自己的 cfg 播自己那一声，单进程壳里没有"每只都播一遍"的落点，取
-        **参与碰撞的第一只宠物**（先 ``event.a`` 后 ``event.b``；pair 含岛等静态
-        成员时自然落到宠那一只）——旧版每进程播自己那只，这里取其一。多屏下逐屏
-        查全部成员（同一 id 只属于一块屏）。
-        """
-        ids = {getattr(event, "a", None), getattr(event, "b", None)}
-        ids.discard(None)
-        if not ids:
-            return None
-        from .sprite_collision import SpriteCollisionWorld
-        for sprite in self._all_sprites():
-            try:
-                if SpriteCollisionWorld._member_id(sprite) in ids:
-                    return sprite
-            except Exception:
-                continue
-        return None
 
     def persist_sprite_setting(self, sprite, key: str, value) -> bool:
         """一只 sprite 的逐只设置落盘（旧"写本窗自己那份 config"的等价物）。
@@ -2112,7 +2073,6 @@ class OverlayShell(QObject):
         body = sprite.body_rect()
         sprite.set_pos(QPointF(sprite.pos) + center - QPointF(body.center()))
         sprite.home_screen = screen
-        sprite.collision_enabled = bool(cfg.get("collision_enabled"))
         self._refresh_sprite_bubble_style(sprite)
         self._reload_self_talk_hosts([sprite])
         if slot == 0 and hasattr(self, "_self_talk_timer"):
@@ -3332,102 +3292,22 @@ class OverlayShell(QObject):
             logging.debug("overlay: 岛反馈面探测失败", exc_info=True)
             return False
 
-    # ---------------------------------------------------------------- 灵动岛碰撞桥（4.3）
-    def attach_island(self, island) -> None:
-        """岛创建/重建/启停后接线（AppShell._sync_dynamic_island 调用）。
-
-        幂等可重复调；island=None 即摘桥。墙挂**岛所在屏**那个宿主的碰撞世界与
-        窗口（同 DPI 单窗下就是唯一宿主；混合缩放一屏一窗，岛跨屏时由
-        ``_rebind_island_host`` 重绑）。
-
-        ``kinetic`` 接 ``self.driver.note_kinetic``（M-1）：桌宠静止时 tick 已降到
-        T2/T3（不跑仿真），而岛拖拽是几何回调驱动的用户输入、不经过 overlay 的
-        鼠标事件（岛是独立顶层窗）——没有这条通道，快速甩岛过鱼可能整个手势
-        期间一次碰撞结算都没发生。driver 未起（测试宿主/启动早期）时不强接。
-        ``on_sync`` 接 ``_rebind_island_host``：岛换屏时把墙换到新宿主的世界上。
-        """
-        bridge = getattr(self, "island_bridge", None)
-        if bridge is not None:
-            bridge.close()
-            self.island_bridge = None
-        self._island = island
-        if island is None:
-            self._island_host = None
-            return
-        host = self._island_screen_host(island)
-        driver = getattr(self, "driver", None)
-        kinetic = getattr(driver, "note_kinetic", None)
-        from .island_bridge import IslandWindowBridge
-        self.island_bridge = IslandWindowBridge(
-            island, host.collision, host.overlay, sound=self._sound,
-            kinetic=kinetic if callable(kinetic) else None,
-            on_sync=self._rebind_island_host)
-        self._island_host = host
-
-    def _island_screen_host(self, island):
-        """岛所在屏的宿主：岛是独立顶层窗，有**自己**的屏。
-
-        混合缩放下一块屏一张合成窗，每张窗一份碰撞世界与局部坐标原点（见
-        ``_multi_window``）。墙绑错宿主 = 岛在副屏而墙在主屏的世界里：副屏那只
-        宠在另一份世界/坐标系里，直接穿过岛（拖岛拍鱼也不产生碰撞事件）。
-
-        岛左上角跨在两块屏之间的缝上时只绑**左上角所在那屏**（保守口径：墙只在
-        那一侧生效，不做跨缝的双世界映射——岛与宠不是同一生命周期，宁可少一堵
-        也不凭空多一堵）。
-
-        岛自己的选屏口径（``DynamicIsland._current_screen``，与夹取/停靠同一处
-        判据）优先，其次 Qt 顶层窗的 ``screen()``；两者都没有的岛替身回落到主宿主。
-        """
-        screen = None
-        probe = getattr(island, "_current_screen", None)
-        if callable(probe):
-            screen = probe()
-        if screen is None:
-            probe = getattr(island, "screen", None)
-            if callable(probe):
-                screen = probe()
-        host = self.host_for_screen(screen) if screen is not None else None
-        return host if host is not None else self._main_host
-
-    def _rebind_island_host(self) -> None:
-        """岛换屏 → 墙换到新屏的宿主（碰撞世界与局部原点一起换）。
-
-        岛桥每次几何/显隐同步前回调本方法（``IslandWindowBridge`` 的 ``on_sync``
-        口）：岛移动、跨屏拖拽、被夹回屏内、换主屏都会发几何回调，故"屏变化"没有
-        第二条通知面。宠的跨窗移交**不**走这里——岛是独立顶层窗，它的屏与原点只
-        认它自己，不随宠的生命周期换。
-        """
-        island = getattr(self, "_island", None)
-        bridge = getattr(self, "island_bridge", None)
-        if island is None or bridge is None:
-            return
-        host = self._island_screen_host(island)
-        if host is None or host is getattr(self, "_island_host", None):
-            return
-        # **不按 ``_multi_window()`` 早退**：拔掉混合缩放的副屏后只剩一块屏，
-        # 多窗塌回单窗，但桥此刻可能仍绑在被拆宿主的世界上（拔屏到岛下次移动
-        # 之间，宠撞不到岛）。是否重绑只看"目标宿主是不是当前绑的那个"。
-        self._island_host = host  # rebind 内部会再回调一次本方法：先记账才不递归
-        bridge.rebind(host.collision, host.overlay)
-
     # ---------------------------------------------------------------- 生命周期
     def _warm_sound_effects_once(self) -> None:
         """首次 start 时预热音效后端（口径 = legacy ``app.py:535-539``）。
 
-        同一预热函数、同一组开关（``click_sound_enabled`` OR
-        ``collision_sound_enabled``）与同一 pack/data_dir：overlay 拓扑没有
-        PetWindow 走 ``_build_window``，缺这段接线时本进程第一次发声要现付
-        winmm ``waveOutOpen`` 冷启动（实测 159.6ms，落在 GUI 事件循环里：
-        ``.scratch/arch-ab/CTL-COLL-SOUND-NEW-10-REPORT.md``）。预热池是进程级
-        的，故只做一次：重 show / stop→start 都不重复；开关都关时不预热，不
-        无谓拉起池。异常纪律同 legacy：预热函数自身已对音频失败静默降级，这里
-        不额外 catch，未知错误照旧抛出（不吞真故障）。
+        同一预热函数、同一开关（``click_sound_enabled``）与同一 pack/data_dir：
+        overlay 拓扑没有 PetWindow 走 ``_build_window``，缺这段接线时本进程第一次
+        发声要现付 winmm ``waveOutOpen`` 冷启动（实测 159.6ms，落在 GUI 事件循环
+        里：``.scratch/arch-ab/CTL-COLL-SOUND-NEW-10-REPORT.md``）。预热池是进程级
+        的，故只做一次：重 show / stop→start 都不重复；开关关时不预热，不无谓拉起
+        池。异常纪律同 legacy：预热函数自身已对音频失败静默降级，这里不额外
+        catch，未知错误照旧抛出（不吞真故障）。
         """
         if self._sound_warmed:
             return
         self._sound_warmed = True
-        if not (self._config.get("click_sound_enabled", True)
-                or self._config.get("collision_sound_enabled", True)):
+        if not self._config.get("click_sound_enabled", True):
             return
         click_sound.warm_click_sound_effects(
             self._config.get("click_sound_pack"),
@@ -3588,10 +3468,6 @@ class OverlayShell(QObject):
         # 批次下一张图前自查作废——否则壳已停、线程还在往壳的缓存里写，进程
         # 退出窗口里就是原生解码撞上对象拆除（macOS CI 三连崩的实锤形态之一）。
         self._run_exit_step('作废在飞配图加载', self._cancel_self_talk_image_loads)
-        bridge = getattr(self, "island_bridge", None)
-        if bridge is not None:
-            self._run_exit_step('关闭灵动岛桥', bridge.close)
-            self.island_bridge = None
         self._run_exit_step('停止可见性监视器', self._watcher.stop)
         self._run_exit_step('删除运行标记', self._delete_runtime_marker)
         self._run_exit_step('关闭快速对话', self._close_quick_chat)
@@ -3626,10 +3502,6 @@ class OverlayShell(QObject):
         self._run_exit_step('摘设置命令监听', self._teardown_settings_command_watch)
         self._run_exit_step('删除运行标记', self._delete_runtime_marker)
         self._run_exit_step('关闭快速对话', self._close_quick_chat)
-        bridge = getattr(self, "island_bridge", None)
-        if bridge is not None:
-            self._run_exit_step('关闭灵动岛桥', bridge.close)
-            self.island_bridge = None
         # 4.2a：退出持久化（rx/ry/facing/scale）+ 4.2b：子肥鱼逐只按 slot 身份持久化
         self._run_exit_step('持久化窗口位置', self.save_position)
         self._run_exit_step('持久化子宠位置', self.save_spawned_positions)
@@ -4208,12 +4080,6 @@ class OverlayShell(QObject):
         本方法此前一律推主设置（审计 C1 的核心缺口）。
         """
         cfg = self._config
-        # 碰撞物理 4 键（设置页「碰撞参数（高级）」）：旧架构每只宠各读自己
-        # 的 cfg 组策略并在逐次求解时使用（collision_client.py:140-145 /
-        # :558-563）；世界侧 solve_multi_body_collision 每次 tick 现读这组
-        # 属性（sprite_collision.py:291-293 / :429 / :455），故运行期赋值即生效。
-        # 世界只有一份（一次只有一个合成窗），故这 4 键按主配置**全局**生效。
-        self._sync_collision_physics(cfg)
         self._invalidate_sprite_configs()  # 配置同步边界：per-slot 快照重读
         for sprite in list(self._all_sprites()):
             slot = self._spawned_slots.get(sprite)
@@ -4221,7 +4087,6 @@ class OverlayShell(QObject):
                 self._apply_sprite_settings_to(sprite)
             else:
                 self._apply_child_profile(slot)
-        self._sync_sprite_collision_flags()  # G4：逐 sprite 资格位（见该方法）
         # 窗口级行为设置（不移动 / 动画间隔）逐宿主下发：每块屏的宠共用同一条
         # 掷骰链策略
         for host in self._hosts:
@@ -4234,8 +4099,8 @@ class OverlayShell(QObject):
             except (TypeError, ValueError):
                 gap = 0.0
             host.behavior.animation_gap_seconds = gap
-        # 刚刚按 slot 配置重算过资格位 → 同步刷新 stat 签名缓存，下一次目录事件
-        # 才能准确判断"slot 配置到底有没有变"（只 stat，不读内容）。
+        # 同步刷新 stat 签名缓存，下一次目录事件才能准确判断"slot 配置到底
+        # 有没有变"（只 stat，不读内容）。
         self._slot_signature_cache = self._slot_config_signatures()
 
     def _apply_sprite_settings_to(self, sprite, cfg=None) -> None:
@@ -4296,77 +4161,6 @@ class OverlayShell(QObject):
         except (TypeError, ValueError):
             value = catalog.DEFAULT_SCALE
         return max(0.1, min(4.0, value))
-
-    def _sync_collision_physics(self, cfg=None) -> None:
-        """config 的碰撞物理 4 键 → ``SpriteCollisionWorld`` 求解参数。
-
-        旧架构每个桌宠进程逐窗读自己 cfg 的组策略并在逐次求解时使用
-        （``collision_client.py:140-145`` policy 四键 / ``:558-563`` 传入
-        ``solve_collision_impulse``）。overlay 世界在 __init__ 只用形参默认值
-        建了一次，此后无任何写入点——设置页四个滑块（含重启）完全无效。
-
-        世界侧每次 tick 现读这组属性（``sprite_collision.py:291-293`` 传
-        restitution/friction/impulse_cap、``:429``/``:455`` 传 mass_scale），
-        故这里赋值即运行期生效。夹取范围同 config 归一（config.py:668-671）。
-        世界逐屏一份，故逐宿主下发同一组值（全局设置对所有屏一致）。
-        """
-        cfg = self._config if cfg is None else cfg
-        # 缺键/坏值 → 保留世界当前值（构造时的形参默认 = config 缺省）。
-        for host in self._hosts:
-            world = host.collision
-            world.restitution = self._clamped_config_float(
-                cfg, "collision_restitution", world.restitution, 0.0, 1.0)
-            world.friction = self._clamped_config_float(
-                cfg, "collision_friction", world.friction, 0.0, 0.30)
-            world.mass_scale = self._clamped_config_float(
-                cfg, "collision_mass_scale", world.mass_scale, 0.5, 2.0)
-            world.impulse_cap = self._clamped_config_float(
-                cfg, "collision_impulse_cap", world.impulse_cap, 1000.0, 12000.0)
-
-    @staticmethod
-    def _clamped_config_float(cfg, key: str, default: float,
-                              low: float, high: float) -> float:
-        """读一个带上下限的浮点键；缺键/坏值回退 ``default``（再夹取）。"""
-        raw = cfg.get(key, None)
-        if raw is None:
-            raw = default
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            value = float(default)
-        return max(low, min(high, value))
-
-    def _sync_sprite_collision_flags(self) -> None:
-        """只重算逐 sprite 的**宠物间碰撞资格位**（不动其它任何设置）。
-
-        G4：资格位 = per-sprite 口径（主 sprite 用本进程 config，子 sprite 用它
-        自己的 config-slot-N.json，见 ``_sprite_collision_enabled``）。世界按
-        pair 过滤见 ``sprite_collision._ignored_pet_pairs``；岛-宠接触不受它影响，
-        岛墙由 ``dynamic_island.collision_enabled`` 单独控制。
-
-        独立成窄入口的原因：子宠 slot 配置变化（目录事件 / 既有 3s 兜底轮询）只
-        该重算资格位，**不得**顺手重刷 playback/drag_physics/no_move 等主配置项
-        ——那些归 ``_sync_sprite_settings``（refresh_settings 的全量语义）。
-        """
-        for sprite in list(self._all_sprites()):
-            sprite.collision_enabled = self._sprite_collision_enabled(sprite)
-
-    def _sprite_collision_enabled(self, sprite) -> bool:
-        """该 sprite 的宠物间总碰撞资格（per-sprite 口径 = 各自的 config）。
-
-        旧契约（base-2786c15）：每个桌宠是独立进程、各读自己的 config
-        （``window.py:3929``），子宠的 ``config-slot-N.json`` 由设置进程按其身份
-        写就。本方法把这条身份→配置的对应关系在当前单进程壳里复原：
-
-        - 主 sprite（``self.sprite``）= 本进程运行期 config（主配置）；
-        - 子 sprite = 它自己的清洗档案快照，缺文件/缺键按同源默认 true；
-        - 陌生 sprite（不在身份表）退回主配置值，绝不瞎猜 slot。
-
-        只在配置刷新 / spawn·复活 / 提升等边界调用，不参与逐帧 tick。
-        """
-        if sprite is None or sprite not in self._spawned_slots:
-            return True
-        return bool(self._sprite_config(sprite).get("collision_enabled", True))
 
     def _apply_effective_mouse_through(self) -> None:
         """有效穿透 = 用户手动穿透 OR 光标自动穿透（window.py:4204 同式）。
@@ -5090,7 +4884,6 @@ class OverlayShell(QObject):
         reader._sprite = sprite
         self._sprite_cfg_cache[sprite] = reader
         self._apply_sprite_settings_to(sprite, reader)
-        sprite.collision_enabled = bool(reader.get("collision_enabled"))
         sprite._profile_character = str(reader.get("character"))
         sprite._profile_generation = reader.generation
         if self._cross_screen_allowed and not state.get("screen_name"):
@@ -5515,8 +5308,8 @@ class OverlayShell(QObject):
 
         窄契约（不出圈）：只有**签名变了的那几个 slot** 会被重读/重下发，其余
         子宠的运行态一个键都不碰——目录事件不该顺手把别的宠刷成主配置值。
-        B7b 之前这里只重算碰撞资格位；现在同一入口按各自 slot 文件下发全套
-        per-slot 键（``_apply_sprite_settings_to``）+ 重算资格位。
+        同一入口按各自 slot 文件下发全套 per-slot 键
+        （``_apply_sprite_settings_to``）。
 
         没有子宠 / 没有 config 目录 → 立即返回，零 I/O；签名只 stat 不读文件，
         且只在目录事件与既有 3s 兜底轮询上跑（不逐帧、不新起线程、不动 tick）。
@@ -5583,10 +5376,9 @@ class OverlayShell(QObject):
             overlay_settings_command.finish_command(config_dir, command, retry=retry)
 
     def apply_settings_reset(self, slot=None) -> None:
-        """全局reset只重读全局能力与world参数，不动任何宠档案或位置。"""
+        """全局reset只重读全局能力，不动任何宠档案或位置。"""
         self._config.reload()
         self._apply_window_capabilities()
-        self._sync_collision_physics(self._config)
 
     def _teardown_settings_command_watch(self) -> None:
         """释放指令 watcher 与轮询定时器（stop / aboutToQuit / 测试收口共用）。"""
@@ -5931,69 +5723,6 @@ class OverlayShell(QObject):
 
     def _toggle_pet_visible(self) -> None:
         self.set_pet_visible(not self._any_host_visible())
-
-    def _host_for_collision(self, event):
-        """撞出这一事件的成员在哪块屏的宿主上（找不到 → 主宿主）。
-
-        事件只带成员 id（``SpriteCollisionWorld._member_id``），多屏下同一个 id
-        只可能出现在一块屏的成员表里；找不到（纯静态成员对，实际不会发生）时
-        退回主宿主，绝不猜屏。
-        """
-        from .sprite_collision import SpriteCollisionWorld
-        ids = (getattr(event, "a", None), getattr(event, "b", None))
-        for host in self._hosts:
-            for sprite in host.overlay.sprites:
-                if SpriteCollisionWorld._member_id(sprite) in ids:
-                    return host
-        return self._main_host
-
-    def _on_collision_sound(self, event) -> None:
-        """碰撞音效（进程级共享播放器）：按事件所在屏的世界过岛击闸门。
-
-        播放器只持一个缺省世界（主宿主），故这里把"撞出这一事件的那块屏的世界"
-        显式传进去——副屏的岛击才不会被主屏的静态成员表漏判成普通对阈值。
-        """
-        host = self._host_for_collision(event)
-        world = host.collision if host is not None else None
-        self._sound.on_collision(event, world=world)
-
-    def _on_collision_squash(self, event) -> None:
-        """碰撞 Q 弹（旧权威冲量路径的 squash 语义）：真撞击量级时
-        双方 sprite 各压一次。runtime_id 反查 sprite（成员少，线性即可）。
-
-        只在**撞出这一事件的那块屏**的成员里反查：多屏下主/副屏各有成员表，
-        拿主宿主的表查副屏事件会认错对象（撞的是同名 id 的另一只）。
-
-        不再用 hit_min_dv 二次过滤：CollisionEvent 只在真撞击时 fire，
-        且阈值已按 pair 类型分级（普通 300 / 撞静态成员 60 / thrown 任意）——
-        壳层再按 300 卡一刀会把 60-300 的岛撞（合法真撞击）整段截掉
-        （旧机低速撞岛也会挤压）。
-        """
-        from .sprite_collision import SpriteCollisionWorld
-        host = self._host_for_collision(event)
-        for sprite in host.overlay.sprites:
-            if SpriteCollisionWorld._member_id(sprite) in (event.a, event.b):
-                squash = getattr(sprite, "squash", None)
-                if callable(squash):
-                    squash()
-
-    def _on_collision_probe(self, event) -> None:
-        """碰撞真撞击 → 边缘探头取消会话（旧机 collision_client 取消链语义）。
-
-        探头走**撞出这一事件的那块屏**自己的那份（逐屏一份），成员也只看
-        那块屏的。
-
-        同 _on_collision_squash：不按 hit_min_dv 二次过滤（事件的阈值已按
-        pair 分级，岛撞 60-300 也是合法真撞击，旧机同样取消探头会话）。
-        """
-        from .sprite_collision import SpriteCollisionWorld
-        host = self._host_for_collision(event)
-        probe = host.probe
-        if probe is None:
-            return
-        for sprite in host.overlay.sprites:
-            if SpriteCollisionWorld._member_id(sprite) in (event.a, event.b):
-                probe.on_sprite_collision_hit(sprite)
 
     def switch_character(self, character_id: str, sprite=None) -> None:
         """切换角色（4.1c）：换 per-pet 库 + 行为状态重置 + 配置持久化。
@@ -6439,10 +6168,6 @@ class OverlayShell(QObject):
         if host in self._hosts:
             self._hosts.remove(host)
         self._applied_screen_rects.pop(_screen_name(host.screen), None)
-        # 岛墙若绑在这张窗上，撤掉后必须改绑，否则桥引用的是已关闭宿主的世界。
-        if getattr(self, "_island_host", None) is host:
-            self._island_host = None
-            self._rebind_island_host()
         # 会话通知是"按 HWND 注册、新的会顶掉旧的"（见 session_watcher 的注册口径）：
         # 这张窗在能力下发时可能已经把注册抢过去，撤掉后必须把存活宿主**显式登记
         # 回来**。不能只调 `_apply_host_window_caps`——置顶标志没变化时它会早退，
@@ -6658,9 +6383,6 @@ class OverlayShell(QObject):
                 self._dismantle_host(host, home.screen)
         self._sync_host_geometry()
         self._restore_screen_ratios(plan)
-        # 宿主集合变了 ⇒ 岛墙绑的那张窗可能已经不在了（岛自己没有几何事件就不会
-        # 自己重绑）。所有重排事务收口都补一次。
-        self._rebind_island_host()
         # 事务里的 `_end_drag` 走过一次拖拽收尾，但那时拒写（防错误比例）。记下这只，
         # 事务收口后补存——"这次不写"是为了不写错，不是永远不写。
         if dragged is not None and self._geometry_save_after_txn is None:
@@ -6777,9 +6499,6 @@ class OverlayShell(QObject):
             self._connect_host_screen(each)
         self._sync_host_geometry()
         self._refresh_tick_interval()  # 拔掉的那块屏不再参与刷新率取数
-        # 岛的墙可能挂在刚被拆掉的那块屏的宿主世界里：拔屏后主动重绑一次，不等岛
-        # 自己下一次几何事件（否则拔屏到岛下一次移动之间，宠撞不到岛）。
-        self._rebind_island_host()
 
     def handle_primary_screen_changed(self, screen) -> None:
         """主屏变更：**不迁宠**（用户把哪块屏设成主屏是系统级操作，与桌宠落位无关；
@@ -6929,18 +6648,13 @@ class OverlayShell(QObject):
     def _sync_bubble_origin(self, host, old_origin: QPoint) -> None:
         """某宿主 overlay 全局原点变化后同步"按全局原点取坐标"的消费方。
 
-        原点 = ``overlay.geometry().topLeft()``，两个消费方都把它缓存在别处：
+        原点 = ``overlay.geometry().topLeft()``，消费方是该屏宠物的气泡跟随器
+        （``SpriteBubbleFollower.__init__`` 缓存；``set_origin`` 会在原点真变时把
+        在显气泡重定位一次——同尺寸平移屏下 sprite 局部位置不变、没有位移通知，
+        不同步则气泡停在旧全局位置）。
 
-        - 该屏宠物的气泡跟随器（``SpriteBubbleFollower.__init__`` 缓存；
-          ``set_origin`` 会在原点真变时把在显气泡重定位一次——同尺寸平移屏下
-          sprite 局部位置不变、没有位移通知，不同步则气泡停在旧全局位置）；
-        - 岛墙桥（``IslandWindowBridge.set_origin``：更新原点 + 作废岛速基线 +
-          立刻按新原点重算并重登记局部几何，否则墙留在旧原点、碰撞位置整体偏移）
-          ——只在岛挂在本宿主上时。
-
-        仅原点真变时调用：任务栏等"只有 available 变化"的场景原点不变，两个消费
-        方都不产生任何多余动作；无跟随器/无桥（岛碰撞关、无岛）时整段跳过，
-        不凭空建桥、不重建气泡。
+        仅原点真变时调用：任务栏等"只有 available 变化"的场景原点不变，消费方
+        不产生任何多余动作；无跟随器时整段跳过，不重建气泡。
         """
         origin = host.overlay.geometry().topLeft()
         if origin == old_origin:
@@ -6950,12 +6664,6 @@ class OverlayShell(QObject):
                 follower.set_origin(origin)
             except Exception:
                 logging.debug("overlay: 气泡跟随原点同步失败", exc_info=True)
-        bridge = getattr(self, "island_bridge", None)
-        if bridge is not None and getattr(self, "_island_host", None) is host:
-            try:
-                bridge.set_origin(origin)
-            except Exception:
-                logging.debug("overlay: 岛墙原点同步失败", exc_info=True)
 
     def _host_bubble_followers(self, host) -> list:
         """挂在该宿主上的气泡跟随器（主 + 逐只子宠）。"""

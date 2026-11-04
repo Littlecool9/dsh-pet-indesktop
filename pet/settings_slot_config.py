@@ -94,14 +94,7 @@ __all__ = [
 #: 这次保存必须失败"的确定结论，不能跟"还没查"混成一个值。
 _UNPINNED = object()
 
-#: 该写进 slot 文件的键 = per-slot 取源集（``overlay_spawn_state`` 的单一来源）
-#: **加上** ``collision_enabled``。
-#:
-#: 为什么多这一键：它的逐宠读点不在 ``_SpriteConfig.get`` 的第一条分支，而在紧随
-#: 其后的专属分支（``_sprite_collision_enabled`` → ``read_slot_collision_enabled``：
-#: 读这只宠的 slot 文件、缺文件继承主配置）。也就是说运行期对它的读法**就是**
-#: per-slot 的——写进主配置既改不动这只宠（落种时 slot 文件里已有一份旧值压着），
-#: 又会顺手改掉其它宠的继承值。
+#: 该写进 slot 文件的键 = per-slot 取源集（``overlay_spawn_state`` 的单一来源）。
 SLOT_ROUTED_KEYS = pet_profiles.PER_PET_KEYS
 
 #: slot 文件的**本地**键：只有落种/身份逻辑读它，运行期一个都不看。

@@ -982,9 +982,8 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
             "advancedSectionToggle",
         )
     ]
-    assert {"生成参数（高级）", "碰撞参数（高级）", "高级配色"}.issubset(
-        set(advanced_titles)
-    )
+    assert {"生成参数（高级）", "高级配色"}.issubset(set(advanced_titles))
+    assert "碰撞参数（高级）" not in advanced_titles
     assert {"浅色主题", "深色主题"}.issubset(set(section_titles))
     scale_row = dialog.findChild(settings_mod.QWidget, "settingRow_scale")
     assert scale_row is not None
@@ -1154,7 +1153,6 @@ def test_modern_settings_toggle_dependencies_hide_complete_setting_groups(tmp_pa
             "dynamic_island_accent", "dynamic_island_icon_value",
             "dynamic_island_custom_text", "dynamic_island_click_action",
             "dynamic_island_event_effects", "dynamic_island_edge_dock",
-            "dynamic_island_collision",
         )
     ]
     dialog.island_enabled_check.setChecked(False)
@@ -1170,22 +1168,6 @@ def test_modern_settings_toggle_dependencies_hide_complete_setting_groups(tmp_pa
     assert row("dynamic_island_custom_text").isHidden()
     dialog.island_info_check.setChecked(True)
     assert not row("dynamic_island_custom_text").isHidden()
-
-    collision_children = [
-        row(key) for key in (
-            "collision_sound_enabled", "collision_restitution", "collision_friction",
-            "collision_mass_scale", "collision_impulse_cap", "collision_sound_volume",
-        )
-    ]
-    collision_advanced_section = row("collision_restitution").parentWidget().parentWidget()
-    dialog.collision_enabled_check.setChecked(False)
-    assert all(child.isHidden() for child in collision_children)
-    assert collision_advanced_section.isHidden()
-    dialog.collision_sound_check.setChecked(False)
-    dialog.collision_enabled_check.setChecked(True)
-    assert not row("collision_sound_enabled").isHidden()
-    assert row("collision_sound_volume").isHidden()
-    assert not collision_advanced_section.isHidden()
 
     dialog.close()
     app.processEvents()
