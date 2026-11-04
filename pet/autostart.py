@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import winreg
@@ -116,11 +117,18 @@ def is_enabled() -> bool:
             command, _ = winreg.QueryValueEx(key, VALUE_NAME)
             # 兼容旧版：已开启但仍是旧命令（直接指向 exe，未切工作目录）时，
             # 自动升级为新命令，避免开机自启因 CWD 不可写而解压失败。
-            if (
+            # 同理：由 start-local.bat 启动时，已有的 pythonw -m pet 旧值升级为走 start-local。
+            frozen_outdated = (
                 getattr(sys, "frozen", False)
                 and isinstance(command, str)
                 and not _win_command_is_current(command)
-            ):
+            )
+            local_outdated = (
+                not getattr(sys, "frozen", False)
+                and _local_launcher() is not None
+                and command != _win_command()
+            )
+            if frozen_outdated or local_outdated:
                 try:
                     with winreg.OpenKey(
                         winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE
@@ -137,6 +145,25 @@ def is_enabled() -> bool:
         return False
 
 
+def _local_launcher() -> Path | None:
+    """当前进程是否由 start-local.bat 启动（APPDATA 指向 <仓库>\\.local\\appdata）。
+
+    是的话返回该 bat 的路径：开机自启必须也走它，否则 pythonw -m pet 会读 %APPDATA%
+    下另一份配置，开机起来的桌宠和平时用的不是同一套设置。
+    """
+    root = _project_root()
+    launcher = root / "start-local.bat"
+    appdata = os.environ.get("APPDATA", "")
+    if not appdata or not launcher.is_file():
+        return None
+    try:
+        if Path(appdata).resolve() != (root / ".local" / "appdata").resolve():
+            return None
+    except OSError:
+        return None
+    return launcher
+
+
 def _win_command() -> str:
     if getattr(sys, "frozen", False):
         # onefile 的 runtime_tmpdir="." 是相对“当前工作目录”解析的；
@@ -145,6 +172,10 @@ def _win_command() -> str:
         # 又不会让 cmd 窗口一直等待桌宠退出。
         exe = Path(sys.executable).resolve()
         return f'cmd /c start "" /D "{exe.parent}" "{exe}"'
+    launcher = _local_launcher()
+    if launcher is not None:
+        # start-local.bat 自己 cd 到仓库、设好 APPDATA/PYTHONUTF8，再用 start 脱离 cmd。
+        return f'cmd /c "{launcher}"'
     return f'cmd /c start "" /D "{_project_root()}" "{_pythonw_path()}" -m pet'
 
 

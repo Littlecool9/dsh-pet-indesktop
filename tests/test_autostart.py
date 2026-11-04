@@ -91,3 +91,50 @@ def test_cleanup_stale_entries_removes_only_missing_paths(monkeypatch, tmp_path)
     assert removed == 1
     assert "dsh-pet-standalone-webm" in fake.values
     assert "dsh-pet-standalone-webm-chat" not in fake.values
+
+
+# ---- start-local.bat 的本地数据目录（2026-11-04）---------------------------------
+# start-local.bat 把 APPDATA 改到 <仓库>\.local\appdata，配置因此存在仓库里。开机自启若直接
+# 跑 pythonw -m pet，会读到 %APPDATA% 下另一份配置——开机起来的桌宠和平时用的不是同一套设置。
+
+def _fake_repo(tmp_path, monkeypatch, *, local_appdata: bool):
+    root = tmp_path / "desktop pet"
+    root.mkdir()
+    (root / "start-local.bat").write_text("@echo off\r\n", encoding="utf-8")
+    appdata = root / ".local" / "appdata"
+    appdata.mkdir(parents=True)
+    monkeypatch.setattr(autostart_mod, "_project_root", lambda: root)
+    monkeypatch.setattr(autostart_mod.sys, "frozen", False, raising=False)
+    monkeypatch.setenv("APPDATA", str(appdata if local_appdata else tmp_path / "roaming"))
+    return root
+
+
+def test_source_run_from_start_local_autostarts_through_start_local(monkeypatch, tmp_path):
+    fake = _force_win(monkeypatch)
+    root = _fake_repo(tmp_path, monkeypatch, local_appdata=True)
+
+    assert autostart_mod.enable() is True
+    command = fake.values[autostart_mod.VALUE_NAME]
+    assert command == f'cmd /c "{root / "start-local.bat"}"'
+    assert "-m pet" not in command, "不能绕过 start-local 的数据目录重定向"
+    assert autostart_mod._win_command_target_exists(command) is True
+
+
+def test_plain_source_run_keeps_the_pythonw_command(monkeypatch, tmp_path):
+    fake = _force_win(monkeypatch)
+    root = _fake_repo(tmp_path, monkeypatch, local_appdata=False)
+
+    assert autostart_mod.enable() is True
+    command = fake.values[autostart_mod.VALUE_NAME]
+    assert command.startswith(f'cmd /c start "" /D "{root}"')
+    assert command.endswith("-m pet")
+
+
+def test_existing_pythonw_entry_is_upgraded_when_running_from_start_local(monkeypatch, tmp_path):
+    fake = _force_win(monkeypatch)
+    root = _fake_repo(tmp_path, monkeypatch, local_appdata=True)
+    old = f'cmd /c start "" /D "{root}" "C:\py\pythonw.exe" -m pet'
+    fake.values[autostart_mod.VALUE_NAME] = old
+
+    assert autostart_mod.is_enabled() is True
+    assert fake.values[autostart_mod.VALUE_NAME] == f'cmd /c "{root / "start-local.bat"}"'
