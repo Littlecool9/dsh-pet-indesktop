@@ -130,7 +130,7 @@ export function evaluateOutbound({ used = 0, count = 1, guard = DEFAULT_TOKEN_GU
       blocked: true,
       next,
       max,
-      error: `Token 防爆破：本次醒来最多发 ${max} 条（已发 ${before} 条）。内容太长请先总结/挑重点，不要拆成 10 条刷屏；超过 ${max} 条会被硬拦，合并成几句或下次再说。`,
+      error: `Token 防爆破：本轮最多发 ${max} 条（已发 ${before} 条）。内容太长请先总结/挑重点，不要拆成 10 条刷屏；超过 ${max} 条会被硬拦，合并成几句或下次再说。`,
     };
   }
   return { blocked: false, next, max };

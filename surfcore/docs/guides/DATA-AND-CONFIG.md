@@ -135,7 +135,7 @@
 | `wake` | `defaultMode`（diving）、`preSleepWaitEnabled`、`preSleepWaitMs`（300000）、`batchWindowMs`、`maxWakePerMinute/Hour`、`noActionLimit`、`recommended*` | 唤醒调度与"沉睡前观察"的强制窗口 |
 | `closure` | `enabled`、`cooldownMs`（20 分钟）、`requireNoOpenQuestion`、`promptInWake`、`maxSummaryChars`、`maxNextOpeningChars` | 对话收尾：冷却只压普通概率唤醒，@/提问/私聊不压 |
 | `send` | `burstMaxMessages`（8）、`maxSendPerMinute/Hour`、`maxMessageChars`（500）、`gap*` | 发送节流与硬上限（超长 400、超条数 429） |
-| `tokenGuard` | `maxWakesPerDay`（群 20 / 私聊 10）、`minWakeGapMs`（2 分钟）、`directBypassGap`、`maxOutboundPerTurn`、`maxDailyCostCNY` | 防爆破：@/引用/拍一拍可越过 2 分钟间隔，但每日次数仍生效 |
+| `tokenGuard` | `maxWakesPerDay`（群 20 / 私聊 10）、`minWakeGapMs`（2 分钟）、`directBypassGap`、`maxOutboundPerTurn`、`maxDailyCostCNY` | 防爆破：@/引用/拍一拍可越过 2 分钟间隔，但每日次数仍生效；`maxOutboundPerTurn` 是「本轮」名额，回合中对方新发私聊/拍一拍、群里 @/叫名字会重新计（群里普通闲聊不重计；目的回合投递前清零，PITFALLS #128） |
 | `wait` | `defaultMs`、`minMs/maxMs`、`defaultQuietMs`、`minQuietAfterNewMs` | `qq_wait_for_messages` 的参数边界 |
 | `sticker` | `syncTtlMs`、`maxListCount`、`includeInPrompt`、`promptMaxStickers`、`match.topK/minScore`、`collect.*` | 表情包语义化与收藏限流 |
 | `voice` | 见 §1.11.1 | 语音 |

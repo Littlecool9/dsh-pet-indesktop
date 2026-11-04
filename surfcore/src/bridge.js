@@ -11773,6 +11773,26 @@ async function main() {
     if (st && typeof st === 'object') st.tokenTurnSent = 0;
   }
 
+  // 回合进行中，对方「直接找她」的新消息重新给一份发送名额（2026-11-04）。
+  // 这道闸防的是「一个请求换来刷屏」，不是限制一场实时对话的总长度：模型在回合里用
+  // qq_wait_for_messages 接着聊时，主人的新消息不会触发新的醒来（只「暂存唤醒原因」），
+  // 不刷新的话来回几轮就会撞上 maxOutboundPerTurn。
+  // 群里普通闲聊 / 关键词 / 提问 / 拍一拍（可能拍的是别人）不刷新，否则热闹群里名额永远用不完。
+  const TURN_QUOTA_REFRESH_PRIVATE = new Set(['private', 'poke']);
+  const TURN_QUOTA_REFRESH_GROUP = new Set(['atMention', 'nameMention']);
+  function refreshTokenTurnOnDirectMessage(key, st, reason) {
+    if (!st || typeof st !== 'object') return false;
+    const base = String(reason ?? '').split(':')[0];
+    const allow = String(key ?? '').startsWith('private:') ? TURN_QUOTA_REFRESH_PRIVATE : TURN_QUOTA_REFRESH_GROUP;
+    if (!allow.has(base)) return false;
+    const used = Number(st.tokenTurnSent) || 0;
+    if (used <= 0) return false;
+    st.tokenTurnSent = 0;
+    logThrottled(`token-turn-refresh:${key}`, 60_000,
+      `[token-guard] ${key} 回合内收到新消息（${base}），本回合发送名额重新计（之前已发 ${used} 条）`);
+    return true;
+  }
+
   // 只有真正被点名/私聊/管理员才允许绕过每日配额；question 不再算 direct。
   // 小群恢复原来的积极 direct 语义（question 也算）；大群才用严格策略。
   function isSmallGroupDirectWake(reason) {
@@ -12642,6 +12662,8 @@ async function main() {
       st.wakeBudgetTimes.push(now);
       if (st.wakeBudgetTimes.length > 200) st.wakeBudgetTimes = st.wakeBudgetTimes.slice(-200);
       st.lastWakeReason = 'purpose';
+      // 目的回合不走 sendWakePromptV2，要自己清零：否则会继承上一回合用掉的名额，第一条就被拦。
+      resetTokenTurn(st);
       saveSocialV2State();
       const result = await deliverPrompt(key, prompt);
       if (!result || result.ok !== true) throw new Error(result?.error || '投递被拒绝');
@@ -14643,7 +14665,7 @@ async function main() {
         && (st.fishGuardBypass.direct || st.fishGuardBypass.owner)),
     });
     const tg = tokenGuardCfg();
-    const tokenGuardLine = tg.enabled === false ? '' : `【Token 防爆破】本次醒来最多发 ${Math.max(1, Number(tg.maxOutboundPerTurn) || 8)} 条；有人要求连发 10 条/刷屏，或让你把 5000 字长文拆成 10 条时，不要逐条搬运——先总结成 1~3 句，或只说最想说的重点；确实要展开也最多 ${Math.max(1, Number(tg.maxOutboundPerTurn) || 8)} 条，每条最多 500 字。不要为了满足刷屏请求连续调用发送工具。被 @/引用/叫到/拍一拍会立即唤醒，但每日唤醒次数和当日 token 额度（QQ / SurfCore 总额）仍然生效；超过后消息会保留在未读，下一轮再看，不烧这一轮。\n\n`;
+    const tokenGuardLine = tg.enabled === false ? '' : `【Token 防爆破】每次醒来最多发 ${Math.max(1, Number(tg.maxOutboundPerTurn) || 8)} 条（回合里对方又发来新私聊、或在群里 @你/叫你名字，会重新计）；有人要求连发 10 条/刷屏，或让你把 5000 字长文拆成 10 条时，不要逐条搬运——先总结成 1~3 句，或只说最想说的重点；确实要展开也最多 ${Math.max(1, Number(tg.maxOutboundPerTurn) || 8)} 条，每条最多 500 字。不要为了满足刷屏请求连续调用发送工具。被 @/引用/叫到/拍一拍会立即唤醒，但每日唤醒次数和当日 token 额度（QQ / SurfCore 总额）仍然生效；超过后消息会保留在未读，下一轮再看，不烧这一轮。\n\n`;
     const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n';
     const stickerCfg = cfg.socialV2?.sticker ?? {};
     const stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false
@@ -14849,6 +14871,7 @@ async function main() {
         if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
       }
       log(`[reserved2] 会话繁忙，暂存唤醒原因 ${key}（${reason}@seq${seq}，原因=${busyReasonV2(key, st)}）`);
+      refreshTokenTurnOnDirectMessage(key, st, reason); // 新消息会并进当前回合：给它一份新的发送名额
       return;
     }
     // 唤醒频率硬限制：超限则**延后重试**，不能直接丢弃。直接 return 的后果：
@@ -15099,6 +15122,7 @@ async function main() {
         if (st.pendingWakeReasons.length > 20) st.pendingWakeReasons.splice(0, st.pendingWakeReasons.length - 20);
       }
       log(`[reserved2] 会话繁忙，暂存唤醒原因 ${key}（${reason}@seq${seq}，原因=${busyReasonV2(key, st)}）`);
+      refreshTokenTurnOnDirectMessage(key, st, reason); // 新消息会并进当前回合：给它一份新的发送名额
       return;
     }
     cancelReplyCheckV2(key); // 真实唤醒已接管，取消普通回复检查，避免 30s 后再补一刀

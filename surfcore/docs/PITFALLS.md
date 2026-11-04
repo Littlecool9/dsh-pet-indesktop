@@ -4025,3 +4025,25 @@ npm run test:audit
 
 **残余**
 - 回合跑完但发送仍失败时（门放行后 SnowLuma 才掉线），结局记成 `silent`、设置页不会回显；需要另做回合结局回显。
+
+## #128（2026-11-04）实时私聊来回几轮就撞上「本次醒来最多发 8 条」
+
+**现象**
+- 和她私聊来回 4 轮（每轮 2 条），第 9 条被拦：`TOKEN_GUARD_SEND_LIMIT … 本次醒来最多发 8 条（已发 8 条）`。
+
+**根因**
+- `tokenTurnSent` 只在 `sendWakePromptV2` 新醒来时清零。回合进行中主人的新消息不会开新醒来，
+  只「会话繁忙，暂存唤醒原因」，模型在同一回合里用 `qq_wait_for_messages` 接着聊 —— 一场实时对话全算一次醒来。
+- 目的回合走 `deliverPrompt`，不经过 `sendWakePromptV2`，压根不清零：会继承上一回合用掉的名额。
+
+**处置**
+- `refreshTokenTurnOnDirectMessage`：两处「暂存唤醒原因」分支里，私聊的 `private`/`poke`、群里的 `atMention`/`nameMention`
+  把本回合计数清零（一分钟节流打一行 `[token-guard] … 本回合发送名额重新计`）。群里普通闲聊/关键词/提问/拍一拍不刷新。
+- `runPurposeOnce` 投递前 `resetTokenTurn(st)`。
+- 提示词、拦截文案、设置页说明改成「本轮」口径。
+- 测试：`scripts/test-turn-quota.mjs`（5 条，含「群里闲聊不刷新」护栏）。
+- case：`docs/cases/2026-11-04-turn-quota-per-message.md`
+
+**教训**
+- 计数器的「一轮」要对齐用户感知的「一次请求」，而不是实现里的「一个模型回合」；两者在长回合里会分叉。
+- 绕开 `sendWakePromptV2` 的投递路径（目的回合）要逐项核对它做的簿记：通道门（#127）、计数清零（本条）。
