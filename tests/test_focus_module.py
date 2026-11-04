@@ -202,6 +202,52 @@ def test_app_shell_starts_focus_module_and_provides_service(qapp, tmp_path):
         shell._stop_modules()
         shell._module_registry = None
 
+def test_app_start_gives_the_island_its_pomodoro_controls(qapp, tmp_path, monkeypatch):
+    """完整 AppShell.start()：启动时先建岛、后起模块，岛仍要拿到番茄钟入口。
+
+    回归：两个并行迁移各自需要相反的先后（余额模块 start 要挂岛；岛构造时要专注服务），
+    合并后岛先建，构造时拿到 focus=None，番茄钟入口从灵动岛消失。
+    """
+    import pet.overlay_shell as overlay_shell_mod
+    from pet.app import AppShell
+
+    class _FakeOverlayShell:
+        def __init__(self, qapp_, instance, **kwargs):
+            self.instance = instance
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(overlay_shell_mod, "OverlayShell", _FakeOverlayShell)
+    monkeypatch.setattr("pet.app.QTimer.singleShot", lambda *a, **k: None)
+
+    cfg = Config(base=tmp_path)
+    cfg.set("dynamic_island", {"enabled": True})
+    shell = AppShell(qapp, cfg)
+    shell.instance._apply_spawn_offset = lambda: None
+    shell.instance._refresh_chat_windows = lambda: None
+    shell._install_session_watcher = lambda: None
+    try:
+        shell.start()
+        island = shell.island
+        assert island is not None
+        assert island._focus is shell._module_host.get("focus")
+        assert island._focus_controls is not None, "番茄钟入口必须出现在灵动岛卡片里"
+        layout = island._card_box.layout()
+        assert layout.indexOf(island._focus_controls) >= 0
+        assert layout.indexOf(island._focus_controls) < layout.indexOf(island._card_message_box)
+        assert island.attach_focus(shell._module_host.get("focus")) is False, "重复接入是空操作"
+    finally:
+        shell._stop_modules()
+        shell._shared.stop_all()
+        shell._teardown_config_watcher()
+        island = getattr(shell, "island", None)
+        if island is not None:
+            island.close()
+            island.deleteLater()
+        qapp.processEvents()
+
+
 def test_removing_module_from_MODULES_leaves_core_focus_off(qapp, tmp_path, monkeypatch):
     import pet.modules as modules_mod
     from pet import module_config as core_module_config

@@ -1467,6 +1467,33 @@ class DynamicIsland(QWidget):
             self.destroyed.connect(
                 lambda _obj=None, service=service: service.remove_listener(listener))
 
+    def attach_focus(self, service) -> bool:
+        """岛建好之后再接上专注服务（返回是否真的接上了）。
+
+        灵动岛与功能模块的启动先后各有依赖：余额模块 start 时要挂到已存在的岛上，
+        而专注控件要专注模块先提供服务。应用壳先建岛、再起模块，最后调这里补上
+        番茄钟入口——不依赖两者的启动顺序。已接过（或服务为空）时什么都不做。
+        """
+        import shiboken6
+        if service is None or self._focus_controls is not None or not shiboken6.isValid(self):
+            return False
+        self._focus = service
+        controls = service.create_controls(self.config, self._card_box)
+        if controls is None:
+            return False
+        self._focus_controls = controls
+        layout = self._card_box.layout()
+        index = layout.indexOf(self._card_message_box)
+        layout.insertWidget(index if index >= 0 else layout.count(), controls)
+        listener = self.refresh_focus
+        service.add_listener(listener)
+        self.destroyed.connect(
+            lambda _obj=None, service=service: service.remove_listener(listener))
+        self._plan_inputs_key = self._content_cache_key = None
+        self._sync_card_labels()
+        self._update_size()
+        return True
+
     def refresh_focus(self) -> None:
         """Update focus content without a per-second topmost/system probe."""
         import shiboken6

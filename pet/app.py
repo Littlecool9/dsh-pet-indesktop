@@ -1339,6 +1339,7 @@ class AppShell:
         # 功能模块在壳与灵动岛就绪后启动：菜单入口/弹窗父窗/岛卡片订阅都依赖它们。
         self._sync_dynamic_island()
         self._start_modules()
+        self._attach_island_focus()
         # 设置页进程隔离：启动即装 config 目录 watcher，独立设置进程落盘后由它
         # 合并进运行期（开关关闭时不装，完全走旧路径）。
         self._install_config_watcher()
@@ -1724,6 +1725,23 @@ class AppShell:
             shared.proxy.set_link_next_provider(manager._next_busy_anim)
         except (AttributeError, RuntimeError):
             logging.exception("把窗口接入共享 Agent 联动链失败")
+
+    def _attach_island_focus(self) -> None:
+        """模块起来之后把专注服务补接到启动时已建好的灵动岛（番茄钟入口）。
+
+        启动顺序是「先建岛、再起模块」（余额模块 start 时要挂到岛上），所以启动时建岛那一刻
+        还拿不到专注服务；之后再建的岛在构造时就能拿到，这里对它是空操作。
+        """
+        island = getattr(self, "island", None)
+        attach = getattr(island, "attach_focus", None)
+        if not callable(attach):
+            return
+        from .module_host import module_service
+
+        try:
+            attach(module_service(self, "focus"))
+        except Exception:
+            logging.exception("灵动岛接入专注服务失败（番茄钟入口不可用）")
 
     def _sync_dynamic_island(self) -> None:
         """按配置创建/隐藏灵动岛；桌宠隐藏后灵动岛仍可常驻。"""
