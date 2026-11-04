@@ -8,7 +8,7 @@ MANIFEST = ModuleManifest(
     id="surfcore",
     name="SurfCore 连接",
     factory="pet.modules.surfcore.module:create",
-    description="发现本机 SurfCore pet-api、长轮询事件，并把 surfcore 客户端提供给其它模块。",
+    description="发现本机 SurfCore pet-api、长轮询事件，并提供 surfcore 服务（后台调用 / 专注同步）。",
 )
 
 __all__ = ["MANIFEST"]
