@@ -1,0 +1,16 @@
+# -*- coding: utf-8 -*-
+"""功能模块清单。
+
+``MODULES`` 里的顺序只是登记顺序；启动顺序由依赖决定（见 ``registry.dependency_order``）。
+**删除一个模块 = 删掉它的目录 + 去掉这里的一行**；依赖它的模块会显示成「缺少依赖模块」，
+菜单项置灰并写明原因。
+
+本包的 ``__init__`` 必须便宜（设置进程也会 import）：不 import Qt、不 import 模块运行时。
+"""
+from __future__ import annotations
+
+MODULES: tuple[str, ...] = (
+    # 按阶段 2 迁移顺序逐个加入，例如 "pet.modules.network_info"。
+)
+
+__all__ = ["MODULES"]
