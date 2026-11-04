@@ -885,7 +885,7 @@ def test_global_reset_from_a_slot_page_syncs_system_autostart(tmp_path: Path, mo
 
 def test_settings_reset_command_aligns_overlay_sprite(tmp_path: Path):
     """overlay 侧：指令消费后主 sprite 按默认落位重摆（rx/ry=None 的落位语义）。"""
-    from tests.test_overlay_spawn import _make_persistent_shell
+    from tests.helpers.overlay_shell import _make_persistent_shell
 
     shell, _ = _make_persistent_shell(tmp_path)
     try:
@@ -914,7 +914,7 @@ def test_settings_reset_command_aligns_overlay_sprite(tmp_path: Path):
 
 def test_overlay_reset_command_reloads_runtime_config_before_alignment(tmp_path: Path):
     """overlay 同一条指令：对齐前同样把运行期配置拉齐（否则退出写盘覆盖回旧值）。"""
-    from tests.test_overlay_spawn import _make_persistent_shell
+    from tests.helpers.overlay_shell import _make_persistent_shell
 
     base = tmp_path / "appdata"
     shell, _ = _make_persistent_shell(base, {
@@ -1019,40 +1019,8 @@ def test_slot_page_exposes_both_reset_scopes_and_global_reaches_global_keys(
     profile = pet_profiles.read_slot_profile(main.dir, 0)
     assert profile.value("scale") == 0.8, "全局 reset 不动任何每宠偏好"
     assert profile.value("playback_speed") == 1.5
-    assert settings_slot_config.is_main_identity("slot-0") is True
 
 
-def test_global_reset_from_a_slot_page_keeps_other_pets_and_the_active_set(
-        qapp, tmp_path: Path, monkeypatch):
-    """全局 reset 的作用域边界：别的宠档案、活跃集合、本宠位置都原样。"""
-    from pet import pet_profiles
-
-    base = tmp_path / "appdata"
-    main = Config(base=base)
-    assert main.save() is True
-    assert pet_profiles.write_profile_settings(
-        main.dir, 1, {"character": "nova", "scale": 1.4}).status == "ok"
-    assert pet_profiles.write_profile_geometry(
-        main.dir, 1, {"rx": 0.5, "ry": 0.6, "screen_name": "primary"}).status == "ok"
-    assert pet_profiles.save_active_set(main.dir, [0, 1]).status == "ok"
-    before_profile = pet_profiles.slot_profile_path(main.dir, 1).read_bytes()
-    before_active = pet_profiles.active_set_path(main.dir).read_bytes()
-
-    from pet.settings_slot_config import route_settings_config
-
-    dialog = ModernSettingsDialog(
-        route_settings_config(Config(base=base, instance_id="slot-1")), include_ai=False)
-    monkeypatch.setattr(settings_reset_defaults, "confirm_reset",
-                        lambda _parent, _scope=None: True)
-    try:
-        dialog.reset_global_defaults_btn.click()
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()
-
-    assert pet_profiles.slot_profile_path(main.dir, 1).read_bytes() == before_profile, (
-        "别的宠（含本宠）档案一个字节都不许动")
-    assert pet_profiles.active_set_path(main.dir).read_bytes() == before_active
 
 
 def test_slot_page_per_pet_action_still_touches_only_this_pet(

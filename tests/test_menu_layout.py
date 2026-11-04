@@ -210,7 +210,6 @@ def test_runtime_feature_state_does_not_filter_menu_layout_actions():
         on_look_screen = lambda self: None
         on_show_balance = lambda self, parent=None: None
         on_open_modern_settings = lambda self: None
-        on_spawn_pet = lambda self: None
 
     pet = Pet()
     assert "quick_launch" in MENU_ACTIONS.available_ids(pet)
@@ -328,8 +327,6 @@ def test_missing_user_layout_resolves_versioned_default():
         "autostart",
         "return_corner",
         "hide_pet",
-        "spawn_pet",
-        "clear_spawned_pets",
         "agent_cost",
         "edge_probe",
         "quick_launch",
@@ -493,7 +490,6 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
         on_look_screen = lambda self: None
         on_show_balance = lambda self, parent=None: None
         on_open_modern_settings = lambda self: None
-        on_spawn_pet = lambda self: None
         idles = ["待机"]
         turns = moves = clicks = acts = []
         playback_speed = scale = 1.0
@@ -572,8 +568,6 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
         "开机自启",
         "回到右下角",
         "隐藏桌宠",
-        "生小肥鱼",
-        "退出子肥鱼",
         "显示本轮消费",
         "边缘探头",
     ]

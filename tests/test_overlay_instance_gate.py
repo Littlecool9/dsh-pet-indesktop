@@ -304,13 +304,9 @@ def test_main_refuses_second_instance_before_slot(tmp_path, monkeypatch, caplog)
     assert "refused" in (config_dir / gate_mod.TRACE_NAME).read_text(encoding="utf-8")
 
 
-def test_main_takes_gate_and_does_not_take_slot_lock(
+def test_main_takes_gate_without_slot_selection(
         tmp_path, monkeypatch):
-    """main() 抢进程门且不再抢 slot 文件锁。
-
-    `--slot N` 兼容解析保留：合法值只用于选 config-slot-N.json 身份，不再有任何
-    跨进程竞争副作用（不建 slots/、不落种）。
-    """
+    """main() 抢进程门；唯一身份是 slot0，不再解析 --slot 或落任何 slot 文件。"""
     from pet import app as app_mod
     from pet.config import Config as RealConfig
 
@@ -320,9 +316,6 @@ def test_main_takes_gate_and_does_not_take_slot_lock(
     monkeypatch.setattr(app_mod, "Config", lambda *a, **k: RealConfig(base=tmp_path))
     monkeypatch.setattr(app_mod, "_setup_logging", lambda _config: None)
     monkeypatch.setattr(app_mod.autostart_mod, "cleanup_stale_entries", lambda: 0)
-
-    # 退役层符号已删除：取用即失败（比"断言没调用"更强的守卫）
-    assert not hasattr(app_mod.slot_manager_mod, "acquire_pet_slot")
 
     started = []
 
@@ -337,11 +330,10 @@ def test_main_takes_gate_and_does_not_take_slot_lock(
 
     assert app_mod.main(["dsh-pet", "--slot", "3"]) == 0
     config_dir = tmp_path / APP_DIR_NAME
-    assert started and started[0]["slot_id"] == 3          # 身份照旧按 --slot 选
-    # G1 身份口径：``--slot N`` 只作为**实例身份**显式传给 AppShell；进程级
-    # ``DSH_PET_INSTANCE`` 固定空串——它代表"全局配置身份"，不再被 --slot 污染
-    #（否则 ``Config(instance_id=None)`` 会去读 config-slot-N.json，全局与档案重合）。
+    assert started and "slot_id" not in started[0]
+    assert "spawn_offset" not in started[0]
     assert os.environ["DSH_PET_INSTANCE"] == ""
+    assert not (config_dir / "migration-spawns.done").exists()
     assert not (config_dir / "slots").exists()              # 不抢锁 = 不建 slots/
     assert not list(config_dir.glob("config-slot-*.json"))
     # 门真被抢过（留痕），且正常退出已释放（锁文件不残留）

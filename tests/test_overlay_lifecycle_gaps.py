@@ -23,7 +23,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 import tests.test_sprite_menu_facade as fac
-from tests.test_overlay_spawn import _make_persistent_shell
+from tests.helpers.overlay_shell import _make_persistent_shell
 
 app = QApplication.instance() or QApplication([])
 
@@ -48,41 +48,8 @@ def _migrate(shell):
 
 
 # ---------------------------------------------------------------- F2：监听重挂
-def test_migrate_to_screen_keeps_sprite_removed_listeners(tmp_path):
-    """换家之后两条 sprite-removed 监听必须仍在（否则退出子宠残留）。"""
-    shell, _lib = _make_shell(tmp_path)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        _migrate(shell)
-        listeners = shell.overlay._sprite_removed_listeners
-        assert shell.behavior.forget in listeners
-        assert shell._probe.forget in listeners
-        # 行为状态表是可观测的那一条：真 tick 建态 → 真移除 → 必须注销
-        shell.driver.tick_sim(1 / 60.0)
-        assert child in shell.behavior._states, "前提：行为表已为该 sprite 建态"
-        shell.overlay.remove_sprite(child)
-        assert child not in shell.behavior._states, "迁移后退出子宠必须仍注销行为状态"
-    finally:
-        shell.clear_spawned_pets()
-        shell._delete_runtime_marker()
 
 
-def test_migrate_to_screen_keeps_exit_pet_cleanup_path(tmp_path):
-    """走真实退出入口（``exit_pet``）时迁移后的清理链完整。"""
-    shell, _lib = _make_shell(tmp_path)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        _migrate(shell)
-        shell.driver.tick_sim(1 / 60.0)
-        assert child in shell.behavior._states
-        assert shell.exit_pet(child) is True
-        assert child not in shell.behavior._states
-        assert child not in shell.overlay.sprites
-    finally:
-        shell.clear_spawned_pets()
-        shell._delete_runtime_marker()
 
 
 # ---------------------------------------------------------------- 屏迁移：气泡不丢
@@ -155,24 +122,6 @@ def test_migrate_to_screen_does_not_orphan_the_bubble(tmp_path):
 
 
 # ---------------------------------------------------------------- F3：stop() 释放
-def test_stop_releases_spawned_libraries_and_inflight_provisions(tmp_path):
-    """``stop()`` 必须收掉子宠库与在飞帧序列供给线程（复用既有收口路径）。"""
-    shell, made = _make_persistent_shell(tmp_path)
-    shell.start()
-    shell.spawn_pet()
-    child = shell._spawned[0]
-    child_lib = shell._spawned_libs[child]
-    main_lib = shell.lib
-    cancels: list = []
-    main_cancels: list = []
-    child_lib.cancel_frameseq_provision = lambda: cancels.append(1)
-    main_lib.cancel_frameseq_provision = lambda: main_cancels.append(1)
-
-    shell.stop()
-
-    assert child_lib.shutdown_calls == 1, "子宠库必须 shutdown（活线程是库的子对象）"
-    assert cancels, "子宠库的在飞供给必须取消"
-    assert main_cancels, "主库的在飞供给同样取消"
 
 
 # ---------------------------------------------------------------- 缺陷 13/14：退出收口
@@ -187,7 +136,6 @@ def _record_mandatory_steps(shell):
     """把三项必做项换成记录器（三项各自的真实语义已有专门用例覆盖）。"""
     calls: list = []
     shell.save_position = lambda: calls.append("save_position")
-    shell.save_spawned_positions = lambda: calls.append("save_spawned_positions")
     shell._cancel_frameseq_provisions = lambda: calls.append("cancel_provisions")
     return calls
 
@@ -206,21 +154,16 @@ class _RecordingClip:
         self.closes += 1
 
 
-def test_about_to_quit_runs_mandatory_steps_when_earlier_step_raises(tmp_path):
-    """前置步骤抛错不得让位置持久化与在飞供给取消被整体跳过。
 
-    缺陷 13：``_on_about_to_quit`` 原是一条裸调用链——``_close_quick_chat`` /
-    ``bridge.close()`` / ``overlay.stop()`` 任一抛错，排在后面的 ``save_position`` / ``save_spawned_positions`` /
-    ``_cancel_frameseq_provisions`` 全部不执行：位置不落盘，在飞帧序列供给线程
-    没人取消（库随壳析构活 QThread = Qt fatal）。
-    """
+
+def test_about_to_quit_runs_mandatory_steps_when_earlier_step_raises(tmp_path):
+    """前置步骤抛错不得让位置持久化与在飞供给取消被整体跳过。"""
     shell, _lib = _make_persistent_shell(tmp_path)
     calls = _record_mandatory_steps(shell)
     shell._close_quick_chat = _raiser("快速对话收尾失败")
     try:
         shell._on_about_to_quit()
-
-        assert calls == ["save_position", "save_spawned_positions", "cancel_provisions"]
+        assert calls == ["save_position", "cancel_provisions"]
     finally:
         shell._delete_runtime_marker()
 
@@ -263,20 +206,17 @@ def test_about_to_quit_shuts_down_real_main_library_and_closes_clips(tmp_path):
         lib.shutdown()   # 幂等；防真库遗留预热定时器
 
 
-def test_stop_still_releases_libraries_when_earlier_step_raises(tmp_path):
+
+
+def test_stop_still_releases_library_when_earlier_step_raises(tmp_path):
     """``stop()`` 同款加固：前置步骤抛错时，供给取消与库收口仍执行到。"""
     shell, _made = _make_persistent_shell(tmp_path)
     shell.start()
-    shell.spawn_pet()
-    child_lib = shell._spawned_libs[shell._spawned[0]]
     calls = _record_mandatory_steps(shell)
     shell._close_quick_chat = _raiser("快速对话收尾失败")
     try:
         shell.stop()
-
         assert calls == ["cancel_provisions"]
-        assert child_lib.shutdown_calls == 1, "子宠库不得因前置异常被跳过"
-        assert shell.lib.shutdown_calls == 1, "主库必须并入同一收口（缺陷 14）"
+        assert shell.lib.shutdown_calls == 1, "唯一素材库必须并入同一收口"
     finally:
-        shell.clear_spawned_pets()
         shell._delete_runtime_marker()

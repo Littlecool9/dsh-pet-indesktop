@@ -181,11 +181,6 @@ _LOOP_REARM_GRACE_SECS = 1.0
 # fresh start 本就安全）。
 _LOOP_REARM_ACK_TIMEOUT = 0.15
 
-# 订阅授权有界等待预算（毫秒，批5.3）：进程内 fan-out 的 feed 立即就绪，
-# 实际不等待；常量本地化以替代对 decode_broker 的 import（该模块退役后
-# webm_clip 不再反向依赖 broker）。
-_SUBSCRIBE_BUDGET_MS = 600
-
 # ------------------------------------------------------------ ffmpeg exe 探测串行化（批 6-8b）
 # imageio 的 get_ffmpeg_exe() 在缓存未命中时用 subprocess.check_call 跑
 # `ffmpeg -version` 探测（**无限等待**）。并发 reader 同时冷启动会各自拉起
@@ -1188,7 +1183,7 @@ class WebMClip(QObject):
         # _decode_throttle_divisor 的跨线程读同一模式。
         self._recycle_seconds = 0.0
         # 当前 ffmpeg 进程出生时刻（time.monotonic 秒）与已完成圈数（均 reader
-        # 线程写）；圈边界回收判定/日志用。0.0 = 尚未拉起本进程（feed 路径）。
+        # 线程写）；圈边界回收判定/日志用。0.0 = 尚未拉起本进程。
         self._reader_born_at = 0.0
         self._reader_loops = 0
         self._timer = QTimer(self)
@@ -1202,15 +1197,6 @@ class WebMClip(QObject):
         # _poll），播放位置/队列/显示图原地保留；reader 由有界帧队列背压自然
         # 停步。恢复走 resume()，从暂停处续播（绝不回第 0 帧、不重新拉进程）。
         self._paused = False
-        # 共享解码（默认 None = 今天的行为逐位不变）：
-        # - _publish_sink：发布端（首发窗）播放时置（facade 在 start() 前设置）
-        #   ——reader 线程每解码一帧回调 sink.on_frame(data, src_idx)，扇出到
-        #   各订阅者环形缓冲；
-        # - _feed_source：消费端置（facade 在 start() 前设置）——reader 线程
-        #   经 FanoutFeed 立即就绪（ready 恒 True），从环取帧入队；断流/中止
-        #   → 同一 reader 线程内回退本地 ffmpeg（帧 0）。
-        self._publish_sink = None
-        self._feed_source = None
         # cleanup 后 clip 终结：不再启动新 reader；退役池回收由模块级
         # 生命周期管理器持有（见模块头注释，P2）。
         self._cleaned = False
@@ -1255,7 +1241,7 @@ class WebMClip(QObject):
         # 自然结束与中途打断——前者的 stop() 软停保进程，后者硬停杀进程）；
         # _soft_parked = 软停驻留中（start() 据此走 re-arm 续圈）；
         # _reader_parked = reader 正驻留在圈边界（reader 线程写、GUI 读——
-        # 软停只对「确认驻留在循环边界」的 reader 生效，feed 路径/正在退出
+        # 软停只对「确认驻留在循环边界」的 reader 生效，正在退出
         # 的 reader 绝不软停）；
         # _boundary_marker_pending = 本圈结束标记已发出（reader 置位，re-arm
         # 复位）；_rearm_pending 由 re-arm 在标记未发出时置位，reader 到边界
@@ -1766,7 +1752,7 @@ class WebMClip(QObject):
 
         只在圈边界（_loop_boundary，结束标记已交付、无 pending re-arm）调用。
         0（关闭，_recycle_seconds <= 0）恒为 False；进程出生时刻未记录
-        （_reader_born_at <= 0，feed 路径/异常）也判 False（防御）。
+        （_reader_born_at <= 0，异常）也判 False（防御）。
         读 _recycle_seconds 用 GIL 原子性，与 _decode_throttle_divisor 同模式。
         """
         if self._recycle_seconds <= 0:
@@ -1801,10 +1787,7 @@ class WebMClip(QObject):
         # 批8 续圈：圈边界软停（_soft_parked）且循环 reader 仍存活 → re-arm
         # 直接续播下一圈，不重启 reader/ffmpeg（消灭每圈进程 churn）。
         # re-arm 失败（reader 已退出/异常）则落回正常启动路径。
-        # 复审 P1-2（批5.3）：本 clip 已被登记为订阅者（_feed_source 已置）时
-        # 绝不可以 re-arm——驻留的旧 reader 在 _reader_local 里只会继续本地
-        # 解码，绕过 feed 分派 = 静默双 ffmpeg。必须落 fresh start 进 feed。
-        if self._soft_parked and self._feed_source is None and self._rearm_loop_reader():
+        if self._soft_parked and self._rearm_loop_reader():
             return True
 
         # 上一轮 natural end 残留的 active 线程先退役（其 ffmpeg 已自行退出）
@@ -1899,7 +1882,7 @@ class WebMClip(QObject):
         换代并重新拉起 ffmpeg，冷启动 60-166ms，绝不能拿来当暂停用）。
 
         reader 侧走**背压**：``_paused`` 让取帧路径转成阻塞入队（见
-        ``_stamp_source_indices``/``_reader_feed`` 的节流分支），队列写满即
+        ``_stamp_source_indices`` 的节流分支），队列写满即
         reader 停步 → ffmpeg 管道写满自然停解码。改前只有消费端停摆、reader
         仍走丢帧路径（队列满即丢、源帧号照推）：暂停 = 持续解码 + 持续丢帧，
         暂停位置丢穿、隐藏期 CPU 白烧。恢复无需重新起进程 = 无首帧冷启动。
@@ -1943,8 +1926,8 @@ class WebMClip(QObject):
         返回 True = 已软停驻留（等 start() re-arm 续圈）；False = 不适用
         （非圈末/reader 未驻留在循环边界/reader 已退出），调用方走硬停。
         只对确认驻留在圈边界（_reader_parked）的本地循环 reader 软停：
-        feed 路径与正在 finally 退出的 reader 绝不软停（它们的线程随即
-        退出，软停会让 start() 误以为可续圈）。
+        正在 finally 退出的 reader 绝不软停（其线程随即退出，软停会让
+        start() 误以为可续圈）。
         """
         if not self._natural_end_pending:
             return False
@@ -2418,17 +2401,7 @@ class WebMClip(QObject):
     # ------------------------------------------------------------ reader
     def _reader(self, stop_evt: threading.Event, generation: int,
                 ready_evt: threading.Event | None = None) -> None:
-        """reader 线程入口：feed 模式（进程内扇出）与本地解码的分派。
-
-        - ``_feed_source`` 为 None（默认/灰度关）：逐位走 ``_reader_local``，
-          与历史行为零差异；
-        - ``_feed_source`` 已置（消费端，facade 在 start() 前设置）：经
-          FanoutFeed 立即就绪（ready 恒 True），从订阅环取帧入队（本地同款
-          有界 put/丢帧契约，节流/暂停期转阻塞背压）；断流/超时/中止 →
-          **同一 reader 线程内**回退本地 ffmpeg 解码（帧 0 起播，重入
-          _reader_local 的拉起序列——capture/登记/兜底全复用，绝不复刻一个
-          绕过追踪的新拉起，P1-1）。
-        """
+        """reader 线程入口：始终走本地 ffmpeg 解码路径。"""
         # 批 6-8b：线程启动前已被 stop/换代的 reader 零成本退出——绝不拉起
         # 任何 ffmpeg 进程（省掉「拉起→_register 发现 stale→自终止」的浪费
         # 与延迟，也杜绝 stop 无法解除的探测/解码等待）。
@@ -2439,21 +2412,6 @@ class WebMClip(QObject):
             # 关机窗口期内新起的进程会以 0xc0000142 弹窗阻塞关机。
             logger.info('会话结束中，reader 拒绝拉起 ffmpeg: %s', self.path)
             return
-        feed = self._feed_source
-        if feed is not None:
-            done = self._reader_feed(feed, stop_evt, generation, ready_evt)
-            if done:
-                # P2-3（REVIEW_batch12）：feed 自退（自然结束/被停）不经
-                # _reader_local 的 finally，死 Thread 对象清理在此兜底。
-                with self._reader_lock:
-                    if self._thread is threading.current_thread():
-                        self._thread = None
-                return  # feed 已完整处理本轮（自然结束/停止）
-            # 断流/被拒/超时 → 回退本地：清空 feed 残留帧后落本地路径
-            if stop_evt.is_set() or self._generation != generation:
-                return
-            self._drain_queue_for_local()
-            logger.info('fan-out feed 回退本地解码（帧 0 起播）: %s', self.path)
         self._reader_local(stop_evt, generation, ready_evt)
 
     def _reader_local(self, stop_evt: threading.Event, generation: int,
@@ -2470,7 +2428,7 @@ class WebMClip(QObject):
             return  # 探测期间被 stop：不拉起解码进程，直接退出
         if session_ending():
             # 会话结束（关机/注销）：本地解码路径绝不 spawn（issue #111）。
-            # 覆盖 feed 回退本地与任何绕过 start() 的迟到 reader。
+            # 覆盖任何绕过 start() 的迟到 reader。
             logger.info('会话结束中，本地 reader 拒绝拉起 ffmpeg: %s', self.path)
             return
         gen = None
@@ -2523,7 +2481,6 @@ class WebMClip(QObject):
                                  '-readrate', str(max(1.0, self.playback_speed))]
             # 批11-B1：记录当前 ffmpeg 进程出生时刻并清零圈数（圈边界回收
             # 判定/日志用；reader 线程写，Reader 读同线程）。只在此处记录一次，
-            # feed 路径（不拉起 ffmpeg）不会走到这里，_reader_born_at 保持 0。
             self._reader_born_at = time.monotonic()
             self._reader_loops = 0
             if session_ending():
@@ -2583,11 +2540,6 @@ class WebMClip(QObject):
                 # reader 持续解码持续丢帧，暂停位置丢失、隐藏期 CPU 白烧
                 # （见 pause() 的承诺与 _stamp_source_indices 的 throttled 语义）。
                 throttled=lambda: self._decode_throttle_divisor > 1 or self._paused,
-                # 共享解码：发布镜像（发布端播放时置 _publish_sink）。
-                # reader 只做每帧回调（逐帧读当前 sink——续圈后 facade 重建
-                # 会话换 sink，不换 reader/进程仍发布到新会话）；节拍/收尾由
-                # facade 在 GUI 侧驱动（P1-2），reader 不写标记。
-                on_frame=self._mirror_frame_to_sink,
                 loop_frame_count=loop_frame_count,
                 on_loop_boundary=_on_loop_boundary,
             )
@@ -2654,115 +2606,6 @@ class WebMClip(QObject):
                             gen.close()
                         except Exception:
                             pass
-
-    # ------------------------------------------------------------ P3 broker
-    def _reader_feed(self, feed, stop_evt: threading.Event, generation: int,
-                     ready_evt: threading.Event | None = None) -> bool:
-        """feed 分支（reader 线程内）。返回 True = 本轮已由 feed 完整处理
-        （feed 就绪并流完自然结束 / 或已被 stop 打断）；False = 需要回退
-        本地解码（feed 就绪前超时/断流/中止——测试桩驱动该等待路径）。
-
-        只在该 WebMClip 以消费端身份、facade 在 start() 前设置了
-        ``_feed_source`` 时进入。feed 等待/读取期间不持有任何锁；入队沿用本地
-        同款契约——队列满即丢帧、源帧号照常推进，**节流/暂停期例外**（转阻塞
-        背压，见下方分支：暂停期丢帧会把暂停位置丢穿）。
-        """
-        # 1) feed-pending：有界等待 feed 就绪（reader 线程内，≤SUBSCRIBE_BUDGET_MS）
-        budget_ms = getattr(feed, 'budget_ms', None) or _SUBSCRIBE_BUDGET_MS
-        deadline = time.monotonic() + max(1, int(budget_ms)) / 1000.0
-        while not (stop_evt.is_set() or self._generation != generation):
-            if feed.ready:
-                break
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.005)
-        if stop_evt.is_set() or self._generation != generation:
-            # 等待期被 stop/换代：闭锁本 feed——若 grant 恰在此时落定，session
-            # 由 expire 立即 close（绝不遗留无主句柄）；迟到的 grant 同样被
-            # close 而非 complete（P3A P1-2：attach 句柄必须有主）。
-            feed.expire()
-            return True  # 由调用方退出，无残留
-        feed_session = feed.result if feed.ready else None
-        if feed_session is None:
-            # deny / 超时 / 通道不可用：授权失败 → 本地解码（帧 0 起播）。
-            # expire 闭锁本 feed：晚到的 grant 命中已闭锁句柄 → 立即 close，
-            # 不再 complete（reader 已不再等待该 Event）。
-            feed.expire()
-            logger.info('fan-out feed 授权失败（deny/超时），回退本地解码: %s', self.path)
-            return False
-        if ready_evt is not None:
-            ready_evt.set()  # feed 已就绪：等价于本地 ffmpeg 拉起完成的信号
-        q = self._queue
-        try:
-            while not (stop_evt.is_set() or self._generation != generation):
-                result = feed_session.poll()
-                kind = result[0]
-                data = result[1]
-                src = result[2]
-                # F1：poll 协议对 abort 透传 reason（'handover'|'disband'|
-                # 'stop_all'|'watchdog'）；兼容外部 feed 会话（测试桩）只返回 3 元组。
-                reason = result[3] if len(result) > 3 else None
-                if kind == 'frame':
-                    if self._decode_throttle_divisor > 1 or self._paused:
-                        # 节流/暂停：阻塞入队（背压），不丢帧、不虚推进——与
-                        # _stamp_source_indices 的节流分支同款语义（暂停期消费端
-                        # 不取帧，丢帧路径会把暂停位置丢穿）。停止/换代判定夹在
-                        # 每次重试之间，阻塞中的 reader 照样能及时退出。
-                        while not (stop_evt.is_set()
-                                   or self._generation != generation):
-                            try:
-                                q.put((data, src), timeout=0.2)
-                                break
-                            except queue.Full:
-                                continue
-                        # 阻塞期间不调 poll，看门狗（无帧无 end 超预算即 abort）
-                        # 会把"暂停"误判成源断流：放行后一到 poll 就落回本地
-                        # ffmpeg 帧 0 起播（暂停语义被破坏）。这里按"消费端仍
-                        # 在、只是被背压按住"重置一次计时（与 poll 每帧重置同源）。
-                        reset_stall = getattr(feed_session, 'reset_stall', None)
-                        if callable(reset_stall):
-                            reset_stall()
-                    else:
-                        try:
-                            q.put((data, src), timeout=0.2)
-                        except queue.Full:
-                            if perfstats.ENABLED:
-                                perfstats.note('webm.queue_drop')
-                            pass  # 队列满丢帧：源帧号照常推进（本地同款契约）
-                elif kind == 'end':
-                    # 源帧号回绕合成 end：结束标记 → finished
-                    self._put_end_marker(q, stop_evt, generation)
-                    return True
-                elif kind == 'abort':
-                    if reason in ('handover', 'disband'):
-                        # F1：handover 扶正为发布者 / disband 源解散重建都是设计内
-                        # 行为，不是故障——打 INFO（回退后由本窗后续切换收尾）。
-                        logger.info(
-                            'fan-out %s（设计内），本地解码重启: %s',
-                            reason, self.path)
-                    else:
-                        logger.warning(
-                            'fan-out feed 断流/中止，回退本地解码: %s', self.path)
-                    return False
-                else:  # 'none'：暂无新帧，微让步避免忙等
-                    time.sleep(0.002)
-            return True  # 被 stop/换代：调用方直接退出
-        finally:
-            try:
-                feed_session.close()
-            except Exception:
-                pass
-
-    def _drain_queue_for_local(self) -> None:
-        """回退本地解码前清空队列残留的 feed 帧（P1-1：feed → 本地 帧 0
-        起播，不得与旧 feed 帧混序显示）。只清不阻塞；GUI 线程可能正在消费，
-        二者并发安全（queue.Queue 线程安全）。"""
-        q = self._queue
-        while True:
-            try:
-                q.get_nowait()
-            except queue.Empty:
-                return
 
     def _poll(self) -> None:
         """主线程按视频帧率逐帧取帧，不跳帧、不积压追帧。
@@ -2879,7 +2722,7 @@ class WebMClip(QObject):
         # 驻留等续圈：硬停（stop_evt）会同时 set gate 唤醒；宽限期满未续圈
         # 自行退出。驻留期间不再读流，ffmpeg 由管道背压阻塞（近零 CPU）。
         # _reader_parked 向 GUI 侧的软停判定广告「正驻留在循环边界」——
-        # 只对驻留中的 reader 软停才有意义（feed 路径/退出中的 reader
+        # 只对驻留中的 reader 软停才有意义（退出中的 reader
         # 不驻留，绝不能软停）。
         self._reader_parked = True
         got = self._loop_gate.wait(_LOOP_REARM_GRACE_SECS)
@@ -2899,20 +2742,9 @@ class WebMClip(QObject):
             self._loop_ack.set()  # 唤醒握手：re-arm 在等 ack（P1-2）
         return True
 
-    def _mirror_frame_to_sink(self, frame, src_idx) -> None:
-        """共享解码发布镜像：每解码一帧回调当前 publish sink。
-
-        圈边界续圈后共享会话由 facade 重建（_publish_sink 换实例），逐帧
-        读当前 sink 而非 reader 启动时绑定——续圈不换 reader/进程，帧仍
-        发布到新会话。sink 为 None（共享关/非发布端）时为空操作。
-        """
-        sink = self._publish_sink
-        if sink is not None:
-            sink.on_frame(frame, src_idx)
-
     @staticmethod
     def _stamp_source_indices(frames, q, is_stopped, timeout: float = 0.2,
-                              throttled=None, on_frame=None,
+                              throttled=None,
                               loop_frame_count: int = 0,
                               on_loop_boundary=None) -> None:
         """reader 线程把解码帧逐帧打上素材源时间线帧号后入队。
@@ -2933,11 +2765,6 @@ class WebMClip(QObject):
         reader 永久空转）。节流时源帧号只在入队成功后推进——被阻塞重试的帧
         绝不丢失、绝不虚占时间线槽位。
         throttled=None（默认）＝永不节流：与历史行为逐位一致（超时丢帧）。
-
-        on_frame（共享解码）：可选回调 on_frame(frame_bytes, src_idx)，
-        每解码一帧调用一次（在节流/丢帧决策之前，即"解码节奏"镜像——
-        发布端按此节奏把帧扇出到各订阅者，见 WebMClip
-        ``_publish_sink`` 钩子）。None（默认）＝零行为差异。
 
         loop_frame_count（批8 进程内循环）：>0 时按它把解码序号取模回绕成
         源时间线帧号（ffmpeg -stream_loop -1 持续出第二圈时帧号重新从 0
@@ -2963,8 +2790,6 @@ class WebMClip(QObject):
             if is_stopped():
                 break
             timeline_idx = (src_idx % loop_frame_count) if loop_frame_count > 0 else src_idx
-            if on_frame is not None:
-                on_frame(frame, timeline_idx)
             if perfstats.ENABLED:
                 # 帧间隔 = ffmpeg 解码 + 管道交付一帧的耗时（reader 侧，
                 # P0 观测：不把下方入队阻塞计入解码耗时）。

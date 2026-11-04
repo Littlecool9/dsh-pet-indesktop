@@ -7,225 +7,45 @@ import pytest
 from PySide6.QtWidgets import QApplication
 from pet.config import APP_DIR_NAME
 from pet import pet_profiles as profiles
-from tests.test_overlay_spawn import _make_persistent_shell
 
 app = QApplication.instance() or QApplication([])
 
 
-def test_close_zero_preserves_children_and_restores_identity(tmp_path):
-    shell, _ = _make_persistent_shell(tmp_path)
-    shell.spawn_pet()
-    shell.spawn_pet()
-    children = list(shell._spawned)
-    directory = tmp_path / APP_DIR_NAME
-    before = {n: profiles.slot_profile_path(directory, n).read_bytes() for n in (1, 2)}
-    try:
-        assert shell.exit_pet(shell.sprite)
-        assert shell.sprite is None
-        assert shell._spawned == children
-        assert shell._active_slots() == [1, 2]
-        shell.overlay.show()
-        assert shell.alert_target_sprite() is children[0]
-        shell.handle_geometry_changed()
-        assert all(profiles.slot_profile_path(directory, n).read_bytes() == before[n] for n in before)
-        shell.spawn_pet()
-        assert shell.sprite is not None
-        assert shell._active_slots() == [0, 1, 2]
-        shell.spawn_pet()
-        assert shell._spawned_slots[shell._spawned[-1]] == 3
-    finally:
-        shell.stop()
 
 
-def test_tray_close_of_the_only_pet_keeps_process_tray_and_services(tmp_path, monkeypatch):
-    """单宠经托盘「退出这只」关掉后 = "0 只"这个合法状态：进程/托盘/壳级服务都在，
-    宠物驱动停、活跃集合留空、不自动复活，恢复入口仍可达（规范 §四）。
-
-    入口与被修对象是同一件事，所以全过程**从托盘 QAction 触发**进入，不直接
-    call ``exit_pet``（UI 入口闭环另见 tests/test_single_pet_close_entry.py）。
-    """
-    import time
-
-    shell, _ = _make_persistent_shell(tmp_path)
-    quits: list = []
-    monkeypatch.setattr(shell.app, 'quit', lambda *a, **k: quits.append(1))
-    try:
-        assert shell.sprite is not None, '前提：单宠（slot0）在'
-        menu = shell.tray.contextMenu()
-        sub = next(a.menu() for a in menu.actions()
-                   if a.text() == '主肥鱼 [slot-0]')
-        action = next(a for a in sub.actions() if a.text() == '退出这只')
-        action.trigger()
-
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and shell.sprite is not None:
-            app.processEvents()
-            time.sleep(0.01)
-        assert shell.sprite is None, '菜单关闭后这只必须真的关掉'
-        assert quits == [], '关闭最后一只不许退出应用'
-        assert shell.overlay.sprites == []
-        assert shell._active_slots() == []
-        assert profiles.load_active_set(tmp_path / APP_DIR_NAME).slots == (), (
-            '关闭 = 该槽留空（落盘为空），不是"退出时清掉整个集合"')
-        # 壳级服务照旧：托盘、D12 指令通道、全屏 watcher 都不随最后一只宠关掉
-        assert shell.tray is not None, '无宠时托盘保留（唯一恢复入口）'
-        assert shell._command_watcher is not None and shell._command_timer.isActive()
-        assert shell._watcher is not None
-        assert not shell.driver._timer.isActive(), '0 只时宠物驱动停（没像素要上屏）'
-        menu = shell.tray.contextMenu()
-        labels = [a.text() for a in menu.actions()]
-        assert '生成 / 恢复 slot0' in labels, labels
-        assert not [a for a in menu.actions() if a.menu() is not None], '不许留空逐只菜单'
-    finally:
-        shell.stop()
 
 
-def test_v2_empty_builds_no_pet(tmp_path):
-
-    directory = tmp_path / APP_DIR_NAME
-    directory.mkdir()
-    (directory / profiles.ACTIVE_SET_FILENAME).write_text(json.dumps({'version': 2, 'slots': []}), encoding='utf8')
-    from tests.test_overlay_window_capabilities import CapInstance, FakeScreen
-    from pet.config import Config
-    from pet.overlay_shell import OverlayShell
-    shell = OverlayShell(app, CapInstance(Config(base=tmp_path, instance_id='')),
-                         screen=FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)))
-    try:
-        assert shell.sprite is None
-        assert shell.overlay.sprites == []
-        assert profiles.load_active_set(directory).slots == ()
-        assert not shell.driver._timer.isActive()
-    finally:
-        shell.stop()
 
 
-def test_spawn_failure_leaves_no_partial_sprite(tmp_path, monkeypatch):
-    shell, _ = _make_persistent_shell(tmp_path)
-    before = list(shell.overlay.sprites)
-    def fail(*args):
-        raise RuntimeError('apply failed')
-    monkeypatch.setattr(shell, '_apply_sprite_settings_to', fail)
-    shell.spawn_pet()
-    assert shell.overlay.sprites == before
-    assert shell._active_slots() == [0]
-    assert shell._spawned == []
 
 
-def test_slot_focus_does_not_activate_inactive_profile(tmp_path):
-    shell, _ = _make_persistent_shell(tmp_path)
-    shell.spawn_pet()
-    child = shell._spawned[0]
-    shell.set_sprite_visible(child, False)
-    assert shell.select_slot(1)
-    assert child.visible and shell.overlay.isVisible()
-    before = shell._active_slots()
-    assert not shell.select_slot(128)
-    assert shell._active_slots() == before
 
 
-def test_late_reply_keeps_shared_history_without_retargeting(tmp_path):
-    from pet.overlay_shell import _SpriteChatAnchor
-    from pet.quick_chat import QuickChatBubble
-    shell, _ = _make_persistent_shell(tmp_path)
-    shell.spawn_pet()
-    old = shell._spawned[0]
-    anchor = _SpriteChatAnchor(shell, old)
-    bubble = QuickChatBubble(shell._sprite_config(shell.sprite), pet_window=anchor)
-    bubble._active_request_id = 'request-old'
-    bubble._request_pet_window = anchor
-    shell.exit_pet(old)
-    shell.spawn_pet()
-    assert shell._spawned[0] is not old
-    bubble._finished('request-old', 'shared fact')
-    assert bubble.session.messages[-1].content == 'shared fact'
-    assert not bubble.isVisible()
-    assert not anchor.presentation_valid()
-    bubble.close()
 
 
-def test_late_reply_after_close_touches_nothing_but_presentation(tmp_path):
-    """R3/5：关槽后的迟到回复只取消宠物呈现——别宠状态、原配置、会话消息都不变。"""
-    from pet.overlay_shell import _SpriteChatAnchor
-    from pet.quick_chat import QuickChatBubble
-    shell, _ = _make_persistent_shell(tmp_path)
-    shell.overlay.show()
-    shell.spawn_pet()
-    child = shell._spawned[0]
-    main = shell.sprite
-    directory = shell._config.dir
-    anchor = _SpriteChatAnchor(shell, child)
-    bubble = QuickChatBubble(shell._sprite_config(main), pet_window=anchor)
-    bubble._active_request_id = 'request-late'
-    bubble._request_pet_window = anchor
-
-    shell.show_alert('别宠正挂着的提醒', alert_id='keep-me')
-    main_bubble = shell._alert_bubble
-    assert shell.exit_pet(child) is True
-    shell.spawn_pet()
-    assert shell._spawned[0] is not child
-
-    # 迟到回复到达前，记录别宠现场与全部 slot 档案
-    assert shell.alert_target_sprite() is main
-    before_text = main_bubble._raw_text
-    before_profiles = {n: profiles.slot_profile_path(directory, n).read_bytes()
-                       for n in (0, 1)}
-    alerts_before = list(shell._alert_queue)
-    try:
-        bubble._finished('request-late', 'shared fact')
-
-        assert bubble.session.messages[-1].content == 'shared fact', \
-            '共享会话里已生成的消息是会话事实，不得因关槽丢弃'
-        assert not bubble.isVisible()
-        assert not anchor.presentation_valid(), '只取消宠物呈现'
-        assert shell._alert_bubble is main_bubble and main_bubble.isVisible(), \
-            '迟到回复不得动别宠的提醒呈现'
-        assert main_bubble._raw_text == before_text
-        assert list(shell._alert_queue) == alerts_before, '迟到回复不得改别宠的提醒队列'
-        assert {n: profiles.slot_profile_path(directory, n).read_bytes()
-                for n in (0, 1)} == before_profiles, '迟到回复不得改写任何槽档案'
-    finally:
-        bubble.close()
 
 
-def test_three_distinct_profiles_close_restore_generate_restart(tmp_path):
-    directory = tmp_path / APP_DIR_NAME
-    for slot, role, rx, speed in ((0, 'shenshen', 0.3, 0.5), (1, 'nova', 0.5, 1.5), (2, 'cat', 0.7, 2.0)):
-        profiles.write_profile_settings(directory, slot, {'character': role, 'rx': rx, 'ry': 0.4,
-            'scale': 0.4, 'playback_speed': speed})
-    profiles.save_active_set(directory, [0, 1, 2])
-    shell, _ = _make_persistent_shell(tmp_path)
-    before = {n: profiles.slot_profile_path(directory, n).read_bytes() for n in (1, 2)}
-    assert shell.exit_pet(shell.sprite)
-    assert all(profiles.slot_profile_path(directory, n).read_bytes() == before[n] for n in before)
-    shell.spawn_pet()
-    assert shell._sprite_config(shell.sprite).get('character') == 'shenshen'
-    shell.spawn_pet()
-    assert shell._spawned_slots[shell._spawned[-1]] == 3
-    shell.save_position()
-    shell.save_spawned_positions()
-    restarted, _ = _make_persistent_shell(tmp_path)
-    assert restarted._active_slots() == [0, 1, 2, 3]
-    for n, role, speed in ((0, 'shenshen', 0.5), (1, 'nova', 1.5), (2, 'cat', 2.0)):
-        sprite = restarted._sprite_for_slot(n)
-        assert restarted._sprite_config(sprite).get('character') == role
-        assert sprite.playback_speed == speed
 
 
 def test_no_tray_recovery_button_is_visible_and_restores(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QSystemTrayIcon, QPushButton
     monkeypatch.setattr(QSystemTrayIcon, 'isSystemTrayAvailable', lambda: False)
     directory = tmp_path / APP_DIR_NAME
-    profiles.save_active_set(directory, [])
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / 'config.json').write_text(json.dumps({"version": 4}), encoding='utf8')
+    broken = profiles.slot_profile_path(directory, 0)
+    broken.write_bytes(b'{broken')
     from pet.config import Config
     from pet.overlay_shell import OverlayShell
     from tests.test_overlay_window_capabilities import CapInstance, FakeScreen
     shell = OverlayShell(app, CapInstance(Config(base=tmp_path, instance_id='')),
         screen=FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)))
+    assert shell.sprite is None
     assert shell._recovery_window.isVisible()
+    broken.write_text(json.dumps({"version": 4, "character": "nova"}), encoding='utf8')
     button = next(b for b in shell._recovery_window.findChildren(QPushButton) if '生成' in b.text())
     button.click()
     assert shell.sprite is not None
-    assert shell._active_slots() == [0]
     shell._recovery_window.close()
 
 
@@ -268,9 +88,8 @@ def test_corrupt_slot0_profile_is_reported_as_target_corrupt(tmp_path):
 def test_corrupt_slot0_profile_does_not_break_the_overlay_shell(tmp_path):
     """ops D2（真壳）：坏 slot0 档案不许让整个 overlay 壳起不来。
 
-    旧处置是 ``raise RuntimeError`` → 启动失败对话框 → 全局配置、其它槽、提醒、托盘
-    全不可用，对话框里连文件路径都没有。现在只降级那一个槽：主 sprite 不复活、
-    其它 active 子照常、原文件一个字节不动、活跃集合也不被启动期改写。
+    只降级这一个身份：主 sprite 不复活、原文件一个字节不动、活跃集合文件
+    不被启动期读取或改写（多宠已删除，该文件只剩历史痕迹）。
     """
     from pet.config import Config
     from pet.overlay_shell import OverlayShell
@@ -279,12 +98,11 @@ def test_corrupt_slot0_profile_does_not_break_the_overlay_shell(tmp_path):
     directory = tmp_path / APP_DIR_NAME
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'config.json').write_text(json.dumps({"version": 4}), encoding='utf8')
-    profiles.save_active_set(directory, [0, 1])
-    assert profiles.write_profile_settings(directory, 1, {'character': 'nova'}).status == 'ok'
     broken = directory / profiles.slot_profile_path(directory, 0).name
     broken.write_bytes(b'{broken')
     before_broken = broken.read_bytes()
-    active_path = directory / profiles.ACTIVE_SET_FILENAME
+    active_path = directory / 'overlay-active-pets.json'
+    active_path.write_text(json.dumps({'version': 2, 'slots': [0, 1]}), encoding='utf8')
     before_active = active_path.read_bytes()
 
     shell = OverlayShell(
@@ -292,13 +110,11 @@ def test_corrupt_slot0_profile_does_not_break_the_overlay_shell(tmp_path):
         screen=FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)))
     try:
         assert shell.sprite is None, '坏档案的那个槽先空着'
-        assert shell._remembered_active == [1], '只摘掉坏掉的那个槽'
-        assert [shell._spawned_slots[s] for s in shell._spawned] == [1], '其它 active 子照常复活'
     finally:
         shell.stop()
 
     assert broken.read_bytes() == before_broken, '坏档案一个字节都不许动（不自动修复）'
-    assert active_path.read_bytes() == before_active, '启动不替用户改活跃集合'
+    assert active_path.read_bytes() == before_active, '启动不读不写活跃集合文件'
 
 
 def test_corrupt_slot0_profile_degrades_the_app_shell_with_a_visible_path(tmp_path):
@@ -312,8 +128,6 @@ def test_corrupt_slot0_profile_degrades_the_app_shell_with_a_visible_path(tmp_pa
     (directory / 'config.json').write_text(json.dumps({
         "version": 4, "scale": 0.8, "character": "nova", "pet_opacity": 55,
     }), encoding='utf8')
-    profiles.save_active_set(directory, [0, 2])
-    assert profiles.write_profile_settings(directory, 2, {'character': 'cat'}).status == 'ok'
     broken = directory / profiles.slot_profile_path(directory, 0).name
     broken.write_bytes(b'{broken')
     before_broken = broken.read_bytes()
@@ -321,16 +135,12 @@ def test_corrupt_slot0_profile_degrades_the_app_shell_with_a_visible_path(tmp_pa
     shell = AppShell(app, cfg, enable_chat=False)     # 旧行为：RuntimeError
     try:
         assert shell._slot0_profile_unusable is True
-        assert 0 not in shell._active_pet_slots, '坏掉的槽只在内存里退出活跃集合'
-        assert 2 in shell._active_pet_slots, '别的 active 子照常'
         assert shell.slot0_profile_diagnosis(), '降级必须有诊断'
         assert str(broken) in shell.slot0_profile_diagnosis(), '诊断必须点名文件路径'
     finally:
         shell._shared.stop_all()
 
     assert broken.read_bytes() == before_broken, '坏档案一个字节都不许动'
-    assert profiles.load_active_set(directory).slots == (0, 2), (
-        '启动期不得替用户改活跃集合（改集合只有用户显式的生成/关闭）')
 
 
 def _corrupt_slot0_app(tmp_path):
@@ -341,7 +151,6 @@ def _corrupt_slot0_app(tmp_path):
     directory = cfg.dir
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'config.json').write_text(json.dumps({"version": 4}), encoding='utf8')
-    profiles.save_active_set(directory, [0])
     broken = profiles.slot_profile_path(directory, 0)
     broken.write_bytes(b'{broken')
     return cfg, broken
@@ -368,58 +177,13 @@ def test_overlay_diagnosis_points_at_in_place_restore(tmp_path, monkeypatch):
         shell._shared.stop_all()
 
 
-def test_explicit_spawn_over_a_corrupt_active_set_backs_up_and_writes(tmp_path):
-    """ops D1：坏活跃集合 + 用户显式生成 → 先备份再覆盖，不许"永远落不进盘"。
-
-    旧行为：默认 ``refuse`` 让每次 save 都 ``refused-corrupt``，只有一条 warning——
-    用户看到的是「生成了 → 重启又没了」，UI 里没有任何解释，也永远修不好。
-    """
-    shell, _ = _make_persistent_shell(tmp_path)
-    directory = tmp_path / APP_DIR_NAME
-    active_path = directory / profiles.ACTIVE_SET_FILENAME
-    active_path.write_text('{not json', encoding='utf8')
-    try:
-        shell.spawn_pet()
-
-        result = profiles.load_active_set(directory)
-        assert result.status == 'ok', '显式生成必须真的把活跃集合写成可信状态'
-        assert set(result.slots) == {0, 1}
-        backups = list(directory.glob(
-            f'{profiles.ACTIVE_SET_FILENAME}{profiles.CORRUPT_BACKUP_MARKER}*'))
-        assert backups, '坏文件必须先备份再覆盖（不静默销毁）'
-        assert backups[0].read_text(encoding='utf8') == '{not json'
-    finally:
-        shell.stop()
 
 
-def test_active_set_write_failure_is_visible_and_not_faked(tmp_path, monkeypatch):
-    """ops D1：写不进去必须**可见**（气泡点名路径）+ 返回值如实 False，不许假成功。"""
-    from pet import pet_profiles as profiles_mod
-
-    shell, _ = _make_persistent_shell(tmp_path)
-    feedback: list = []
-    shell.show_bubble = lambda text, **kw: feedback.append(text) or True
-    seen_kwargs: list = []
-    target = shell._spawn_config_dir() / profiles_mod.ACTIVE_SET_FILENAME
-
-    def fake_save(config_dir, slots, **kwargs):
-        seen_kwargs.append(kwargs)
-        return profiles_mod.ProfileResult(status='lock-timeout', path=target,
-                                          reason='controlled contention')
-
-    monkeypatch.setattr(profiles_mod, 'save_active_set', fake_save)
-    try:
-        assert shell._persist_active_slots() is False, '失败不许假报成功'
-        assert seen_kwargs and seen_kwargs[0].get('on_broken') == 'backup-overwrite', (
-            '显式生成/关闭这条路必须走先备份再覆盖的既有 API')
-        assert feedback and str(target) in feedback[0], '失败必须可见并点名文件路径'
-    finally:
-        shell.stop()
 
 
 # ---------------------------------------------------------------- ops D2-新（2026-10-10 终审复核）
-def _broken_slot0_shell(base, *, active):
-    """真 OverlayShell + 坏 ``config-slot-0.json``（原文件保留、其它槽照常）。"""
+def _broken_slot0_shell(base):
+    """真 OverlayShell + 坏 ``config-slot-0.json``（原文件保留）。"""
     from pet.config import Config
     from pet.overlay_shell import OverlayShell
     from tests.test_overlay_window_capabilities import CapInstance, FakeScreen
@@ -427,7 +191,6 @@ def _broken_slot0_shell(base, *, active):
     directory = base / APP_DIR_NAME
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'config.json').write_text(json.dumps({"version": 4}), encoding='utf8')
-    profiles.save_active_set(directory, list(active))
     broken = profiles.slot_profile_path(directory, 0)
     broken.write_bytes(b'{broken')
     shell = OverlayShell(
@@ -436,45 +199,6 @@ def _broken_slot0_shell(base, *, active):
     return shell, directory, broken
 
 
-def test_spawn_over_a_corrupt_slot0_is_visible_and_keeps_children(tmp_path):
-    """ops D2-新：坏 slot0 期间生成**不许静默失败**，健康子照常活。
-
-    终审链条：启动降级后 ``_remembered_active`` 不含 0 → 分配器仍按**最小非活跃槽**
-    回到 0（这是用户的明确取舍：不静默跳号、不改分配语义）→ ``_build_slot_sprite(0)``
-    读坏档案抛错 → 旧实现只有一条 ``logging.exception``。用户眼里就是"点了没反应"，
-    而且**每次点都一样**（正是 B01 要消灭的那类失败）。
-
-    本用例钉住：失败必须带**路径**可见、健康子不受牵连、活跃集合不被改写、坏档案
-    一个字节不动；档案修好后再生成照常恢复 slot0。
-    """
-    shell, directory, broken = _broken_slot0_shell(tmp_path, active=[0, 1])
-    assert profiles.write_profile_settings(directory, 1, {'character': 'nova'}).status == 'ok'
-    before = broken.read_bytes()
-    spoken: list = []
-    try:
-        (child,) = shell._spawned
-        assert shell._spawned_slots[child] == 1
-        shell.overlay.show()
-        shell._show_bubble_text = lambda text, duration_ms=0, **kw: (
-            spoken.append(str(text)), True)[1]
-
-        shell.spawn_pet()                       # 目标仍是 slot0（不跳号）
-
-        assert spoken, '生成失败必须可见（旧实现只 logging.exception）'
-        assert str(broken) in spoken[0], '可见反馈必须点名坏档案路径'
-        assert 'slot-0' in spoken[0]
-        assert shell.sprite is None, '失败的 slot0 不许留下半只'
-        assert shell._spawned == [child] and shell._spawned_slots[child] == 1, '健康子继续活'
-        assert shell._active_slots() == [1], '失败不改活跃集合'
-        assert broken.read_bytes() == before, '坏档案一个字节都不许动（不自动修复）'
-
-        # 修好档案 → 同一进程里再次生成恢复 slot0（失败是可恢复的，不是死状态）
-        broken.write_text(json.dumps({"version": 4, "character": "nova"}), encoding='utf8')
-        shell.spawn_pet()
-        assert shell.sprite is not None, '档案修好后生成必须恢复 slot0'
-        assert shell._active_slots() == [0, 1]
-    finally:
-        shell.stop()
 
 
 def test_spawn_failure_reaches_the_recovery_window_when_no_pet_is_visible(tmp_path):
@@ -486,11 +210,11 @@ def test_spawn_failure_reaches_the_recovery_window_when_no_pet_is_visible(tmp_pa
     """
     from PySide6.QtWidgets import QPushButton
 
-    shell, directory, broken = _broken_slot0_shell(tmp_path, active=[])
+    shell, directory, broken = _broken_slot0_shell(tmp_path)
     try:
-        assert shell.sprite is None and not shell._spawned
+        assert shell.sprite is None
 
-        shell.spawn_pet()
+        shell.restore_slot0()
 
         window = getattr(shell, '_recovery_window', None)
         assert window is not None, '无宠失败必须给出可见恢复窗'

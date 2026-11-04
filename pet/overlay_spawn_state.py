@@ -1,30 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Compatibility seams for fixed profile identities and active-set v2."""
+"""Compatibility seams for the single fixed profile identity (slot 0)."""
 from pathlib import Path
 
 from . import pet_profiles as profiles
 
-ACTIVE_PETS_FILENAME = profiles.ACTIVE_SET_FILENAME
-ACTIVE_PETS_VERSION = profiles.ACTIVE_SET_VERSION
 MAX_SCAN_SLOTS = profiles.SLOT_MAX
 PER_SLOT_SETTING_KEYS = profiles.PER_PET_SETTING_KEYS
-SpawnStateError = profiles.CapacityFullError
-
-
-def active_pets_path(config_dir):
-    return profiles.active_set_path(config_dir)
-
-
-def normalize_slots(slots):
-    return profiles.normalize_slots(slots)
-
-
-def load_active_slots(config_dir):
-    return list(profiles.load_active_set(config_dir).slots)
-
-
-def save_active_slots(config_dir, slots):
-    return profiles.save_active_set(config_dir, slots).ok
 
 
 def slot_config_path(config_dir, slot_id):
@@ -36,10 +17,6 @@ def scan_slot_configs(config_dir):
         return set()
     return {n for n in range(MAX_SCAN_SLOTS + 1)
             if profiles.slot_profile_exists(Path(config_dir), n)}
-
-
-def allocate_slot(config_dir=None, *, active_slots=(), max_slots=MAX_SCAN_SLOTS):
-    return profiles.allocate_slot(active_slots=active_slots, max_slot=max_slots)
 
 
 def _load_slot_config(config_dir, slot_id):

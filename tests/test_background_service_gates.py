@@ -210,19 +210,6 @@ def test_overlay_topology_skips_shared_fullscreen_watcher(tmp_path, monkeypatch)
     assert fs._thread is None, "overlay 拓扑下共享全屏 watcher 不得起线程"
 
 
-def test_overlay_topology_would_restore_spawned_pets(tmp_path, monkeypatch):
-    """对照组：同一份活跃宠清单在 overlay 拓扑下确实由壳接管（对照非空转）。"""
-    from pet import overlay_spawn_state
-
-    active_dir = tmp_path / APP_DIR_NAME
-    active_dir.mkdir(parents=True, exist_ok=True)
-    assert overlay_spawn_state.save_active_slots(active_dir, [1, 2])
-
-    monkeypatch.setattr(overlay_shell_mod, "OverlayShell", _StubOverlayShell)
-    shell = _start_shell(tmp_path, monkeypatch)
-    assert shell._overlay_shell is not None
-    assert shell._overlay_shell.started == 1
-    assert len(shell._instances) == 1  # 子肥鱼由壳负责（sprite），不走 AppShell._instances
 
 
 def test_one_settings_save_applies_external_change_exactly_once(tmp_path, monkeypatch):

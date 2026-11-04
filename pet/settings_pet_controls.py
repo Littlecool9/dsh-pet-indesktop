@@ -187,31 +187,6 @@ def build_pet_controls(host) -> None:
         host.scale_combo.addItem(f"{int(round(catalog.CANVAS_W * scale))} px", scale)
     host.scale_combo.setCurrentIndex(host.scale_combo.findData(current_scale))
 
-    # 生小肥鱼尺寸策略：默认继承主肥鱼大小；关闭后使用 spawn_scale 独立选择。
-    host.spawn_inherit_size_check = ToggleSwitch(host)
-    host.spawn_inherit_size_check.setChecked(bool(host.config.get("spawn_inherit_size", True)))
-    host.spawn_scale_combo = ModernSelect(host, width=132)
-    current_spawn_scale = float(host.config.get("spawn_scale", catalog.DEFAULT_SCALE))
-    spawn_scales = list(catalog.SCALE_STEPS)
-    if not any(abs(current_spawn_scale - value) < 0.001 for value in spawn_scales):
-        spawn_scales.append(current_spawn_scale)
-        spawn_scales.sort()
-    for scale in spawn_scales:
-        host.spawn_scale_combo.addItem(f"{int(round(catalog.CANVAS_W * scale))} px", scale)
-    host.spawn_scale_combo.setCurrentIndex(host.spawn_scale_combo.findData(current_spawn_scale))
-    host.clear_spawned_pets_btn = QPushButton("一键退出…", host)
-    host.clear_spawned_pets_btn.clicked.connect(host._on_clear_spawned_pets)
-    from .settings_slot_config import is_main_identity
-
-    if not is_main_identity(host.config.instance_id):
-        # 这个动作是**全局**的「退出全部子肥鱼」：只有主身份页能发（子宠页里没有
-        # "子肥鱼"这个对象可管）。判据必须是"主身份"而不是"身份非空"——slot0 从
-        # G1 起有显式 `slot-0` 身份，按非空判会把**主宠自己的页面**也置灰，而
-        # tooltip 让用户"去主肥鱼设置"，用户就在那儿。子宠页的提示必须指向真实
-        # 可达的入口（托盘/右键菜单里有同一条动作），不能指向不存在的地方。
-        host.clear_spawned_pets_btn.setEnabled(False)
-        host.clear_spawned_pets_btn.setToolTip("这是全局操作：请在主肥鱼的设置或托盘菜单里操作")
-
     host.on_top_check = ToggleSwitch(host)
     host.on_top_check.setChecked(bool(host.config.get("on_top", True)))
     # 允许桌宠跨屏（全局键、重启级）：唯一消费者是 overlay 壳的宿主化路径

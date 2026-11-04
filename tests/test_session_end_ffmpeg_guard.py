@@ -725,7 +725,6 @@ def test_normal_quit_survives_a_missing_chat_module(app, tmp_path):
     shell = _shell_with_window(app, tmp_path, win)
     calls: list[str] = []
     shell._shared.stop_all = lambda: calls.append("shared")
-    shell._decode_hub.stop_all = lambda: calls.append("decode-hub")
     poisoned = ("pet.chat", "pet.chat.session_store")
     saved = {name: sys.modules.get(name) for name in poisoned}
     try:
@@ -742,7 +741,7 @@ def test_normal_quit_survives_a_missing_chat_module(app, tmp_path):
 
         assert shell._plain_about_to_quit is True, "退出兜底标记必须已置"
         assert shell._quitting is True, "退出标记必须已置（在途 worker 靠它收口）"
-        assert calls == ["shared", "decode-hub"], (
+        assert calls == ["shared"], (
             "缺 chat 模块不许把退出收口截断在半路")
     finally:
         AppShell._shutdown_live_for_tests()

@@ -44,8 +44,6 @@ def test_petapp_enabled_default_services_still_constructed(tmp_path):
     app = _qapp()
     shell = AppShell(app, Config(tmp_path), enable_chat=False)
     assert shell.todo_service is not None
-    # 共享解码 hub 仍为进程级（默认 enabled 取决于 flag/拓扑）。
-    assert shell._decode_hub is not None
 
 
 def test_petapp_start_disabled_services_stay_stopped(tmp_path, monkeypatch):

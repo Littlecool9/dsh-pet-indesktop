@@ -127,37 +127,6 @@ def test_normal_reopen_keeps_existing_slot_config(tmp_path, monkeypatch):
     assert reopened.get("character") == "dundun"
 
 
-def test_spawn_seed_respects_inherit_size_switch(tmp_path):
-    """生小肥鱼落种遵循 ``spawn_inherit_size`` / ``spawn_scale``（G1 口径）。
-
-    落种源是 **slot0 的档案**（不是"主配置整表"）：开启继承 → 新槽拿到的 scale 跟
-    slot0 一样；关闭继承 → 用主配置里给"小肥鱼"单独选的 ``spawn_scale``。
-    """
-    import tests.test_overlay_spawn as osp
-    from pet import pet_profiles
-
-    def _spawned_scale(base, values):
-        shell, _made = osp._make_persistent_shell(base, values)
-        try:
-            shell.spawn_pet()
-            child = shell._spawned[0]
-            slot = shell._spawned_slots[child]
-            profile = pet_profiles.read_slot_profile(shell._spawn_config_dir(), slot)
-            return child.scale, float(profile.data["scale"])
-        finally:
-            shell._delete_runtime_marker()
-
-    # 开启继承：slot0 档案 1.0，新鱼也应为 1.0（档案与运行态一致）
-    child_scale, profile_scale = _spawned_scale(tmp_path / "inherit", {
-        "scale": 1.0, "spawn_inherit_size": True, "spawn_scale": 0.5})
-    assert profile_scale == 1.0
-    assert child_scale == 1.0
-
-    # 关闭继承：slot0 仍是 1.0，但新鱼按 spawn_scale=0.5 落种
-    child_scale, profile_scale = _spawned_scale(tmp_path / "custom", {
-        "scale": 1.0, "spawn_inherit_size": False, "spawn_scale": 0.5})
-    assert profile_scale == 0.5
-    assert child_scale == 0.5
 
 
 def test_corrupt_config_backup_unique_timestamp(tmp_path):
@@ -177,42 +146,6 @@ def test_corrupt_config_backup_unique_timestamp(tmp_path):
     assert b1 != b2
 
 
-def test_migrate_legacy_spawns_atomic_and_rollback(tmp_path):
-    """场景 7：旧 spawn 原子迁移到 slot-1/2，旧 config.json 仍为 slot-0，孤儿文件保留。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    # 创建旧 config.json（无槽位元数据）
-    (config_dir / "config.json").write_text(json.dumps({"version": 4, "character": "master"}), encoding="utf-8")
-
-    # 创建两个旧 spawn 配置文件和会话
-    (config_dir / "config-spawn100x1.json").write_text(json.dumps({"character": "spawn1"}), encoding="utf-8")
-    s1_dir = config_dir / "sessions-spawn100x1" / "shenshen"
-    s1_dir.mkdir(parents=True, exist_ok=True)
-    (s1_dir / "s1.json").write_text(json.dumps({"session_id": "s1"}), encoding="utf-8")
-
-    # 人工给第二个 spawn 一个稍晚的 mtime
-    spawn2_file = config_dir / "config-spawn200x1.json"
-    spawn2_file.write_text(json.dumps({"character": "spawn2"}), encoding="utf-8")
-    os.utime(spawn2_file, (time.time() + 10, time.time() + 10))
-
-    # 执行迁移
-    assert sm.migrate_legacy_spawns(config_dir) is True
-
-    # 验证映射到 slot-1 和 slot-2
-    cfg1 = json.loads((config_dir / "config-slot-1.json").read_text(encoding="utf-8"))
-    assert cfg1.get("character") == "spawn1"
-    assert (config_dir / "sessions-slot-1" / "shenshen" / "s1.json").exists()
-
-    cfg2 = json.loads((config_dir / "config-slot-2.json").read_text(encoding="utf-8"))
-    assert cfg2.get("character") == "spawn2"
-
-    # 主配置不受影响
-    master_cfg = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
-    assert master_cfg.get("character") == "master"
-
-    # 迁移标记文件写入
-    assert (config_dir / "migration-spawns.done").exists()
 
 
 def test_corrupt_config_backup_and_wiring_in_config_load(tmp_path):
@@ -243,110 +176,14 @@ def test_corrupt_config_backup_and_wiring_in_config_load(tmp_path):
     assert cfg_master.get("character") is not None
 
 
-def test_migrate_legacy_spawns_rollback_on_sessions_move_failure(tmp_path, monkeypatch):
-    """测试旧 spawn 迁移时，若 config 移动成功但 sessions 移动失败，完整回滚三方状态。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    old_cfg = config_dir / "config-spawn999x1.json"
-    old_cfg.write_text(json.dumps({"character": "spawn_fail"}), encoding="utf-8")
-    old_sessions = config_dir / "sessions-spawn999x1"
-    old_sessions.mkdir(parents=True, exist_ok=True)
-    (old_sessions / "session.json").write_text("{}", encoding="utf-8")
-
-    # 模拟在 move staged_sessions -> target_sessions 时抛异常
-    orig_move = shutil.move
-
-    def mock_move(src, dst, **kwargs):
-        if "sessions-slot-1" in str(dst):
-            raise OSError("Injected sessions move failure")
-        return orig_move(src, dst, **kwargs)
-
-    monkeypatch.setattr(shutil, "move", mock_move)
-
-    result = sm.migrate_legacy_spawns(config_dir)
-    assert result is False
-
-    # 验证完整回滚：原文件存在，目标文件不存在
-    assert old_cfg.exists()
-    assert old_sessions.exists()
-    assert (old_sessions / "session.json").exists()
-    assert not (config_dir / "config-slot-1.json").exists()
-    assert not (config_dir / "sessions-slot-1").exists()
-    assert not (config_dir / ".migration_staging").exists()
 
 
-def test_migrate_legacy_spawns_recovers_staged_remnants(tmp_path):
-    """测试启动迁移时若存在非空 .migration_staging 残留，能够恢复完成或清理。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    staging_dir = config_dir / ".migration_staging"
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    (staging_dir / "config-slot-1.json").write_text(json.dumps({"character": "staged_pet"}), encoding="utf-8")
-
-    assert sm.migrate_legacy_spawns(config_dir) is True
-    # 验证已从 staging 恢复到目标位置
-    assert (config_dir / "config-slot-1.json").exists()
-    assert json.loads((config_dir / "config-slot-1.json").read_text(encoding="utf-8"))["character"] == "staged_pet"
-    assert not staging_dir.exists()
 
 
-def test_migration_staging_remnant_is_kept_when_target_already_exists(tmp_path):
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-    target = config_dir / "config-slot-1.json"
-    target.write_text(json.dumps({"character": "current"}), encoding="utf-8")
-    staging_dir = config_dir / ".migration_staging"
-    staging_dir.mkdir()
-    staged = staging_dir / "config-slot-1.json"
-    staged.write_text(json.dumps({"character": "staged"}), encoding="utf-8")
-
-    assert sm.migrate_legacy_spawns(config_dir) is False
-    assert staged.exists()
-    assert json.loads(target.read_text(encoding="utf-8"))["character"] == "current"
 
 
-def test_list_runtime_marker_files_returns_legacy_and_v2(tmp_path):
-    """批 B：list_runtime_marker_files 同时认旧名与版本化新名 runtime 标记。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    (config_dir / "runtime-111.json").write_text("{}", encoding="utf-8")
-    (config_dir / "pet-runtime-v2-222-slot-1.json").write_text("{}", encoding="utf-8")
-    (config_dir / "pet-runtime-v2-333-slot-2.json").write_text("{}", encoding="utf-8")
-    (config_dir / "config-slot-1.json").write_text("{}", encoding="utf-8")
-    (config_dir / "sessions-slot-1").mkdir()
-
-    names = {p.name for p in sm.list_runtime_marker_files(config_dir)}
-    # 新旧两种命名都被列出
-    assert {"runtime-111.json",
-            "pet-runtime-v2-222-slot-1.json",
-            "pet-runtime-v2-333-slot-2.json"} <= names
-    # 非 runtime 标记文件不得被误列
-    assert "config-slot-1.json" not in names
-    assert "sessions-slot-1" not in names
 
 
-def test_migrate_legacy_spawns_skips_when_v2_marker_alive(tmp_path):
-    """批 B：migrate_legacy_spawns 检测 v2 版本化 runtime 标记（多进程模式只写
-    新名），发现存活实例时跳过迁移。旧 glob 只认 runtime-*.json 会误放行。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    old_cfg = config_dir / "config-spawn100x1.json"
-    old_cfg.write_text(json.dumps({"character": "spawn1"}), encoding="utf-8")
-    (config_dir / "sessions-spawn100x1").mkdir(parents=True, exist_ok=True)
-
-    # v2 标记用当前（必然存活）进程 pid
-    v2 = config_dir / f"pet-runtime-v2-{os.getpid()}-slot-1.json"
-    v2.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
-
-    assert sm.migrate_legacy_spawns(config_dir) is False
-    # 旧配置未被迁移（检测到存活实例跳过）
-    assert old_cfg.exists()
-    assert not (config_dir / "config-slot-1.json").exists()
-    assert not (config_dir / "migration-spawns.done").exists()
 
 
 # --------------------------------------------------------------------------
@@ -397,44 +234,8 @@ def test_runtime_marker_write_failure_keeps_old_file_and_no_tmp(tmp_path, monkey
     assert list(config_dir.glob("*.tmp")) == [], "失败路径同样不得残留 .tmp"
 
 
-def test_seed_slot_config_write_goes_through_atomic_replace(tmp_path, monkeypatch):
-    """缺陷 18（写侧）：slot 落种写盘同样走 temp + 原子替换。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "config.json").write_text(json.dumps({"character": "shenshen"}),
-                                            encoding="utf-8")
-    seen: list[tuple[Path, Path]] = []
-    real = sm.atomic_replace_with_retry
-
-    def spy(temp, target, attempts=5):
-        seen.append((Path(temp), Path(target)))
-        real(temp, target, attempts)
-
-    monkeypatch.setattr(sm, "atomic_replace_with_retry", spy)
-
-    assert sm.seed_slot_config_from_main(config_dir, 1) is True
-    target = sm.get_config_path_for_slot(config_dir, 1)
-    assert seen and seen[0][1] == target, "落种必须经原子替换"
-    assert seen[0][0] != target and seen[0][0].parent == config_dir
-    assert json.loads(target.read_text(encoding="utf-8"))["character"] == "shenshen"
-    assert list(config_dir.glob("*.tmp")) == []
 
 
-def test_seed_slot_config_write_failure_reports_false(tmp_path, monkeypatch):
-    """缺陷 18（写侧）：落种替换失败如实返回 False，且不留目标文件/.tmp。"""
-    config_dir = tmp_path / APP_DIR_NAME
-    config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "config.json").write_text(json.dumps({"character": "shenshen"}),
-                                            encoding="utf-8")
-
-    def deny(temp, target, attempts=5):
-        raise OSError("replace denied")
-
-    monkeypatch.setattr(sm, "atomic_replace_with_retry", deny)
-
-    assert sm.seed_slot_config_from_main(config_dir, 1) is False
-    assert not sm.get_config_path_for_slot(config_dir, 1).exists()
-    assert list(config_dir.glob("*.tmp")) == []
 
 
 def test_read_live_instances_keeps_truncated_marker(tmp_path):
@@ -493,16 +294,4 @@ def test_read_live_instances_reclaims_confirmed_dead_pid(tmp_path):
     assert alive.exists(), "活 pid 的标记必须保留"
 
 
-def test_app_main_validates_slot_arg():
-    """测试 app.main 校验 --slot 参数范围（身份空间 0~128）及非法值。"""
-    from pet import app as app_mod
-
-    # 负数
-    assert app_mod.main(["dsh-pet", "--slot", "-1"]) == 1
-    # 超大值：上界已按规范 §一 扩到含 128（129 个身份），129 才是非法值
-    assert app_mod.main(["dsh-pet", "--slot", "129"]) == 1
-    # 非法字符串
-    assert app_mod.main(["dsh-pet", "--slot", "abc"]) == 1
-    # 缺少值
-    assert app_mod.main(["dsh-pet", "--slot"]) == 1
 

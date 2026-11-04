@@ -2,7 +2,7 @@
 """overlay 右键菜单 parity：独立 pet 形基准与 overlay 菜单树逐项一致。
 
 比对基准是**独立的 pet 形宿主**：显式声明 ``app.py::_wire_window`` 原样注入的
-回调与素材池（聊天/余额/看屏/待办/生小肥鱼…），再用**同一个建造器**
+回调与素材池（聊天/余额/看屏/待办…），再用**同一个建造器**
 （``build_modern_menu``）在同一份 Config、同一平台上建菜单；overlay 侧用
 ``build_sprite_full_menu`` 建。断言 overlay 树**逐项包含**基准树（同一父路径、
 兄弟顺序保持），且多出来的条目只允许 overlay 特有项。
@@ -151,8 +151,6 @@ class _ReferenceHost:
         self.on_show_balance = (lambda parent=None: None) if chat else None
         self.on_look_screen = self.look_at_screen if chat else None
         self.on_open_modern_settings = lambda: None
-        self.on_spawn_pet = lambda: None
-        self.on_clear_spawned_pets = lambda: None
         self.on_open_todo_panel = lambda: None
         self.on_network_info = lambda: None
         self.on_switch_character = lambda character_id: None
@@ -362,8 +360,6 @@ def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
         for label in ("AI 对话", "播放动画", "切换角色", "播放速率", "大小",
                       "不移动", "边缘探头", "显示本轮消费", "桌宠设置"):
             assert label in labels, f"modern 树缺项：{label}"
-        controls = _find(menu, "桌宠控制").menu()
-        assert _find(controls, "生小肥鱼") is not None
         tools = _find(menu, "工具与帮助").menu()
         for label in ("DeepSeek Harness", "网络信息"):
             assert _find(tools, label) is not None
@@ -551,17 +547,6 @@ def test_menu_agent_link_rolls_back_when_manager_refuses(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_menu_exit_this_kept_for_multi_pet(tmp_path):
-    shell, _instance, _config = _make_overlay(tmp_path)
-    try:
-        shell.spawn_pet()
-        menu = build_sprite_full_menu(shell, shell._spawned[0])
-        assert _find(menu, "退出这只") is not None
-        labels = [a.text() for a in menu.actions()]
-        assert labels.index("退出这只") < labels.index("退出")
-    finally:
-        shell.clear_spawned_pets()
-        shell._delete_runtime_marker()
 
 
 # ---------------------------------------------------------------- 6. 动画分组与收起

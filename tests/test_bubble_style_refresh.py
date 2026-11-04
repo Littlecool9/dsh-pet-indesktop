@@ -36,26 +36,6 @@ def test_global_refresh_keeps_the_saved_profile_style_and_scale(tmp_path, style)
         shell._delete_runtime_marker()
 
 
-def test_child_bubble_does_not_inherit_global_style_when_slot0_is_absent(tmp_path):
-    shell, _ = _make_shell(tmp_path, {"self_talk_bubble_style": "classic_top"})
-    try:
-        shell.overlay.show()
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        bubble = PetSpeechBubble()
-        shell._bubble_followers[child].bubble = bubble
-        slot = shell._spawned_slots[child]
-        pet_profiles.write_profile_settings(tmp_path, slot,
-            {"self_talk_bubble_style": "glass_right", "bubble_text_scale": 175})
-        shell.exit_pet(shell.sprite)
-        shell.refresh_settings()
-        app.processEvents()
-        assert bubble.style_id == "glass_right"
-        assert bubble.text_scale == pytest.approx(1.75)
-    finally:
-        shell.clear_spawned_pets()
-        shell.overlay.close()
-        shell._delete_runtime_marker()
 
 
 @pytest.mark.parametrize("style", ["glass_right", "paper_left", "soft_blue_top", "breath_bubble"])

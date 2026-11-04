@@ -319,7 +319,7 @@ def test_shell_show_pets_from_island_chat_restores_the_overlay_window(tmp_path):
     恢复面是唯一合成窗的 ``OverlayShell.set_pet_visible(True)``，本用例用真壳 +
     真合成窗断言它被走到。
     """
-    from tests.test_overlay_spawn import _make_persistent_shell
+    from tests.helpers.overlay_shell import _make_persistent_shell
 
     _qapp()
     shell = _make_shell(tmp_path)
@@ -347,104 +347,8 @@ def test_shell_show_pets_from_island_chat_restores_the_overlay_window(tmp_path):
         _teardown_shell(shell)
 
 
-def test_shell_show_pets_from_island_chat_restores_per_sprite_hidden_pets(tmp_path):
-    """逐只藏光后点「显示桌宠」：每一只 sprite 都要恢复可见，岛状态与屏幕一致。
-
-    ``set_pet_visible(True)`` 的语义是「整窗显隐保留逐只选择」——壳自己的
-    ``_set_all_clips_paused`` 恢复侧显式跳过 ``visible`` 为假的 sprite，托盘「显示
-    这只」的逐只隐藏不会被整窗显示悄悄解除（那条语义本身是对的）。所以逐只全藏过的
-    桌宠在整窗恢复后仍然一只都看不见，岛却被同步成「可见」：屏幕事实与岛状态相反，
-    用户再点岛也无处可恢复。恢复入口（岛气泡「显示桌宠」）必须自己把逐只标志补回来。
-    """
-    from tests.test_overlay_spawn import _make_persistent_shell
-
-    _qapp()
-    shell = _make_shell(tmp_path)
-    overlay, _made = _make_persistent_shell(tmp_path / "overlay")
-    try:
-        shell._sync_dynamic_island()
-        shell._overlay_shell = overlay
-        overlay.spawn_pet()
-        overlay.set_pet_visible(True)       # 前提：桌宠当前可见（岛同步为可见）
-        sprites = list(overlay.overlay.sprites)
-        assert len(sprites) == 2, "前提：主宠 + 一只子肥鱼"
-        assert overlay.overlay.isVisible() is True, "前提：合成窗可见"
-
-        for sprite in sprites:              # 逐只全藏（主宠与子宠同等计入）
-            overlay.set_sprite_visible(sprite, False)
-        assert overlay.overlay.isVisible() is True, "逐只隐藏不动整窗"
-        assert shell._aggregate_pet_visible() is False, "一只都不剩：聚合态已是隐藏"
-        overlay.set_pet_visible(False)      # 岛同步为隐藏 → 整窗随之收起（真实链路）
-        shell.island.set_pet_visible(False)
-        assert overlay.overlay.isVisible() is False
-
-        shell._show_island_chat(activate=True)
-        bubble = shell.island_chat
-        assert bubble is not None and bubble.isVisible()
-
-        shell._show_pets_from_island_chat()
-        QApplication.processEvents()
-
-        assert overlay.overlay.isVisible() is True, "整窗必须恢复可见"
-        assert all(overlay._sprite_visible(sprite) for sprite in sprites), \
-            "逐只全藏后点「显示桌宠」必须把每一只都恢复可见（只见窗不见宠＝屏幕上仍无桌宠）"
-        assert shell._aggregate_pet_visible() is True, "聚合可见态与屏幕事实一致"
-        assert shell.island._pet_visible is True, "岛状态与屏幕事实一致"
-        assert not bubble.isVisible()
-    finally:
-        # 收口：本用例刻意以「整窗可见」收尾（那正是被测行为），但别把一面可见的全屏
-        # 合成窗留给后面的用例（同文件既有用例也都是以隐藏态收口）。
-        overlay.set_pet_visible(False)
-        overlay._delete_runtime_marker()
-        _teardown_shell(shell)
 
 
-def test_shell_show_pets_from_island_chat_keeps_per_sprite_flags_when_window_hidden(tmp_path):
-    """整窗隐藏（未逐只隐藏）后点「显示桌宠」：只恢复窗，一根逐只标志都不碰。
-
-    钉住既有语义的另一半：恢复入口不是"无条件把所有 sprite 标可见"，而是**仅当
-    一只可见的都没有**时才补。逐只选择是用户的显式决定（托盘「显示这只」），
-    整窗显隐路径不得顺手改它。
-    """
-    from tests.test_overlay_spawn import _make_persistent_shell
-
-    _qapp()
-    shell = _make_shell(tmp_path)
-    overlay, _made = _make_persistent_shell(tmp_path / "overlay")
-    try:
-        shell._sync_dynamic_island()
-        shell._overlay_shell = overlay
-        overlay.spawn_pet()
-        overlay.set_pet_visible(True)       # 前提：桌宠当前可见（岛同步为可见）
-        sprites = list(overlay.overlay.sprites)
-        assert overlay.overlay.isVisible() is True, "前提：合成窗可见"
-        assert all(overlay._sprite_visible(sprite) for sprite in sprites), \
-            "前提：两只都可见，没有任何逐只隐藏"
-
-        per_sprite_calls: list = []
-        real_set_sprite_visible = overlay.set_sprite_visible
-
-        def spy(sprite, visible):
-            per_sprite_calls.append((sprite, visible))
-            real_set_sprite_visible(sprite, visible)
-
-        overlay.set_sprite_visible = spy
-
-        overlay.set_pet_visible(False)      # 只关整窗（逐只标志原样保留）
-        assert overlay.overlay.isVisible() is False
-        shell.island.set_pet_visible(False)
-
-        shell._show_pets_from_island_chat()
-        QApplication.processEvents()
-
-        assert overlay.overlay.isVisible() is True, "整窗必须恢复可见"
-        assert per_sprite_calls == [], "没有任何一只被逐只藏过：不许去动逐只标志"
-        assert all(overlay._sprite_visible(sprite) for sprite in sprites)
-        assert shell.island._pet_visible is True
-    finally:
-        overlay.set_pet_visible(False)      # 同上：不留可见的全屏合成窗给后面的用例
-        overlay._delete_runtime_marker()
-        _teardown_shell(shell)
 
 
 def test_shell_auto_pop_on_global_chat_finished_when_hidden(tmp_path):

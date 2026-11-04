@@ -22,16 +22,12 @@
     look_at_screen / rename_character                       → 壳的 sprite 等价实现（作用被点 sprite）
     set_edge_probe_enabled                                    → config（探头世界每 tick 热读）
 
-4.2c D13：菜单作用对象 = 右键命中的那一只（``sprite`` 参数）。设置入口按它
-自己的 config 身份传 ``--instance``（子肥鱼 = slot-N），「退出这只」接
-``OverlayShell.exit_pet(sprite)``；主子同样保档案、留空、可恢复，不提升不quit。
+菜单作用对象 = 唯一的 slot0 sprite；设置入口打开它自己的 slot0 档案。
 
 批 B2：作用对象口径对齐旧版一窗一宠（菜单以 ``pet=self`` 建造，每条都作用
 本窗那一只）——读（勾选态/素材清单）与写（动画/速率/大小/回角落/
 隐藏/看屏幕）一律取 ``self.sprite``，不再混用 ``self._shell.sprite``。
-批 B7b：逐只设置的持久化与读取都按该 sprite 自己的配置走——``cfg`` 是它的
-配置视图（子宠 = ``config-slot-N.json``，缺键取同源默认），``_persist_sprite_setting``
-写它自己的那份（主宠仍写主配置），「切换角色」也只切被点的那一只。
+批 B7b：设置持久化与读取按该 sprite 的 slot0 配置视图走，缺键取同源默认。
 """
 from __future__ import annotations
 
@@ -50,7 +46,6 @@ from .context_menus.menu_styles.common import (
     install_responsive_menu_style,
     install_stay_open_interaction,
 )
-from .context_menus.shared import add_action as _add_action
 from .context_menus.shared import (
     animation_icon_cache_entry,
     animation_icon_cache_hit,
@@ -75,8 +70,7 @@ def _first_callable(hosts, names):
 class SpriteMenuFacade:
     """context_menus 建造器的 pet 形适配面（duck-typed，非 PetWindow 子类）。
 
-    ``sprite`` = 本次菜单的作用对象（4.2c D13）：右键命中的是哪一只，菜单里的
-    设置入口与「退出这只」就作用在哪一只。不给 = 主 sprite（兼容既有调用面）。
+    ``sprite`` = 本次菜单的作用对象；不传 = 唯一的主 sprite。
     """
 
     def __init__(self, shell, sprite=None) -> None:
@@ -515,23 +509,11 @@ class SpriteMenuFacade:
         self.cfg.set_character_alias(cid, name)
         self._bubble(f"角色名：{self.cfg.character_display_name(cid)}")
 
-    def on_spawn_pet(self) -> None:
-        self._shell.spawn_pet()
-
-    def on_clear_spawned_pets(self) -> None:
-        self._shell.clear_spawned_pets()
-
     def on_open_settings(self) -> None:
         """打开设置页（D13：按被点 sprite 的 config 身份传给独立设置进程）。"""
         opener = getattr(self._shell, "open_settings_for", None)
         if callable(opener):
             opener(self.sprite)
-
-    def on_exit_pet(self) -> None:
-        """关闭被点宠物，档案保留；主子同样不确认，退出应用另有入口。"""
-        sprite = self.sprite
-        if sprite is not None:
-            self._shell.exit_pet(sprite)
 
     def close(self) -> None:
         self._shell.app.quit()
@@ -650,17 +632,6 @@ class SpriteMenuFacade:
             reopen(menu)
 
 
-def _move_before_quit(menu: QMenu, action) -> None:
-    """把新增项插到「退出」之前（保持"设置/退出这只 紧邻退出"的既有分组）。"""
-    for candidate in menu.actions():
-        if candidate is action:
-            continue
-        if candidate.text() == "退出":
-            menu.removeAction(action)          # 显式摘除再插入 = 确定性移动
-            menu.insertAction(candidate, action)
-            return
-
-
 def build_sprite_full_menu(shell, sprite=None) -> QMenu:
     """overlay 全量右键菜单：现代建造器（注册表 + 用户编排）原样复用。
 
@@ -681,12 +652,6 @@ def build_sprite_full_menu(shell, sprite=None) -> QMenu:
     install_modern_check_indicators(menu)
     install_responsive_menu_style(menu)
     install_stay_open_interaction(menu)
-    # 「退出这只」只在多宠时出现（窗口侧单窗不注入该入口，只有 app.quit 语义的
-    # 「退出」）——没有子肥鱼时它等价于「退出」，不重复列出
-    if getattr(shell, "_spawned", None):
-        exit_action = _add_action(menu, "退出这只", None, facade.on_exit_pet,
-                                  close_on_trigger=True)
-        _move_before_quit(menu, exit_action)
     # F5 教训：facade 与菜单同寿命（wrapper 回收后回调命中失效引用）
     menu._facade = facade
     return menu

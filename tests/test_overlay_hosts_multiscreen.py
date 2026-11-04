@@ -241,139 +241,13 @@ def test_host_for_sprite_exposes_screen_overlay_and_bounds(tmp_path, monkeypatch
         _cleanup(shell)
 
 
-def test_move_sprite_to_screen_moves_only_that_pet(tmp_path, monkeypatch):
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        main = shell.sprite
-        _hittable(main)
-        _hittable(child)
-        main_pos = QPointF(main.pos)
-
-        assert shell.move_sprite_to_screen(
-            child, b, global_pos=QPointF(2100, 300)) is True
-
-        assert _screen_of(shell, child) is b
-        assert child in shell.overlay.sprites
-        assert child.home_screen is b
-        # 另一只一分不动、仍在它自己那块屏上
-        assert main.pos == main_pos
-        assert _screen_of(shell, main) is a
-        # 给了 global_pos：落在该全局位置（局部坐标 = 全局 - 窗口原点）
-        assert _global_of(shell.host_for_sprite(child), child) == QPointF(2100, 300)
-        assert child.pos.x() == pytest.approx(2100.0, abs=1.0)
-        # 不给 global_pos：按"当前屏内的相对位置"落到目标屏同一相对位置
-        ratio_in_b = _ratio_in(shell, child, b)
-        assert shell.move_sprite_to_screen(child, a) is True
-        assert _screen_of(shell, child) is a
-        assert _ratio_in(shell, child, a) == pytest.approx(ratio_in_b, abs=0.01)
-        assert shell._screen is a
-    finally:
-        _cleanup(shell)
 
 
 # ---------------------------------------------------------------- 跨屏拖拽
-def test_drag_across_screens_moves_only_the_dragged_pet(tmp_path, monkeypatch):
-    """拖过缝：被拖的那只走到副屏，别的宠与窗口几何一分不动（#303 主症）。
-
-    跨屏不再换窗口/换宿主：同一张合成窗里自由移动，没有"移交"这一拍，也就没有
-    跨屏大跳与"身体被钳在 x=0"。
-    """
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        main = shell.sprite
-        _hittable(child)
-        child.set_pos(QPointF(200, 700))
-        assert shell.move_sprite_to_screen(
-            child, b, global_pos=QPointF(3400, 200)) is True
-        child_pos = QPointF(child.pos)
-        overlay = shell.overlay
-        geometry = overlay.geometry()
-
-        cursor, _ = _drag_across(shell, main)
-
-        assert _screen_of(shell, main) is b, "身体中心过缝即算在副屏上"
-        assert main.home_screen is b
-        assert child.pos == child_pos, "别的宠不被拖拽带动"
-        assert _screen_of(shell, child) is b
-        assert overlay.geometry() == geometry, "拖动的是绘制，不是窗口"
-        assert overlay._mouse_grab is main, "会话握在同一张窗里"
-
-        overlay.mouseReleaseEvent(_release(cursor, cursor))
-
-        # 松手落在光标处（窗口局部坐标），且抓取偏移不变（宠没从光标下错位）
-        expected_local = cursor - QPointF(overlay.geometry().topLeft())
-        assert main.rect().center().x() == pytest.approx(
-            expected_local.x(), abs=4.0)
-        assert shell.hosts() == [shell._main_host]
-    finally:
-        _cleanup(shell)
 
 
-def test_switching_screen_keeps_clip_and_driver_running(tmp_path, monkeypatch):
-    """换屏不是退出：clip 不释放、成员不注销、共享驱动器照旧驱动这张窗。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        _hittable(child)
-        shell.move_sprite_to_screen(child, b)
-        clip = child._clip
-        assert clip is not None
-        closed: list = []
-        child.close = lambda *a, **k: closed.append(1)
-        removed: list = []
-        shell.overlay.add_sprite_removed_listener(
-            lambda sprite: removed.append(sprite))
-
-        shell.move_sprite_to_screen(child, a)
-
-        assert closed == [] and removed == []
-        assert child._clip is clip
-        assert shell.overlay in shell.driver._overlays
-        assert _screen_of(shell, child) is a
-    finally:
-        _cleanup(shell)
 
 
-def test_mixed_dpr_uses_one_window_per_screen(tmp_path, monkeypatch):
-    """混合缩放 + 允许跨屏：**每块屏一张窗**，跨屏交给目标窗（#307 的正解）。
-
-    一张窗只能有一个 ``devicePixelRatio``：横跨两种缩放时必有一侧按错的倍率渲染
-    （实机：整只画到可见区之外）。每屏一窗后每张窗的 DPR 天然正确，跨屏 = 把这只
-    连同位置交给目标窗（局部坐标经全局中转）。
-    """
-    a, b = _two_screens()
-    b.set_rects((1920, 0, 1920, 1080), (1920, 0, 1920, 1040), dpr=2.0)
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a, {"allow_cross_screen": True})
-    try:
-        assert len(shell.hosts()) == 2, "混合缩放必须每屏一窗"
-        assert shell.overlay.geometry() == QRect(a.availableGeometry())
-        b_host = shell.host_for_screen(b)
-        assert b_host is not None
-        assert b_host.overlay.geometry() == QRect(b.availableGeometry())
-        assert b_host.overlay is not shell.overlay
-
-        child = shell._spawned[0] if shell._spawned else None
-        if child is None:
-            shell.spawn_pet()
-            child = shell._spawned[0]
-        assert shell.move_sprite_to_screen(child, b) is True
-        assert shell.host_for_sprite(child) is b_host, "跨屏后归目标宿主"
-        assert shell._screen_of_sprite(child) is b
-        assert child.dpr == 2.0, "目标窗的 DPR 天然正确"
-    finally:
-        _cleanup(shell)
 
 
 def test_mixed_dpr_without_cross_screen_stays_single_window(tmp_path, monkeypatch):
@@ -429,94 +303,13 @@ def test_mixed_dpr_single_window_log_names_the_degradation(
         _cleanup(shell)
 
 
-def test_single_window_driver_membership_and_stop(tmp_path, monkeypatch):
-    """单窗：驱动器成员恒为一个；停表/起表只经壳的显隐与收口入口。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        shell.start()  # 起表（进程级一个 QTimer）
-        assert shell.driver.timer.isActive() is True
-        assert list(shell.driver.overlays) == [shell.overlay]
-
-        shell.stop()
-
-        assert shell.driver.timer.isActive() is False, "整壳停表即停表"
-    finally:
-        _cleanup(shell)
 
 
 # ---------------------------------------------------------------- 屏事件
-def test_primary_screen_change_does_not_move_pets(tmp_path, monkeypatch):
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.move_sprite_to_screen(child, b)
-        main_pos, child_pos = QPointF(shell.sprite.pos), QPointF(child.pos)
-        home = shell._screen
-
-        shell.handle_primary_screen_changed(b)
-
-        assert shell._screen is home, "主屏换人不换家"
-        assert _screen_of(shell, shell.sprite) is a
-        assert _screen_of(shell, child) is b
-        assert shell.sprite.pos == main_pos
-        assert child.pos == child_pos
-    finally:
-        _cleanup(shell)
 
 
-def test_unplugging_one_screen_moves_only_its_pets(tmp_path, monkeypatch):
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        shell.spawn_pet()
-        first, second = shell._spawned
-        shell.move_sprite_to_screen(second, b)
-        main = shell.sprite
-        main_pos = QPointF(main.pos)
-        first_pos = QPointF(first.pos)
-
-        _install_screens(monkeypatch, a)
-        shell.handle_screen_removed(b)
-
-        assert shell.host_for_screen(b) is None, "拔掉的屏不再被窗覆盖"
-        assert _screen_of(shell, second) is a
-        assert second in shell.overlay.sprites
-        # 别的屏上的宠一分不动
-        assert main.pos == main_pos and first.pos == first_pos
-    finally:
-        _cleanup(shell)
 
 
-def test_unplugging_the_home_screen_moves_home_to_a_survivor(tmp_path, monkeypatch):
-    """拔掉家那块屏：家搬到存活屏，窗口仍是同一张（不重建），宠跟着走。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.move_sprite_to_screen(child, b)
-        overlay = shell.overlay
-
-        _install_screens(monkeypatch, b)
-        shell.handle_screen_removed(a)
-
-        assert shell.overlay is overlay, "单窗：拔屏不重建窗口"
-        assert shell._screen is b
-        assert shell.sprite in shell.overlay.sprites
-        assert _screen_of(shell, shell.sprite) is b
-        assert shell.sprite.home_screen is b
-        assert shell.hosts() == [shell._main_host]
-    finally:
-        _cleanup(shell)
 
 
 # ---------------------------------------------------------------- 屏事件：刷新率
@@ -577,58 +370,8 @@ def test_screen_removal_detaches_the_refresh_rate_signal(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- 位置记忆（逐宠）
-def test_profile_records_the_pets_own_screen(tmp_path, monkeypatch):
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        slot = shell._spawned_slots[child]
-        shell.move_sprite_to_screen(child, b)
-        child.set_pos(QPointF(2500, 500))     # 落在 B 里（归属与承载一致才写盘）
-
-        shell.save_spawned_positions()
-
-        from pet import pet_profiles
-        geometry = dict(pet_profiles.read_slot_snapshot(tmp_path, slot).profile.data)
-        assert geometry["screen_name"] == "B"
-        rx, ry = _ratio_in(shell, child, b)
-        assert geometry["rx"] == pytest.approx(rx, abs=0.01)
-        assert geometry["ry"] == pytest.approx(ry, abs=0.01)
-    finally:
-        _cleanup(shell)
 
 
-def test_restore_puts_each_pet_back_on_its_own_screen(tmp_path, monkeypatch):
-    """重启复活：按各宠档案里的 ``screen_name`` 回到各自那块屏。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    from pet import pet_profiles
-
-    # 复活路径同样只在"允许跨屏"下按各宠记忆的屏落位
-    config = cap.CapConfig(tmp_path, {"allow_cross_screen": True})
-    pet_profiles.write_profile_settings(tmp_path, 0, {"scale": 0.5})
-    pet_profiles.write_profile_settings(tmp_path, 1, {"scale": 0.5})
-    pet_profiles.save_active_set(tmp_path, [0, 1], on_broken="backup-overwrite")
-    pet_profiles.write_profile_geometry(
-        tmp_path, 1, {"rx": 0.25, "ry": 0.75, "screen_name": "B"})
-    shell = OverlayShell(
-        app, cap.CapInstance(config), screen=a,
-        sprite_factory=lambda lib, pos, scale: PetSprite(lib, pos=pos, scale=scale))
-    try:
-        shell._create_main_library = fac.RichLibrary
-        assert shell.sprite is not None
-        child = shell._spawned[0]
-        assert _screen_of(shell, child) is b
-        rect = _activity_rect(shell, b)
-        body = child.body_rect()
-        cx = body.x() + body.width() / 2.0
-        cy = body.y() + body.height() / 2.0
-        assert cx == pytest.approx(rect.left() + 0.25 * rect.width(), abs=2.0)
-        assert cy == pytest.approx(rect.top() + 0.75 * rect.height(), abs=2.0)
-    finally:
-        _cleanup(shell)
 
 
 def test_main_pet_restored_to_its_saved_screen_re_sites_the_home_screen(
@@ -663,26 +406,6 @@ def test_main_pet_restored_to_its_saved_screen_re_sites_the_home_screen(
 
 
 # ---------------------------------------------------------------- 逐屏外围
-def test_bubble_anchor_uses_the_window_origin(tmp_path, monkeypatch):
-    """气泡锚点 = 身体框 + **窗口**原点（单窗一套坐标，副屏那只同样对）。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.move_sprite_to_screen(child, b)
-        child.set_pos(QPointF(300, 400))
-
-        follower = shell._bubble_for(child)
-        assert follower is not None
-        body = child.body_rect()
-        origin = shell.overlay.geometry().topLeft()
-        expected = QRect(origin + body.topLeft(), body.size())
-        assert follower.anchor() == expected
-        assert shell.bubble_anchor_rect_for(getattr(follower, "bubble", None)) == expected
-    finally:
-        _cleanup(shell)
 
 
 # ---------------------------------------------------------------- 多窗 DPR 夹具
@@ -857,42 +580,6 @@ def test_screen_removed_without_any_fallback_screen_finishes_the_grab(
         _cleanup(shell)
 
 
-def test_screen_removed_finishes_the_inflight_session_once(tmp_path, monkeypatch):
-    """拔屏只收一次会话：在途 grab 按协议收尾（恰好一次），别的宠一分不动。"""
-    a, b, c = _three_screens()
-    _install_screens(monkeypatch, a, b, c)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        shell.spawn_pet()
-        first, second = shell._spawned
-        _hittable(first)
-        _hittable(second)
-        shell.move_sprite_to_screen(first, b)
-        shell.move_sprite_to_screen(second, c)
-        main = shell.sprite
-        _drag_across(shell, main)                 # 按住 → 身体过缝（同一张窗）
-        assert _screen_of(shell, main) is b
-        overlay = shell.overlay
-        assert overlay._mouse_grab is main
-        released: list = []
-        main.on_release = released.append
-        pos_at_release = QPointF(main.pos)
-
-        shell.handle_screen_removed(a)
-
-        # 会话收尾一次（不重复 release）；收尾用的是松开那一刻的当前位置
-        assert released == [pos_at_release]
-        assert overlay._mouse_grab is None
-        assert overlay._press_click_only is False
-        assert overlay._drag_committed is False
-        assert overlay._press_global is None
-        assert shell.hosts() == [shell._main_host], "单窗：拔屏不换宿主"
-        assert shell.host_for_screen(a) is None
-        assert _screen_of(shell, first) is b
-        assert _screen_of(shell, second) is c
-    finally:
-        _cleanup(shell)
 
 
 # ---------------------------------------------------------------- 交付前审查的三条（4.3.4 收尾）
@@ -1272,54 +959,6 @@ def test_geometry_signal_before_the_dpi_flip_keeps_positions(tmp_path, monkeypat
         _cleanup(shell)
 
 
-def test_three_screens_flip_both_ways_and_keep_every_pet_in_place(tmp_path, monkeypatch):
-    """三屏、只改其中一块的缩放：两个方向都要保住每只的屏归属与屏内比例。"""
-    a, b, c = _three_screens()
-    _install_screens(monkeypatch, a, b, c)
-    shell = _make_shell(tmp_path, a, {"allow_cross_screen": True})
-    try:
-        desktop = QRect(shell.overlay.geometry())
-        assert desktop.width() == 5760, "前提：三块 1920 屏共用一张窗"
-        main = shell.sprite
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.spawn_pet()
-        third = shell._spawned[1]
-        # 三只分别摆在 A / B / C 的中间（整桌面 5760 的 1/6、1/2、5/6）
-        shell._place_body_ratio(main, 1 / 6, 0.5, desktop)
-        shell._place_body_ratio(child, 0.5, 0.5, desktop)
-        shell._place_body_ratio(third, 5 / 6, 0.5, desktop)
-        shell._remember_sprite_screen(main, a)
-        shell._remember_sprite_screen(child, b)
-        shell._remember_sprite_screen(third, c)
-        wants = ((main, a), (child, b), (third, c))
-
-        def ratio_in_screen(sprite, screen) -> float:
-            host = shell.host_for_screen(screen)
-            assert host is not None
-            rect = shell._screen_rect_in_host(screen, host)
-            body = sprite.body_rect()
-            return (body.x() + body.width() / 2.0 - rect.x()) / rect.width()
-
-        # 只有 B 改成 200%（工作区同时减半）→ 每屏一窗
-        b.set_rects((1920, 0, 1920, 1080), (1920, 0, 960, 520), dpr=2.0)
-        shell._feed_screen_dpr()
-        assert len(shell.hosts()) == 3, "三块屏都该有自己的窗"
-        for sprite, screen in wants:
-            assert shell._screen_of_sprite(sprite) is screen, "屏归属不许变"
-            assert ratio_in_screen(sprite, screen) == pytest.approx(0.5, abs=0.08), (
-                f"{screen.name()} 上的这只必须仍在屏内中央附近")
-
-        # B 改回 100% → 合回单窗：三只各自回屏，**比例也要回来**
-        b.set_rects((1920, 0, 1920, 1080), (1920, 0, 1920, 1040), dpr=1.0)
-        shell._feed_screen_dpr()
-        assert len(shell.hosts()) == 1, "回到单窗"
-        for sprite, screen in wants:
-            assert shell._screen_of_sprite(sprite) is screen
-            assert ratio_in_screen(sprite, screen) == pytest.approx(0.5, abs=0.08), (
-                f"合窗后 {screen.name()} 上这只的比例也要保住")
-    finally:
-        _cleanup(shell)
 
 
 def test_repeated_topology_notifications_are_idempotent(tmp_path, monkeypatch):
@@ -1636,87 +1275,8 @@ def test_degraded_state_survives_the_window_own_geometry_callback(
         _cleanup(shell)
 
 
-def test_degraded_state_saves_the_home_screen_ratio(tmp_path, monkeypatch):
-    """降级态落盘要用**单窗**的屏矩形：家屏正中不许被写成 1.5 这种越界比例。"""
-    from pet import pet_profiles
-    from tests.test_overlay_hosts_multiscreen import FakeScreen
-
-    right = FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040), name="RIGHT")
-    left = FakeScreen((-1920, 0, 1920, 1080), (-1920, 0, 1920, 1040), name="LEFT")
-    _install_screens(monkeypatch, right, left)
-    shell = _make_shell(tmp_path, right, {"allow_cross_screen": True})
-    try:
-        original = shell._apply_host_window_caps
-        monkeypatch.setattr(
-            shell, "_apply_host_window_caps",
-            lambda host: (_ for _ in ()).throw(RuntimeError("失败")) if host.screen is left
-            else original(host))
-        main = shell.sprite
-        # 家屏（右）的中线：整桌面 3840 里的 0.75
-        shell._place_body_ratio(main, 0.75, 0.5, QRect(shell.overlay.geometry()))
-
-        left.set_rects((-1920, 0, 1920, 1080), (-1920, 0, 960, 520), dpr=2.0)
-        shell._feed_screen_dpr()
-        assert shell._active_multi() is False, "前提：已降级为单窗"
-
-        saved = shell._save_child_geometry(main, slot=0, geometry=None)
-
-        # 降级态下"窗口按单窗、屏按目标"两套口径并存，比例用哪套都可能是错的
-        # （实测会写出 1.5 / 0.08）。这里的正确行为是**不写**，等拓扑恢复再存。
-        assert saved is False, "拓扑未对齐时不许落盘几何"
-        profile = pet_profiles.read_slot_profile(tmp_path, 0)
-        rx = profile.data.get("rx")
-        assert rx is None or 0.0 <= float(rx) <= 1.0, (
-            f"绝不许把越界比例写进档案，实际 {rx}")
-    finally:
-        _cleanup(shell)
 
 
-def test_save_is_refused_while_the_topology_transaction_is_running(
-        tmp_path, monkeypatch):
-    """**事务进行中**（宿主已补齐、几何还没应用）拖拽收尾不许落盘。
-
-    这段时间 `_active_multi()` 已经翻成多窗、精灵坐标还是旧单窗的，量出来的比例是
-    越界值（实测 1.5）。落盘后补窗成功或重启就会把宠推到屏边。
-    """
-    from pet import pet_profiles
-
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a, {"allow_cross_screen": True})
-    try:
-        main = shell.sprite
-        shell._place_body_ratio(main, 0.25, 0.5, QRect(0, 0, 3840, 1040))
-        # 建宠时已经存过一次默认几何，这里记下"翻转前"的快照，比对用
-        before = dict(pet_profiles.read_slot_profile(tmp_path, 0).data)
-
-        original = shell._adopt_new_host
-        results = {}
-
-        def adopt(screen, *, visible):
-            original(screen, visible=visible)
-            # 宿主已补齐、`_sync_host_geometry` 还没跑：模拟拖拽在这一刻收尾
-            results["saved"] = shell._save_child_geometry(main, slot=0, geometry=None)
-            results["in_txn"] = shell._topology_txn
-            results["active_multi"] = shell._active_multi()
-
-        monkeypatch.setattr(shell, "_adopt_new_host", adopt)
-        b.set_rects((1920, 0, 1920, 1080), (1920, 0, 960, 520), dpr=2.0)
-        shell._feed_screen_dpr()
-
-        assert results["in_txn"] is True, "前提：那一刻确实在事务里"
-        assert results["active_multi"] is True, "前提：形态标志已翻成多窗"
-        assert results["saved"] is False, "事务进行中不许落盘"
-        assert dict(pet_profiles.read_slot_profile(tmp_path, 0).data) == before, (
-            "事务进行中那次保存不许改动档案")
-
-        # 事务收口后再存：这次要成功，而且比例正确
-        shell._place_body_ratio(main, 0.5, 0.5, shell._screen_rect(a))
-        assert shell._save_child_geometry(main, slot=0, geometry=None) is True
-        rx = float(pet_profiles.read_slot_profile(tmp_path, 0).data["rx"])
-        assert rx == pytest.approx(0.5, abs=0.05)
-    finally:
-        _cleanup(shell)
 
 
 def test_rollback_puts_session_notifications_back_on_the_survivor(
