@@ -24,7 +24,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QHBoxLayout, QKeySequenceEdit, QPushButton, QWidget
 
 from . import hotkey_spec
-from .hotkeys import ACTIONS, ACTION_LABELS, is_supported
+from .hotkey_actions import ACTIONS, ACTION_LABELS, is_supported
 from .settings_widgets import SettingRow
 
 #: 动作 → 给用户的一句说明（行 hint）

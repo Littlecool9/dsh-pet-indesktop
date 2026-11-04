@@ -30,7 +30,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 import pet.app as app_mod
-from pet import harness_launcher as hl
+from pet.modules.harness import harness_launcher as hl
 from pet.config import Config
 
 # 本机实测的命令形态：``which("dsh")`` 解析到 npm 的 .cmd shim，``_wrap_cmd`` 把它
@@ -139,6 +139,33 @@ def _wait_for(predicate, timeout: float = 10.0) -> bool:
     return bool(predicate())
 
 
+def _attach_harness(shell):
+    """把真实 harness 模块挂到轻量壳桩上（模块拥有自启/收口，AppShell 不再保留方法）。
+
+    只补测试需要的那几个面：模块通过 ``host.shell`` 读 config / 退出标记 / 联动门，
+    退出收口经一个最小注册表转给 ``module.stop()``。
+    """
+    from types import SimpleNamespace
+
+    from pet.modules.harness.module import HarnessModule
+
+    module = HarnessModule()
+    module._host = SimpleNamespace(
+        shell=shell, config=shell.config, app=getattr(shell, "app", None))
+    module._config = shell.config
+    # 模拟「模块已启动并收到过一次配置」：之后的外部变更才可能触发收口。
+    module._seen_dsh_wanted = module._dsh_tracker_wanted(shell.config)
+    shell._module_registry = SimpleNamespace(
+        apply_config=lambda config: module.apply_config(config),
+        stop_all=lambda: module.stop(),
+    )
+    shell._maybe_autostart_harness = module._maybe_autostart
+    shell._harness_autostart_wanted = module._autostart_wanted
+    shell._stop_harness_if_still_unwanted = module._stop_harness_if_still_unwanted
+    shell._harness_module = module
+    return module
+
+
 _SPAWN_COMMAND = [
     "cmd.exe", "/c", r"C:\Users\me\AppData\Roaming\npm\dsh.CMD",
     "web", "--host", "127.0.0.1", "--port", "38080", "--no-open",
@@ -179,6 +206,7 @@ def _gate_shell(tmp_path, *, enable_chat: bool = True, autostart: bool = True,
     shell = app_mod.AppShell.__new__(app_mod.AppShell)  # 绕开重型 __init__
     shell._enable_chat = enable_chat
     shell.config = cfg
+    _attach_harness(shell)
     return shell
 
 
@@ -200,6 +228,7 @@ def _real_shell(tmp_path, monkeypatch, *, dsh_link: bool, autostart: bool = True
     shell._sync_dynamic_island = lambda: None
     shell._sync_todo_service = lambda: None
     shell._sync_festival_service = lambda: None
+    _attach_harness(shell)
     return shell
 
 
@@ -213,10 +242,8 @@ def test_autostart_gated_off_when_dsh_link_disabled(tmp_path, spawn_probe):
 
 def test_autostart_still_gated_by_master_toggles(tmp_path, spawn_probe):
     """旧口径不退化：enable_chat / harness_autostart 任一关着都不拉（即便联动开着）。"""
-    app_mod.AppShell._maybe_autostart_harness(
-        _gate_shell(tmp_path, enable_chat=False, dsh_link=True))
-    app_mod.AppShell._maybe_autostart_harness(
-        _gate_shell(tmp_path, autostart=False, dsh_link=True))
+    _gate_shell(tmp_path, enable_chat=False, dsh_link=True)._maybe_autostart_harness()
+    _gate_shell(tmp_path, autostart=False, dsh_link=True)._maybe_autostart_harness()
     assert spawn_probe == []
 
 
@@ -561,10 +588,13 @@ def test_async_stop_aborts_when_link_reenabled(tmp_path, monkeypatch):
     calls: list[int] = []
     monkeypatch.setattr(hl, "stop_self_launched_harness", lambda: calls.append(1) or [])
     # 线程入口复核时联动已是「开」：直接调命名方法（确定性，不赌线程时序）
-    monkeypatch.setattr(shell, "_dsh_tracker_wanted", lambda: True)
+    agent_cfg = dict(shell.config.get("agent_link") or {})
+    agent_cfg["dsh"] = True
+    shell.config.set("agent_link", agent_cfg)
     shell._stop_harness_if_still_unwanted()
     assert calls == [], "联动已重开时，过期的异步收口必须作废"
-    monkeypatch.setattr(shell, "_dsh_tracker_wanted", lambda: False)
+    agent_cfg["dsh"] = False
+    shell.config.set("agent_link", agent_cfg)
     shell._stop_harness_if_still_unwanted()
     assert calls == [1], "联动仍关着时，收口必须照常执行"
 

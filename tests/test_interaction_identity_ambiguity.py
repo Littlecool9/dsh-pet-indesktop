@@ -31,7 +31,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pet import harness_launcher  # noqa: E402
+from pet import dsh_probe  # noqa: E402
 from pet.agent_link import AgentLinkManager  # noqa: E402
 from pet.config import Config  # noqa: E402
 
@@ -123,8 +123,8 @@ def _dsh_probe_pinned_online(monkeypatch):
     只钉网络/OS 边界，产品探活行为不改；副作用是真 socket 不再发生。
     （离线口径的反向回归只在 ``test_final_interaction_regressions.py`` 保留一条。）
     """
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
 
 
 def _build(tmp_path, win):

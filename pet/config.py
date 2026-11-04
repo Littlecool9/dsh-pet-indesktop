@@ -901,12 +901,6 @@ class Config:
             "agent_cost_enabled": False,  # Agent 本轮结束时显示消费金额（用余额差值估算）
             "edge_probe_enabled": False,  # 拖到屏幕左右边缘后自动进入探头姿态
             "autostart_wanted": False,  # 用户曾开启过开机自启（用于启动自检：被安全软件清理时提醒）
-            "harness_autostart": False,  # 随桌宠启动自动拉起（auto/service/web 目标=只起服务不开浏览器；桌面端目标=打开界面）
-            # 自启目标：auto=只拉起 dsh 服务（不开浏览器、不开界面），与 service 同义；
-            # service 显式写「只起服务」、web/desktop 是显式要界面的选择。
-            # **只作用于「随桌宠启动」**：右键菜单/托盘的启动入口是显式选择，不受它影响；
-            # 「重启/停止服务」始终只作用于 dsh web 服务进程。
-            "harness_launch_target": "auto",
             # 手动指定 pnpm 入口（文件 / 目录 / 包装脚本都行，语义同 DSH_PNPM_BIN）。
             # 默认空 = 走内置的自动发现（PATH/注册表/各版本管理器/多布局）；
             # 面向"环境特殊又不想改环境变量"的用户，属于开发者向高级键，不进设置页。
@@ -934,12 +928,6 @@ class Config:
             "system_notifications_enabled": True,  # 对话完成/失败/需要授权时弹桌面系统通知
             "todo_reminder_enabled": True,  # 待办提醒总开关
             "todo_reminder_lead_minutes": 5,  # 待办提前提醒分钟数（0~60，0=不提前）
-            # 全局快捷键（进程级，不随每宠不同）：空串 = 未绑定。
-            # 三个动作见 pet/hotkeys.py 的 ACTIONS；写进来时按 hotkey_spec 收成
-            # 规范形式，不认识的一律清空（配置里不存脏值）。
-            "hotkey_open_chat": "",
-            "hotkey_look_screen": "",
-            "hotkey_screen_capture": "",
             "media_prewarm": "balanced",  # full / balanced / minimal 素材首帧预热力度
             # 批10-A3：默认 32→8MB。预测式预热（批10-A1）落地后，首帧 LRU 只需
             # 装「瞬时交互核 pinned（click/turn/drag）+ 1-2 个预测位」；idle/move
@@ -1107,8 +1095,6 @@ class Config:
             "click_show_balance",
             "balance_refresh_minutes",
             "autostart_wanted",
-            "harness_autostart",
-            "harness_launch_target",
             "allow_cross_screen",
             "pnpm_bin",
             "agent_cost_enabled",
@@ -1139,9 +1125,6 @@ class Config:
             "predict_prewarm_lead_ms",
             "ffmpeg_recycle_minutes",
             "settings_process_isolation",
-            "hotkey_open_chat",
-            "hotkey_look_screen",
-            "hotkey_screen_capture",
         ):
             if key not in raw:
                 continue
@@ -1416,8 +1399,6 @@ class Config:
                     stack.append(value)
 
     def _normalize_pet_settings(self):
-        target = str(self.data.get("harness_launch_target") or "auto").strip().lower()
-        self.data["harness_launch_target"] = target if target in ("auto", "service", "web", "desktop") else "auto"
         dialogue_mode = str(self.data.get("dialogue_mode") or "legacy").lower()
         self.data["dialogue_mode"] = dialogue_mode if dialogue_mode in {"legacy", "whale_maid", "custom"} else "legacy"
         raw_phrases = self.data.get("dialogue_phrases")
@@ -1450,12 +1431,6 @@ class Config:
         self.data["anim_menu_stay_open"] = _bool_or_default(
             self.data.get("anim_menu_stay_open"), False)
         self.data["quick_launch_apps"] = _clean_quick_launch_apps(self.data.get("quick_launch_apps"))
-        # 全局快捷键：收成规范形式（顺序/大小写统一），不认识/残缺 → 空串。
-        # 归一化放在这里而不是只靠设置页，是因为配置文件可能被手改。
-        from . import hotkey_spec as _hotkey_spec
-        for _hotkey_key in ("hotkey_open_chat", "hotkey_look_screen",
-                            "hotkey_screen_capture"):
-            self.data[_hotkey_key] = _hotkey_spec.normalize(self.data.get(_hotkey_key))
         # 枚举键必须先 str() 再判成员：直接 `x not in {...}` 遇到 list/dict 抛
         # TypeError: unhashable type（json 合法脏值），Config() 构造失败 → 启动崩、
         # 连独立设置页都进不去。同族写法一律抄这一行。

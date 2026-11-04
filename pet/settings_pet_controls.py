@@ -97,7 +97,7 @@ GLOBAL_SCOPE_ROWS: tuple[tuple[str, str], ...] = (
 )
 
 #: 「自启目标」（harness_launch_target）说明文案，按桌面端能力分流（能力口径是
-#: ``harness_launcher.DESKTOP_SUPPORTED``，设置页不另写一份平台判定）。
+#: ``dsh_probe.DESKTOP_SUPPORTED``，设置页不另写一份平台判定）。
 #:
 #: 两句共用首句与末句，差别只在桌面端能不能自动拉起：支持时如实说可选
 #: web / 桌面端；不支持时该项在设置页保留但置灰（"暂不可用 ≠ 永久不支持"），
@@ -132,7 +132,7 @@ OVERLAY_WINDOW_SCOPE_IDS = (
 def harness_target_hint(desktop_available: bool) -> str:
     """「自启目标」说明文案（按桌面端能力分流）。
 
-    ``desktop_available`` 由调用方从 ``harness_launcher.DESKTOP_SUPPORTED`` 读入
+    ``desktop_available`` 由调用方从 ``dsh_probe.DESKTOP_SUPPORTED`` 读入
     （该常量是桌面端能力的唯一平台口径，设置页不另写一份判定）：本函数只做文案
     选择，不自己探平台，两个分支都能脱离真实平台直接测。
 

@@ -736,7 +736,7 @@ class TestPnpmCliDiscovery:
 class TestHarnessGlobalRoots:
     def test_posix_launch_finds_dsh_under_npm_global_root(self, tmp_path, monkeypatch):
         """macOS/Linux：dsh 装在全局根（PATH 上没有 dsh）也要能一键拉起。"""
-        from pet import harness_launcher as hl
+        from pet.modules.harness import harness_launcher as hl
 
         home = _dir(tmp_path / "home")
         root = _dir(home / ".npm-global" / "lib" / "node_modules")
@@ -762,7 +762,7 @@ class TestHarnessGlobalRoots:
         ]
 
     def test_manual_launch_finds_dsh_under_nvm_windows_root(self, tmp_path, monkeypatch):
-        from pet import harness_launcher as hl
+        from pet.modules.harness import harness_launcher as hl
         from pet import node_runtime
 
         root = _dir(tmp_path / "nvm" / "v18.20.5" / "node_modules")

@@ -165,7 +165,7 @@ class SpriteMenuFacade:
             log.debug("overlay: facade 气泡展示失败", exc_info=True)
             return False
 
-    # 共享建造器（harness_launcher）会把本对象当「pet 宿主」用
+    # harness 模块的菜单建造器会把本对象当「pet 宿主」用
     def show_bubble(self, text: str, duration_ms: int = 3200, **_ignored) -> bool:
         """宿主形气泡面（``launch_harness_gui`` 读它）。
 

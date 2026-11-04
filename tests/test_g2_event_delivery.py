@@ -27,7 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from pet import agent_link, click_sound, harness_launcher  # noqa: E402
+from pet import agent_link, click_sound, dsh_probe  # noqa: E402
 from pet.agent_link import AgentLinkManager, EventIdentityLedger  # noqa: E402
 from pet.config import Config  # noqa: E402
 
@@ -113,8 +113,8 @@ def harness(tmp_path, monkeypatch):
     for fn in ("play_sound", "play_with_winmm", "play_with_qt"):
         monkeypatch.setattr(click_sound._pool, fn,
                             lambda path, volume=1.0: sounds.append(Path(path).name) or True)
-    monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+    monkeypatch.setattr(dsh_probe, "is_running", lambda port: True)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: True)
 
     cfg = Config(base=tmp_path / "cfg")
     # 注意**不**打开 agent_link.dsh：打开会让 apply_config 真的启动监视器 worker

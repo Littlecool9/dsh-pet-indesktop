@@ -25,32 +25,22 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import os
 from typing import Callable, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QCoreApplication, QObject, QTimer
 
-from . import hotkey_spec
-from . import platform_win
+from ... import hotkey_actions, hotkey_spec, platform_win
 
 logger = logging.getLogger(__name__)
 
 #: ``WM_HOTKEY``（winuser.h）
 WM_HOTKEY = 0x0312
 
-#: 动作 → 配置键。键名与设置行的 ``key`` 同名（「已修改」标记与单项重置才会自动可比）。
-ACTIONS: dict[str, str] = {
-    "open_chat": "hotkey_open_chat",
-    "look_screen": "hotkey_look_screen",
-    "screen_capture": "hotkey_screen_capture",
-}
+#: 动作 → 配置键（定义在 Qt-free 的核心表里，设置页也读同一份）。
+ACTIONS = hotkey_actions.ACTIONS
 
 #: 动作的中文名（日志/提示用）
-ACTION_LABELS: dict[str, str] = {
-    "open_chat": "AI 对话",
-    "look_screen": "看看屏幕",
-    "screen_capture": "截图提问",
-}
+ACTION_LABELS = hotkey_actions.ACTION_LABELS
 
 #: 注册 id 基址（进程内唯一即可；不与 Windows 预定义热键冲突）
 _BASE_ID = 0xA5D0
@@ -63,7 +53,7 @@ _LIVE_SERVICES: list = []
 
 def is_supported() -> bool:
     """当前平台能否注册系统级热键（只有 Windows 有这条路）。"""
-    return os.name == "nt"
+    return hotkey_actions.is_supported()
 
 
 class GlobalHotkeyService(QObject, QAbstractNativeEventFilter):

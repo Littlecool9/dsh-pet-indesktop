@@ -37,7 +37,8 @@ from PySide6.QtWidgets import QApplication
 import pet.agent_link as agent_link_mod
 import pet.app as app_mod
 import pet.overlay_shell as overlay_shell_mod
-from pet import harness_launcher
+from pet import dsh_probe
+from pet.modules.harness import harness_launcher
 from pet.app import AppShell
 from pet.config import Config
 
@@ -58,9 +59,9 @@ def out_of_box(tmp_path, monkeypatch):
     - harness 拉起/收口记录：自启策略只按原门判定，不许被本改动放大。
     """
     probed: list[int] = []
-    monkeypatch.setattr(harness_launcher, "is_running",
+    monkeypatch.setattr(dsh_probe, "is_running",
                         lambda port: probed.append(port) or False)
-    monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: False)
+    monkeypatch.setattr(dsh_probe, "desktop_process_running", lambda: False)
     stopped: list[int] = []
     monkeypatch.setattr(harness_launcher, "stop_self_launched_harness",
                         lambda: stopped.append(1) or [])
@@ -76,6 +77,13 @@ def out_of_box(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_link_mod, "_run_pnpm_repairing_specs",
                         lambda *a, **k: pnpm.append(a) or (1, "", []))
     return SimpleNamespace(probed=probed, launches=launches, pnpm=pnpm, stopped=stopped)
+
+
+def _harness_wanted(shell) -> bool:
+    """自启门现在归 harness 模块所有；测试按运行中实例查询。"""
+    module = shell.running_module("harness")
+    assert module is not None, "harness 模块应已启动"
+    return module._autostart_wanted()
 
 
 def assert_no_process_side_effects(env) -> None:
@@ -349,7 +357,7 @@ def test_overlay_external_reenable_restarts_monitor_without_app_restart(overlay_
 def test_overlay_external_change_does_not_expand_harness_autostart(overlay_shell):
     """自启策略只按原门判定：热应用既不新拉起服务，也不改变自启门读数。"""
     shell, config, env = overlay_shell.shell, overlay_shell.config, overlay_shell.env
-    assert shell._harness_autostart_wanted() is False, "用例前置：默认不开自启"
+    assert _harness_wanted(shell) is False, "用例前置：默认不开自启"
 
     _set_link(config, False)
     _wait_until(lambda: _dsh_monitor(shell)._running is False, what="关")
@@ -357,14 +365,14 @@ def test_overlay_external_change_does_not_expand_harness_autostart(overlay_shell
     _pump(0.5)
     assert env.launches == [], "关联动不得拉起 dsh 服务"
     assert env.stopped == [1], "自拉起 dsh 的收口仍按原策略恰一次（不得被新接线放大）"
-    assert shell._harness_autostart_wanted() is False
+    assert _harness_wanted(shell) is False
 
     _set_link(config, True)
     _wait_until(lambda: _dsh_monitor(shell)._running is True, what="开")
     _pump(0.5)
     assert env.launches == [], "重开联动只恢复读方，不得连带拉起 dsh 服务"
     assert env.stopped == [1], "重开不产生第二次收口"
-    assert shell._harness_autostart_wanted() is False, "自启门只读 harness_autostart + 联动门"
+    assert _harness_wanted(shell) is False, "自启门只读 harness_autostart + 联动门"
 
 
 def test_late_duplicate_notification_does_not_restop_harness(overlay_shell):
@@ -388,7 +396,7 @@ def test_late_duplicate_notification_does_not_restop_harness(overlay_shell):
     assert env.stopped == [1], f"迟到的重复通知不得再收口一次，实为 {env.stopped}"
     assert env.launches == [], "关联动不得拉起 dsh 服务"
     assert _dsh_monitor(shell)._running is False, "读方保持关闭"
-    assert shell._harness_autostart_wanted() is False
+    assert _harness_wanted(shell) is False
     assert_no_process_side_effects(env)
 
 
