@@ -49,6 +49,7 @@ import {
   markPurposeDelivered, markPurposeSkip, minePurposeSeeds, normalizePurposeConfig,
   normalizePurposeState, parsePurposeMemo, planNextFire, selectPurpose, summarizePurposeState,
 } from './purpose-engine.js';
+import { focusContextLine, readPetFocus } from './pet-focus-context.js';
 import { resolvePriceTable } from './model-prices.js';
 import { catalogChoices, findCatalogModel, pickCatalogFallback } from './model-options.js';
 import { createOutbox } from './outbox.js';
@@ -1872,17 +1873,18 @@ async function main() {
     String(process.env.DSH_HOME || '').trim() || path.join(os.homedir(), '.dsh'),
     'surfcore', 'pet', 'focus.json',
   );
-  let petFocusCache = { at: 0, enabled: false };
+  // 缓存整个 focus 对象（enabled/phase/endsAt），提示词要的是「专注阶段 + 结束时间」，
+  // 不能只缓存一个布尔值。10 秒缓存保持不变：桌宠切专注后最多晚 10 秒影响提示词。
+  let petFocusCache = { at: 0, focus: { enabled: false, phase: '', endsAt: 0 } };
   let petFocusLogAt = 0;
+  function readPetFocusCached() {
+    if (Date.now() - petFocusCache.at < 10_000) return petFocusCache.focus;
+    const focus = readPetFocus(PET_FOCUS_FILE);
+    petFocusCache = { at: Date.now(), focus };
+    return focus;
+  }
   function petFocusEnabled() {
-    if (Date.now() - petFocusCache.at < 10_000) return petFocusCache.enabled;
-    let enabled = false;
-    try {
-      const raw = readJsonSafe(PET_FOCUS_FILE, null);
-      enabled = raw?.enabled === true;
-    } catch {}
-    petFocusCache = { at: Date.now(), enabled };
-    return enabled;
+    return readPetFocusCached().enabled === true;
   }
   function logPetFocusSkip() {
     if (Date.now() - petFocusLogAt < 30 * 60_000) return;
@@ -1918,6 +1920,45 @@ async function main() {
       return true;
     } catch (error) {
       log(`[目的] 重新载入状态失败：${error?.message ?? error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 每次目的 tick 判定前，把磁盘上的「今日次数 / 上次说话时间」合并进内存。
+   * 桌宠的 /proactive/claim 与桥接是两个进程、同一份 purpose-outreach.json：
+   * 插件领走一次额度后，桥接如果只看自己的内存，会以为今天还没说过、并用自己的
+   * 旧计数把磁盘值覆盖回去。同一天取 max 是最小且安全的合并（两边只会 +1）。
+   */
+  function mergePurposeCountersFromDisk(now = Date.now()) {
+    try {
+      const raw = readJsonSafe(PURPOSE_FILE, null);
+      if (!raw || typeof raw !== 'object') return false;
+      const disk = normalizePurposeState(raw, now);
+      ensurePurposeDay(purposeState, now);
+      ensurePurposeDay(disk, now);
+      if (disk.day !== purposeState.day) return false;
+      const countToday = Math.max(Number(purposeState.countToday) || 0, Number(disk.countToday) || 0);
+      const lastSentAt = Math.max(Number(purposeState.lastSentAt) || 0, Number(disk.lastSentAt) || 0);
+      // claim 还会把 nextFireAt 推到 now+gap；不一起合并的话，桥接可能用自己的旧
+      // nextFireAt 立刻补一枪，等于无视刚才领走的额度。
+      const nextFireAt = Math.max(Number(purposeState.nextFireAt) || 0, Number(disk.nextFireAt) || 0);
+      const diskClaim = disk.lastClaim;
+      const lastClaim = diskClaim && (!purposeState.lastClaim || diskClaim.at > purposeState.lastClaim.at)
+        ? diskClaim
+        : purposeState.lastClaim;
+      const changed = countToday !== purposeState.countToday
+        || lastSentAt !== purposeState.lastSentAt
+        || nextFireAt !== purposeState.nextFireAt
+        || lastClaim !== purposeState.lastClaim;
+      if (!changed) return false;
+      purposeState.countToday = countToday;
+      purposeState.lastSentAt = lastSentAt;
+      purposeState.nextFireAt = nextFireAt;
+      purposeState.lastClaim = lastClaim;
+      return true;
+    } catch (error) {
+      log(`[目的] 合并桌宠额度计数失败：${error?.message ?? error}`);
       return false;
     }
   }
@@ -3136,6 +3177,10 @@ async function main() {
     const now = new Date();
     const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
     const parts = [timeLine];
+    // 专注模式：紧跟时间行告诉 QQ 侧「主人在专注 / 休息 + 预计结束时间」，
+    // 只说状态不说内容；专注没关时返回空串，不占提示词。
+    const focusLine = focusContextLine(readPetFocusCached(), now.getTime());
+    if (focusLine) parts.push(focusLine);
     if (cfg.slang?.enabled !== false) {
       const block = buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8);
       if (block) parts.push(block);
@@ -12399,6 +12444,10 @@ async function main() {
     // 载体可能刚从桌宠切回 QQ（或桌宠离线回落）：先对齐桌宠写过的状态文件，
     // 否则会用启动时的旧状态覆盖「今日次数 / 下次时间 / 惦记的事」。
     if (!preview && !purposeRun) reloadPurposeStateIfChanged();
+    // 桌宠 /proactive/claim 可能刚在另一个进程里 +1；判定前必须把磁盘计数并进来。
+    if (!preview && mergePurposeCountersFromDisk()) {
+      log('[目的] 已合并桌宠写入的今日次数 / 上次说话时间');
+    }
     // 专注模式：自动轮次直接不出声；force（用户手动试一次）仍放行。
     if (!preview && !force && petFocusEnabled()) {
       logPetFocusSkip();

@@ -30,12 +30,15 @@ import {
   evaluatePurposeTick,
   formatMaterialLine,
   formGoalHypotheses,
+  inQuietHours,
   markPurposeDelivered,
   markPurposeSkip,
   minePurposeSeeds,
+  nextDayStartAfter,
   normalizePurposeConfig,
   normalizePurposeState,
   planNextFire,
+  quietEndAfter,
   selectPurpose,
   summarizePurposeState,
 } from '../../../src/purpose-engine.js';
@@ -134,6 +137,74 @@ export function createPetPurposeService({ chat, tokenBudget = null, pluginLog = 
       lastError = `写目的状态失败：${String(error?.message ?? error).slice(0, 120)}`;
       pluginLog('[pet-purpose]', lastError);
     }
+  }
+
+  // ── 共享「主动说话」额度（桌宠视觉 / 自言自语 / QQ 目的机制）──────────────
+  // 关键：每次都必须从磁盘重读。桥接进程也会写同一份 purpose-outreach.json，
+  // 内存里的 stateCache 可能已经落后；用缓存判定会把别人刚领走的额度再发一遍。
+  function readClaimState(now) {
+    const file = resolveStateFile();
+    stateFile = file;
+    const state = normalizePurposeState(readJson(file, null), now);
+    ensurePurposeDay(state, now);
+    return state;
+  }
+
+  function focusRetryAt(now) {
+    try {
+      const focus = chat.readFocus?.();
+      const endsAt = Number(focus?.endsAt) || 0;
+      return endsAt > now ? endsAt : 0;
+    } catch { return 0; }
+  }
+
+  function claimDenied(reason, retryAt, hint) {
+    return { ok: true, granted: false, reason, retryAt: Math.max(0, Math.round(Number(retryAt) || 0)), hint };
+  }
+
+  /**
+   * 领一次「现在可以主动说一句话」的额度。
+   * 顺序：专注 → 安静时段 → 今日上限 → 最小间隔 → 放行。
+   * 返回 HTTP 200 的判定结果（granted true/false）；body 不合法才由路由回 400。
+   */
+  function claim(sourceOrBody = {}) {
+    const body = typeof sourceOrBody === 'string' ? { source: sourceOrBody } : sourceOrBody;
+    const source = typeof body?.source === 'string' ? body.source.trim() : '';
+    if (!source) {
+      return { ok: false, code: 'invalid-source', error: '缺少 source', hint: 'body 必须是 {"source":"vision" | "self-talk" | "..."}，source 为非空字符串。' };
+    }
+    const now = Date.now();
+    const p = purposeConfig();
+    const config = p.config;
+    const state = readClaimState(now);
+
+    if (focusNow()) {
+      return claimDenied('focus', focusRetryAt(now), '主人在专注模式，先别主动说话；等专注结束，或关闭专注模式再试。');
+    }
+    if (inQuietHours(now, config)) {
+      return claimDenied('quiet', quietEndAfter(now, config), '现在是安静时段，等 retryAt 之后再主动说话。');
+    }
+    if (config.dailyMax > 0 && state.countToday >= config.dailyMax) {
+      return claimDenied('daily', nextDayStartAfter(now, config), '今天的主动说话次数已用完，明天再试。');
+    }
+    if (state.lastSentAt > 0 && now - state.lastSentAt < config.gapMinMs) {
+      return claimDenied('gap', state.lastSentAt + config.gapMinMs, '距上次主动说话还不够久，等 retryAt 之后再试。');
+    }
+
+    // 放行：占掉今日次数，并把目的引擎自己的下一枪推到至少 gap 之后，
+    // 避免它紧接着又自动发一条。
+    state.countToday = (Number(state.countToday) || 0) + 1;
+    state.lastSentAt = now;
+    state.lastClaim = { source: source.slice(0, 40), at: now };
+    const nextAllowedAt = now + config.gapMinMs;
+    state.nextFireAt = Math.max(Number(state.nextFireAt) || 0, nextAllowedAt);
+    saveState(state);
+    return {
+      ok: true,
+      granted: true,
+      remainingToday: config.dailyMax > 0 ? Math.max(0, config.dailyMax - state.countToday) : null,
+      nextAllowedAt,
+    };
   }
 
   // ── 素材 ────────────────────────────────────────────────────────────────
@@ -625,6 +696,7 @@ export function createPetPurposeService({ chat, tokenBudget = null, pluginLog = 
     status,
     preview,
     run: runOnce,
+    claim,
     fallbackToQQ,
     config: purposeConfig,
     stateFile: () => stateFile,

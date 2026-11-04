@@ -32,6 +32,8 @@ let usageResult = null;
 let lastSelfTalkContext = null;
 let lastUsageBody = null;
 let lastFocusOptions = null;
+let lastClaimBody = null;
+let claimResult = null;
 
 const chat = {
   token: () => TOKEN,
@@ -84,6 +86,10 @@ const purpose = {
   status: () => ({ ok: true, carrier: 'pet', online: true }),
   preview: async () => ({ ok: true, preview: '说点什么' }),
   run: async () => ({ ok: true, sent: false }),
+  claim: (body) => {
+    lastClaimBody = body;
+    return claimResult || { ok: true, granted: true, remainingToday: 3, nextAllowedAt: 1700000000000 };
+  },
   online: true,
 };
 
@@ -309,6 +315,35 @@ console.log('## 7. 桌宠客户端扩展接口（人格 / 自言自语 / 额度 
   });
   ok(focus.res.statusCode === 200 && focus.data?.focus?.phase === 'short_break', '/focus 接收 phase');
   ok(lastFocusOptions?.endsAt === '2026-11-04T10:00:00.000Z', '/focus 把 endsAt 原样交给对话服务归一化');
+}
+
+console.log('## 8. 共享主动说话额度 /proactive/claim');
+{
+  const noToken = await call({ method: 'POST', pathname: '/proactive/claim', headers: { host: '127.0.0.1:57981', 'content-type': 'application/json' }, body: '{"source":"vision"}' });
+  ok(noToken.res.statusCode === 401, '/proactive/claim 没有令牌 → 401');
+
+  const granted = await call({ method: 'POST', pathname: '/proactive/claim', headers: jsonPost(), body: '{"source":"vision"}' });
+  ok(granted.res.statusCode === 200 && granted.data?.granted === true, '领到额度 → 200 + granted=true');
+  ok(granted.data?.remainingToday === 3 && granted.data?.nextAllowedAt === 1700000000000, 'granted 带 remainingToday / nextAllowedAt');
+  ok(lastClaimBody?.source === 'vision', 'source 原样交给目的服务');
+
+  claimResult = { ok: true, granted: false, reason: 'quiet', retryAt: 1700000001000, hint: '现在是安静时段' };
+  const denied = await call({ method: 'POST', pathname: '/proactive/claim', headers: jsonPost(), body: '{"source":"self-talk"}' });
+  ok(denied.res.statusCode === 200 && denied.data?.granted === false, '额度被拒也是 200 + granted=false');
+  ok(denied.data?.reason === 'quiet' && denied.data?.retryAt === 1700000001000, '拒绝带 reason / retryAt');
+  ok(Boolean(denied.data?.hint), '拒绝带 hint 下一步');
+  claimResult = null;
+
+  const badJson = await call({ method: 'POST', pathname: '/proactive/claim', headers: jsonPost(), body: '{oops' });
+  ok(badJson.res.statusCode === 400 && badJson.data?.code === 'invalid-json', '非法 JSON → 400 + code=invalid-json');
+  ok(Boolean(badJson.data?.hint), '非法 JSON 带 hint');
+
+  const noSource = await call({ method: 'POST', pathname: '/proactive/claim', headers: jsonPost(), body: '{}' });
+  ok(noSource.res.statusCode === 400 && noSource.data?.code === 'invalid-source', '缺 source → 400 + code=invalid-source');
+  ok(Boolean(noSource.data?.hint), '缺 source 带 hint');
+
+  const emptySource = await call({ method: 'POST', pathname: '/proactive/claim', headers: jsonPost(), body: '{"source":"   "}' });
+  ok(emptySource.res.statusCode === 400 && emptySource.data?.code === 'invalid-source', '空白 source → 400');
 }
 
 fs.rmSync(stateDir, { recursive: true, force: true });
