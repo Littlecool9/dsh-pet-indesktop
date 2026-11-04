@@ -239,186 +239,40 @@ def test_identity_space_is_zero_to_128(tmp_path):
 
 
 def test_sidecar_names_do_not_collide_with_existing_globs():
-    """活跃集合沿用生产文件名（原地升 v2）；代次文件不得撞 config-*/runtime-* glob。"""
-    assert pp.ACTIVE_SET_FILENAME == "overlay-active-pets.json"
+    """代次文件不得撞 config-*/runtime-* glob。"""
     for pattern in ("config-", "runtime-", "config-slot-", "pet-runtime-v2-"):
         assert not pp.GENERATION_FILENAME.startswith(pattern), pp.GENERATION_FILENAME
     assert pp.GENERATION_FILENAME.endswith(".json")
 
 
-def test_normalize_slots_keeps_zero_and_drops_out_of_range():
-    assert pp.normalize_slots([2, 1, 0, -1, "x", 129, 1, None]) == [2, 1, 0]
-    assert pp.normalize_slots([0]) == [0]
-    assert pp.normalize_slots(None) == []
-    assert pp.normalize_slots([128, 129]) == [128]
 
 
 # ---------------------------------------------------------------- 最小非活跃分配
-def test_allocate_returns_zero_even_when_profile_exists(tmp_path):
-    """已有档案不阻止"恢复"：0 号档案在盘上也算空闲（恢复 ≠ 覆盖）。"""
-    _dump(pp.slot_profile_path(tmp_path, 0), {"version": 4, "character": "dog"})
-    _dump(pp.slot_profile_path(tmp_path, 1), {"version": 4})
-    assert pp.allocate_slot(active_slots=()) == 0
-    assert pp.allocate_slot(active_slots=[1]) == 0
-    assert pp.allocate_slot(active_slots=[0]) == 1
-    # 档案内容一个字节都没被分配动作碰过
-    assert json.loads(pp.slot_profile_path(tmp_path, 0).read_text(
-        encoding="utf-8"))["character"] == "dog"
 
 
-def test_allocate_picks_smallest_non_active(tmp_path):
-    assert pp.allocate_slot(active_slots=[0, 2]) == 1
-    assert pp.allocate_slot(active_slots=[2]) == 0
-    assert pp.allocate_slot(active_slots=[0, 1, 2]) == 3
-    assert pp.allocate_slot(active_slots=["1", 0, None]) == 2
 
 
-def test_allocate_keeps_top_identity_and_reports_capacity(tmp_path):
-    """0..127 活跃时仍能分配 128（上界不缩短）；0..128 全活跃才真满。"""
-    assert pp.allocate_slot(active_slots=list(range(0, 128))) == 128
-    assert pp.allocate_slot(active_slots=list(range(1, 129))) == 0
-    with pytest.raises(pp.CapacityFullError) as excinfo:
-        pp.allocate_slot(active_slots=list(range(0, 129)))
-    assert "129" in str(excinfo.value)
-    with pytest.raises(pp.CapacityFullError):
-        pp.allocate_slot(active_slots=range(0, 129))
 
 
 # ---------------------------------------------------------------- 活跃集合 v2
-def test_active_set_missing_file_is_fresh_install_default_zero(tmp_path):
-    state = pp.load_active_set(tmp_path)
-    assert state.status == "missing"
-    assert state.slots == (0,)
-    assert state.raw_version is None
-    assert state.path == tmp_path / pp.ACTIVE_SET_FILENAME
 
 
-def test_active_set_v2_empty_stays_empty(tmp_path):
-    """有效 v2 空集合是合法状态：不得静默补一只。"""
-    _dump(pp.active_set_path(tmp_path),
-          {"version": 2, "slots": []})
-    state = pp.load_active_set(tmp_path)
-    assert state.status == "ok"
-    assert state.slots == ()
-    assert state.raw_version == 2
 
 
-def test_active_set_v2_keeps_zero_and_reports_dropped_entries(tmp_path):
-    _dump(pp.active_set_path(tmp_path),
-          {"version": 2, "slots": [0, 300, -1, "x", 5, 5]})
-    state = pp.load_active_set(tmp_path)
-    assert state.status == "ok"
-    assert state.slots == (0, 5)
-    assert state.dropped == (300, -1, "x")
 
 
-@pytest.mark.parametrize("legacy,expected", [
-    ([1, 2], (0, 1, 2)),
-    ([], (0,)),               # 主代理裁决：v1 空子集合迁移后必须 [0]，不是 []
-    ([2], (0, 2)),
-    ([0, 3], (0, 3)),         # 旧文件里偶然带 0：不得重复
-    ([3, 0, 2], (3, 0, 2)),   # 顺序保持（0 已在则原样）
-    ([2, None, "a"], (0, 2)),  # 非法条目丢弃但 0 照样补上
-])
-def test_active_set_v1_any_list_gets_zero(tmp_path, legacy, expected):
-    """v1 时代的 0 是隐式主宠：任何旧列表（含空）迁移视图都必须补上 0。"""
-    _dump(pp.active_set_path(tmp_path), {"version": 1, "slots": legacy})
-    state = pp.load_active_set(tmp_path)
-    assert state.status == "migrated-v1"
-    assert state.slots == expected
-    assert state.raw_version == 1
 
 
-@pytest.mark.parametrize("text,status", [
-    ("{ not json", "corrupt"),
-    ("", "corrupt"),          # 崩溃留下的 0 字节文件同样是"损坏"，不是新装
-    ("[]", "corrupt"),
-    ('"slots"', "corrupt"),
-    ('{"version": 2}', "corrupt"),
-    ('{"version": 2, "slots": {"a": 1}}', "corrupt"),
-    ('{"version": 3, "slots": [0]}', "unsupported-version"),
-    ("{}", "corrupt"),
-])
-def test_active_set_broken_is_not_treated_as_fresh_install(tmp_path, text, status):
-    """坏文件/未知版本：只报告，不覆盖，也**不**当作新装返回 [0]。"""
-    path = pp.active_set_path(tmp_path)
-    _write(path, text)
-    state = pp.load_active_set(tmp_path)
-    assert state.status == status
-    assert state.slots == ()
-    assert state.reason
-    assert path.read_text(encoding="utf-8") == text, "读路径不得改写坏文件"
 
 
-def test_save_active_set_roundtrip_and_normalization(tmp_path):
-    result = pp.save_active_set(tmp_path, [0, 2])
-    assert result.status == "ok"
-    assert json.loads(pp.active_set_path(tmp_path).read_text(encoding="utf-8")) == {
-        "version": 2, "slots": [0, 2]}
-    assert pp.load_active_set(tmp_path).slots == (0, 2)
-
-    assert pp.save_active_set(tmp_path, []).status == "ok"
-    assert pp.load_active_set(tmp_path).slots == ()
-
-    assert pp.save_active_set(tmp_path, [2, 0, 0, "x", 999]).status == "ok"
-    assert pp.load_active_set(tmp_path).slots == (2, 0)
 
 
-def test_save_active_set_refuses_to_overwrite_broken_file(tmp_path):
-    path = pp.active_set_path(tmp_path)
-    _write(path, "{ not json")
-    result = pp.save_active_set(tmp_path, [0])
-    assert result.status == "refused-corrupt"
-    assert path.read_text(encoding="utf-8") == "{ not json"
-
-    result = pp.save_active_set(tmp_path, [0], on_broken="backup-overwrite")
-    assert result.status == "ok"
-    assert pp.load_active_set(tmp_path).slots == (0,)
-    backups = list(tmp_path.glob(f"{pp.ACTIVE_SET_FILENAME}.corrupt-*"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == "{ not json"
 
 
-def test_migrate_active_set_v1_backs_up_and_is_idempotent(tmp_path):
-    path = pp.active_set_path(tmp_path)
-    legacy_bytes = json.dumps({"version": 1, "slots": [1, 2]}, indent=2)
-    _write(path, legacy_bytes)
-    result = pp.migrate_active_set(tmp_path)
-    assert result.status == "migrated"
-    assert json.loads(path.read_text(encoding="utf-8")) == {"version": 2, "slots": [0, 1, 2]}
-    backup = path.with_name(f"{path.name}.v1.bak")
-    assert backup.read_text(encoding="utf-8") == legacy_bytes
-
-    after_first = path.read_bytes()
-    backup_bytes = backup.read_bytes()
-    assert pp.migrate_active_set(tmp_path).status == "already-v2"
-    assert path.read_bytes() == after_first, "重跑必须字节不变（幂等）"
-    assert backup.read_bytes() == backup_bytes, "备份不得被重跑覆盖"
 
 
-def test_migrate_active_set_v1_empty_becomes_zero(tmp_path):
-    """主代理裁决（规范 §一）：v1 空子集合迁移后是 [0]，不是 []。"""
-    _dump(pp.active_set_path(tmp_path), {"version": 1, "slots": []})
-    assert pp.migrate_active_set(tmp_path).status == "migrated"
-    assert pp.load_active_set(tmp_path).slots == (0,)
 
 
-def test_migrate_active_set_never_touches_broken_or_missing_file(tmp_path):
-    path = pp.active_set_path(tmp_path)
-    assert pp.migrate_active_set(tmp_path).status == "no-file"
-    assert not path.exists(), "缺失 = 新装默认 [0]，不需要凭空创建文件"
-
-    _write(path, "{ not json")
-    result = pp.migrate_active_set(tmp_path)
-    assert result.status == "corrupt"
-    assert path.read_text(encoding="utf-8") == "{ not json"
-    assert list(tmp_path.glob(f"{pp.ACTIVE_SET_FILENAME}.*.bak")) == []
-    assert list(tmp_path.glob(f"{pp.ACTIVE_SET_FILENAME}.corrupt-*")) == []
-
-    _dump(path, {"version": 3, "slots": [0]})
-    result = pp.migrate_active_set(tmp_path)
-    assert result.status == "unsupported-version"
-    assert json.loads(path.read_text(encoding="utf-8")) == {"version": 3, "slots": [0]}
 
 
 # ---------------------------------------------------------------- slot0 档案迁移
@@ -690,43 +544,10 @@ def test_slot0_migration_backup_failure_without_copy_leaves_nothing(tmp_path, mo
     assert pp.global_config_path(tmp_path).is_file(), "源全局文件不得丢"
 
 
-def test_migrate_active_set_rejects_a_non_v1_backup(tmp_path):
-    path = pp.active_set_path(tmp_path)
-    legacy = json.dumps({"version": 1, "slots": [1, 2]}, indent=2)
-    _write(path, legacy)
-    backup = path.with_name(f"{path.name}.v1.bak")
-    _write(backup, "SENTINEL")
-    result = pp.migrate_active_set(tmp_path)
-    assert result.status == "backup-invalid", result
-    assert backup.read_text(encoding="utf-8") == "SENTINEL"
-    assert path.read_text(encoding="utf-8") == legacy, "证据无效时不得升级文件"
 
 
-def test_migrate_active_set_keeps_a_genuine_v1_backup(tmp_path):
-    path = pp.active_set_path(tmp_path)
-    legacy = json.dumps({"version": 1, "slots": [1, 2]}, indent=2)
-    _write(path, legacy)
-    backup = path.with_name(f"{path.name}.v1.bak")
-    _write(backup, legacy)
-    assert pp.migrate_active_set(tmp_path).status == "migrated"
-    assert backup.read_text(encoding="utf-8") == legacy, "已有真备份不得被重写"
 
 
-def test_migrate_active_set_backup_failure_leaves_no_partial_backup(tmp_path, monkeypatch):
-    path = pp.active_set_path(tmp_path)
-    legacy = json.dumps({"version": 1, "slots": [1, 2]}, indent=2)
-    _write(path, legacy)
-
-    def partial_copy(src, dst, **kwargs):
-        Path(dst).write_text("{ partial", encoding="utf-8")
-        raise OSError("copy interrupted")
-
-    monkeypatch.setattr(pp.shutil, "copy2", partial_copy)
-    result = pp.migrate_active_set(tmp_path)
-    assert result.status == "backup-failed", result
-    backup = path.with_name(f"{path.name}.v1.bak")
-    assert not backup.exists(), "中断的备份不得在最终名上留下残片"
-    assert path.read_text(encoding="utf-8") == legacy, "升级失败时原文件不得被改"
 
 
 def test_slot0_migration_source_states(tmp_path):
@@ -1100,16 +921,6 @@ def test_generation_broken_sidecar_is_not_treated_as_fresh(tmp_path):
 
 
 # ---------------------------------------------------------------- 失败态词表
-def test_save_active_set_reports_lock_timeout_without_writing(tmp_path):
-    """真进程持锁时：写类 API 返回 lock-timeout 并且一个字节都不写。"""
-    path = pp.active_set_path(tmp_path)
-    child, release = _holder(tmp_path)
-    try:
-        result = pp.save_active_set(tmp_path, [0, 1], timeout=0.5)
-        assert result.status == "lock-timeout", result
-        assert not path.exists(), "抢不到锁时绝不写盘"
-    finally:
-        _release(child, release)
 
 
 def test_write_api_reports_lock_unavailable_when_primitive_missing(tmp_path, monkeypatch):
@@ -1122,10 +933,6 @@ def test_write_api_reports_lock_unavailable_when_primitive_missing(tmp_path, mon
         raise cwl.ConfigWriteError("no lock primitive here")
 
     monkeypatch.setattr(cwl, "_open_lock_fd", boom)
-    result = pp.save_active_set(tmp_path, [0])
-    assert result.status == "lock-unavailable", result
-    assert not pp.active_set_path(tmp_path).exists()
-
     migration = pp.migrate_slot0_profile(tmp_path)
     assert migration.status == "lock-unavailable", migration
 
@@ -1272,22 +1079,14 @@ def test_snapshot_takes_the_lock_and_bounds_the_wait(tmp_path):
         _release(child, release)
 
 
-@pytest.mark.parametrize("target", ["active", "profile"])
-def test_invalid_utf8_bytes_are_corrupt_not_an_exception(tmp_path, target):
+def test_invalid_utf8_bytes_are_corrupt_not_an_exception(tmp_path):
     """P5：读盘遇到非法 UTF-8 必须归入 corrupt，不许 UnicodeDecodeError 逃逸。"""
-    if target == "active":
-        path = pp.active_set_path(tmp_path)
-        path.write_bytes(b'{"version": 2, "slots": [0]}\xff\xfe')
-        assert pp.load_active_set(tmp_path).status == "corrupt"
-        before = path.read_bytes()
-        assert pp.save_active_set(tmp_path, [0]).status == "refused-corrupt"
-    else:
-        path = pp.slot_profile_path(tmp_path, 0)
-        path.write_bytes(b'{"version": 4, "scale": 1.0}\xff')
-        assert pp.read_slot_profile(tmp_path, 0).status == "corrupt"
-        before = path.read_bytes()
-        assert pp.write_profile_settings(
-            tmp_path, 0, {"scale": 1.1}).status == "refused-corrupt"
+    path = pp.slot_profile_path(tmp_path, 0)
+    path.write_bytes(b'{"version": 4, "scale": 1.0}' + bytes([0xff]))
+    assert pp.read_slot_profile(tmp_path, 0).status == "corrupt"
+    before = path.read_bytes()
+    assert pp.write_profile_settings(
+        tmp_path, 0, {"scale": 1.1}).status == "refused-corrupt"
     assert path.read_bytes() == before, "坏文件不得被改写"
 
 
@@ -1298,20 +1097,6 @@ def test_generation_file_with_invalid_utf8_is_corrupt(tmp_path):
         pp.slot_generation(tmp_path, 0)
 
 
-def test_save_active_set_refuses_to_upgrade_v1_without_the_backup_path(tmp_path):
-    """P6：v1 文件上直接写 v2 = 绕过迁移备份，默认必须拒绝（先 migrate）。"""
-    path = pp.active_set_path(tmp_path)
-    legacy = json.dumps({"version": 1, "slots": [1, 2]}, indent=2)
-    _write(path, legacy)
-    result = pp.save_active_set(tmp_path, [0, 1])
-    assert result.status == "refused-legacy-v1", result
-    assert path.read_text(encoding="utf-8") == legacy
-
-    result = pp.save_active_set(tmp_path, [0, 1], on_broken="backup-overwrite")
-    assert result.status == "ok", result
-    assert pp.load_active_set(tmp_path).slots == (0, 1)
-    backup = path.with_name(f"{path.name}.v1.bak")
-    assert backup.read_text(encoding="utf-8") == legacy, "显式升级也要先备份"
 
 
 def test_single_key_default_does_not_build_the_whole_table(tmp_path, monkeypatch):

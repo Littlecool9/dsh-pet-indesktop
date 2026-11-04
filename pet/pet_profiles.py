@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-"""G1a 存储层：每宠档案（slot profile）+ 活跃集合 v2 + 数据代次。
+"""G1a 存储层：slot0 档案（slot profile）+ 数据代次。
 
-overlay、legacy与设置路由共同使用本模块的固定身份档案、活跃集合和代次API。
-每宠数据不写global；旧入口只保留委托包装。
+overlay、legacy与设置路由共同使用本模块的固定身份档案和代次API。
+每宠数据不写global；旧入口只保留委托包装。多宠已删除：只剩 slot 0，
+``overlay-active-pets.json`` 不再读写（文件留在盘上、不删除不覆盖）。
 
 ## 一、所有权与真值（规范 §五）
 
-- **槽档案** = ``<config_dir>/config-slot-N.json``（含 0；沿用既有命名约定）；
-- **活跃集合** = ``<config_dir>/overlay-active-pets.json``（运行时状态，既不属于
-  全局设置也不属于任何一只宠；v2 起含 0）；
+- **槽档案** = ``<config_dir>/config-slot-N.json``（运行时只用 0）；
 - **数据代次** = ``<config_dir>/overlay-slot-generations.json``（运行时状态）。
 
 **每宠键集为什么不能塞进档案文件里**：``Config.reload`` 只吸收它认识的键，
@@ -19,16 +18,7 @@ overlay、legacy与设置路由共同使用本模块的固定身份档案、活�
 
 每宠键集唯一来源在本模块，overlay_spawn_state只re-export兼容子集；设置路由含位置与朝向。
 
-## 二、活跃集合 v2 的三种状态必须分开（规范 §一）
-
-| 盘上状态 | 视图 | 说明 |
-|---|---|---|
-| 文件缺失 | ``(0,)`` | 新安装默认只有主宠；**不**因此创建文件 |
-| v2（含空列表） | 原样 | 空集合是合法状态，绝不静默补一只 |
-| v1（含空列表） | ``0`` + 旧集合 | v1 的 0 是隐式主宠，任何旧列表都要补 0 |
-| 损坏 / 未知版本 | ``()`` + 诊断 | **不**当新装（不带 0）、**不**覆盖文件 |
-
-## 三、slot0 迁移（规范 §一/§五）
+## 二、slot0 迁移（规范 §一/§五）
 
 ``migrate_slot0_profile``：从**全局** ``config.json`` 抽取每宠键（含几何）写进
 ``config-slot-0.json``。铁律：
@@ -48,11 +38,10 @@ overlay、legacy与设置路由共同使用本模块的固定身份档案、活�
 - **不是事务**：备份 + 写目标 + 将来删源是多个文件的多个步骤，中途中断只会留下
   "备份在、目标未写"或"目标已写、源未清"这类可重跑状态，本模块**不声称原子**——
   重跑一遍即可收敛（幂等）。
-- 迁移源必须是**全局配置**：``--slot N`` 形态下那个进程的"全局配置"就是
-  ``config-slot-N.json``（另一只宠的档案），``--slot 0`` 形态下源与目标同文件——
-  两种情况都返回 ``refused-slot-source``，一个字节不写（跨身份替换是规范明令禁止的）。
+- 迁移源必须是**全局配置**；源与目标同文件时返回 ``refused-slot-source``，
+  一个字节不写（跨身份替换是规范明令禁止的）。
 
-## 四、返回结构与异常合同
+## 三、返回结构与异常合同
 
 - **写类 API 一律返回** :class:`ProfileResult`（``status`` / ``reason`` / 变更明细），
   不抛异常：配置目录坏了、锁被占、备份失败都不该炸掉壳层。
@@ -68,7 +57,7 @@ overlay、legacy与设置路由共同使用本模块的固定身份档案、活�
 **代次 token 的取法（唯一合法路径）**：token 只能来自 :func:`read_slot_snapshot`
 （档案 + 代次在同一把锁内一次读出）或 :func:`begin_slot_generation`（新住客入住）。
 **禁止**"保存前再新读一次代次"——那读到的是另一代的代次，代次门会形同虚设。
-- **读类 API** 返回数据对象（:class:`ActiveSet` / :class:`SlotProfile`），用
+- **读类 API** 返回数据对象（:class:`SlotProfile`），用
   ``status`` 回答"读到了什么"；只有"读不出来会让保护静默失效"的场合才抛：
   :func:`slot_generation` 在代次文件损坏时抛 :class:`ProfileStateError`
   （返回 0 会被当成"全新槽"，从而错误接受迟到的旧写）。
@@ -76,12 +65,10 @@ overlay、legacy与设置路由共同使用本模块的固定身份档案、活�
 - 等锁超时与写盘失败分别返回 ``"lock-timeout"`` / ``"write-failed"``（由
   :mod:`pet.config_write_lock` 的异常翻译而来）。
 
-## 五、两套 slot↔身份映射（禁止合并，规范 §五/规划 §4.3）
+## 四、身份边界
 
-``slot_manager.slot_to_instance_id(0) == ""``（**进程身份**：主实例 / env
-``DSH_PET_INSTANCE`` / runtime 标记命名）；本模块只处理**档案身份**
-（``config-slot-0.json``）。设置进程的 ``--instance slot-0`` 属接线批的事，本模块
-不提供也不改写任何"进程身份"映射——两套语义不同，合并即事故。
+本模块只处理**档案身份**（``config-slot-0.json``），不提供也不改写
+"进程身份"（``DSH_PET_INSTANCE`` / runtime 标记命名）。
 """
 from __future__ import annotations
 
@@ -95,7 +82,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from . import config_write_lock as cwl
 from .config import Config, atomic_replace_with_retry
@@ -103,17 +90,11 @@ from .config import Config, atomic_replace_with_retry
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ACTIVE_SET_FILENAME",
     "BACKUP_FAILED",
     "BACKUP_INVALID",
     "BACKUP_OK",
-    "ACTIVE_SET_V1_BACKUP_SUFFIX",
-    "ACTIVE_SET_VERSION",
-    "ActiveSet",
-    "CapacityFullError",
     "GENERATION_FILENAME",
     "GENERATION_FILE_VERSION",
-    "LEGACY_ACTIVE_SET_VERSION",
     "PER_PET_KEYS",
     "PER_PET_PREFERENCE_KEYS",
     "PER_PET_SETTING_KEYS",
@@ -133,22 +114,16 @@ __all__ = [
     "SlotProfile",
     "SlotSnapshot",
     "SlotRangeError",
-    "active_set_path",
-    "allocate_slot",
     "begin_slot_generation",
     "generation_path",
     "generation_status",
     "global_config_path",
-    "load_active_set",
-    "migrate_active_set",
     "migrate_slot0_profile",
-    "normalize_slots",
     "per_pet_defaults",
     "read_slot_profile",
     "read_slot_snapshot",
     "reset_slot_profile",
     "same_source_default",
-    "save_active_set",
     "slot_generation",
     "slot_profile_exists",
     "slot_profile_path",
@@ -166,12 +141,6 @@ SLOT_COUNT = SLOT_MAX - SLOT_MIN + 1
 #: 档案文档版本 = Config schema 版本（``Config._initial_data()["version"]``）。
 #: 不抄默认大表，只在新建档案时补这个字段；已有档案保留其原值。
 PROFILE_FILE_VERSION = 4
-
-#: 活跃集合文件名沿用生产名（v2 原地替换 v1，不另起名字）。
-ACTIVE_SET_FILENAME = "overlay-active-pets.json"
-ACTIVE_SET_VERSION = 2
-LEGACY_ACTIVE_SET_VERSION = 1
-ACTIVE_SET_V1_BACKUP_SUFFIX = ".v1.bak"
 
 #: 代次侧车（运行时状态；名字不撞 ``config-*`` / ``config-slot-*`` / ``runtime-*``
 #: / ``pet-runtime-v2-*`` 任何一个既有 glob）。
@@ -236,10 +205,6 @@ class SlotRangeError(ProfileError, ValueError):
     """slot 不在 ``SLOT_MIN..SLOT_MAX``（含非整数）。"""
 
 
-class CapacityFullError(ProfileError):
-    """``SLOT_COUNT`` 个身份全部活跃，没有可分配的非活跃槽。"""
-
-
 class ProfileStateError(ProfileError):
     """读到了不可信状态，且"当成全新/默认"会让保护静默失效（如代次文件损坏）。"""
 
@@ -265,23 +230,6 @@ class ProfileResult:
 
     def __str__(self) -> str:  # 便于测试失败信息直读
         return f"ProfileResult({self.status}, reason={self.reason!r})"
-
-
-@dataclass(frozen=True)
-class ActiveSet:
-    """活跃集合的读取视图（``slots`` 已规范化、已按规范处理 v1/缺失/损坏）。"""
-
-    slots: tuple[int, ...]
-    status: str
-    reason: str = ""
-    path: Path | None = None
-    raw_version: int | None = None
-    dropped: tuple[Any, ...] = ()
-
-    @property
-    def ok(self) -> bool:
-        """``True`` = 这份视图可以当"当前活跃集合"用（缺失也算，等于新装默认）。"""
-        return self.status in ("ok", "missing", "migrated-v1")
 
 
 @dataclass(frozen=True)
@@ -405,10 +353,6 @@ def global_config_path(config_dir: Path | str) -> Path:
     return Path(config_dir) / "config.json"
 
 
-def active_set_path(config_dir: Path | str) -> Path:
-    return Path(config_dir) / ACTIVE_SET_FILENAME
-
-
 def generation_path(config_dir: Path | str) -> Path:
     return Path(config_dir) / GENERATION_FILENAME
 
@@ -418,36 +362,6 @@ def slot_profile_exists(config_dir: Path | str, slot) -> bool:
         return slot_profile_path(config_dir, slot).is_file()
     except OSError:
         return False
-
-
-def normalize_slots(slots: Iterable, *, max_slot: int = SLOT_MAX) -> list[int]:
-    """去重保序的合法槽列表：``SLOT_MIN..max_slot`` 之外与非整数一律丢弃。"""
-    normalized, _dropped = _normalize_with_dropped(slots, max_slot=max_slot)
-    return normalized
-
-
-def _normalize_with_dropped(slots: Iterable, *,
-                            max_slot: int = SLOT_MAX) -> tuple[list[int], tuple[Any, ...]]:
-    result: list[int] = []
-    dropped: list[Any] = []
-    seen: set[int] = set()
-    for item in slots if slots is not None else ():
-        if isinstance(item, bool) or item is None:
-            dropped.append(item)
-            continue
-        try:
-            value = int(item)
-        except (TypeError, ValueError):
-            dropped.append(item)
-            continue
-        if value < SLOT_MIN or value > int(max_slot) or value in seen:
-            if value in seen:
-                continue  # 重复不算非法（去重即可）
-            dropped.append(item)
-            continue
-        seen.add(value)
-        result.append(value)
-    return result, tuple(dropped)
 
 
 # ------------------------------------------------------------------ 同源默认
@@ -491,212 +405,6 @@ def same_source_default(key: str, default=None):
     if key not in defaults:
         raise ProfileError(f"每宠键在 Config 默认表里缺失（键集漂移）: {key}")
     return copy.deepcopy(defaults[key])
-
-
-# ------------------------------------------------------------------ 活跃集合
-def load_active_set(config_dir: Path | str) -> ActiveSet:
-    """读活跃集合（**只读**，绝不创建/覆盖文件）。
-
-    ``status``：``"missing"``（文件不在 → 新装默认 ``(0,)``）、``"ok"``（v2，可能
-    为空）、``"migrated-v1"``（v1 视图 = 0 + 旧集合，**含旧空列表 → ``(0,)``**）、
-    ``"corrupt"``（非法 JSON / 非对象 / 结构不对）、``"unsupported-version"``
-    （版本不认识）、``"unreadable"``（OSError）。
-
-    ``corrupt`` / ``unsupported-version`` / ``unreadable`` 一律返回 ``()`` 并留诊断
-    日志：**不**当作新装补 0，也**不**覆盖原文件（覆盖要显式走
-    :func:`save_active_set` 的 ``on_broken="backup-overwrite"``）。
-    """
-    path = active_set_path(config_dir)
-    data, status = cwl.read_json_dict(path)
-    if status == "missing":
-        return ActiveSet(slots=(SLOT_MIN,), status="missing", path=path,
-                         reason="活跃集合文件不在：新安装默认只有 slot0")
-    if status == "ok":
-        raw_version = data.get("version") if data else None
-        if isinstance(raw_version, bool) or not isinstance(raw_version, int):
-            logger.warning("overlay: 活跃集合缺合法 version，按损坏处理: %s", path)
-            return ActiveSet(slots=(), status="corrupt", path=path,
-                             reason=f"version 非法: {raw_version!r}")
-        raw_slots = data.get("slots")
-        if not isinstance(raw_slots, list):
-            logger.warning("overlay: 活跃集合 slots 非列表，按损坏处理: %s", path)
-            return ActiveSet(slots=(), status="corrupt", path=path,
-                             raw_version=raw_version,
-                             reason="slots 不是列表")
-        slots, dropped = _normalize_with_dropped(raw_slots)
-        if dropped:
-            logger.warning("overlay: 活跃集合丢弃非法条目 %s: %s", dropped, path)
-        if raw_version == ACTIVE_SET_VERSION:
-            return ActiveSet(slots=tuple(slots), status="ok", path=path,
-                             raw_version=raw_version, dropped=dropped)
-        if raw_version == LEGACY_ACTIVE_SET_VERSION:
-            if SLOT_MIN not in slots:
-                slots.insert(0, SLOT_MIN)
-            return ActiveSet(slots=tuple(slots), status="migrated-v1", path=path,
-                             raw_version=raw_version, dropped=dropped,
-                             reason="v1 的 slot0 是隐式主宠：迁移视图补 0")
-        logger.warning("overlay: 活跃集合版本不受支持 (%s): %s", raw_version, path)
-        return ActiveSet(slots=(), status="unsupported-version", path=path,
-                         raw_version=raw_version, dropped=dropped,
-                         reason=f"版本 {raw_version} 不受支持（不覆盖、不当新装）")
-    # corrupt / not-object / unreadable
-    resolved = "unreadable" if status == "unreadable" else "corrupt"
-    logger.warning("overlay: 活跃集合 %s，按未知处理（不覆盖、不当新装）: %s",
-                   resolved, path)
-    return ActiveSet(slots=(), status=resolved, path=path,
-                     reason=f"读取状态 {status}（不覆盖、不当新装）")
-
-
-def save_active_set(config_dir: Path | str, slots, *, on_broken: str = "refuse",
-                    timeout: float = cwl.DEFAULT_TIMEOUT_S,
-                    poll: float = cwl.DEFAULT_POLL_S) -> ProfileResult:
-    """原子写 v2 活跃集合（``{"version": 2, "slots": [...]}``，保序去重）。
-
-    允许空列表（空集合是合法状态）；0 正常持久化。默认 ``refuse`` 的三种情况**一个
-    字节都不写**：损坏/非对象/不可读（``refused-corrupt``）、版本不认识
-    （``refused-unsupported-version``）、**仍是 v1**（``refused-legacy-v1``——v1 → v2 属
-    迁移，必须走 :func:`migrate_active_set` 的备份升级路径，不在写路径里偷偷升级）。
-    ``on_broken="backup-overwrite"`` 才先备份（v1 用 ``.v1.bak`` 且校验既有备份，
-    其它用 ``.corrupt-<ms>-<pid>``）再覆盖。
-    """
-    if on_broken not in ("refuse", "backup-overwrite"):
-        raise ValueError(f"on_broken 只接受 'refuse'/'backup-overwrite'，收到 {on_broken!r}")
-    path = active_set_path(config_dir)
-    normalized, dropped = _normalize_with_dropped(slots)
-    if dropped:
-        logger.warning("overlay: 活跃集合忽略非法条目 %s", dropped)
-    payload = {"version": ACTIVE_SET_VERSION, "slots": normalized}
-    backup: Path | None = None
-    try:
-        with cwl.config_write_lock(path.parent, timeout=timeout, poll=poll):
-            _existing, status = cwl.read_json_dict(path)
-            if status not in ("ok", "missing"):
-                if on_broken != "backup-overwrite":
-                    return ProfileResult(
-                        status="refused-corrupt", path=path, dropped=dropped,
-                        reason=f"现有活跃集合不可信（{status}），拒绝覆盖")
-                backup = _backup_corrupt(path)
-                if backup is None:
-                    return ProfileResult(status="backup-failed", path=path,
-                                         reason="备份坏文件失败，放弃写入")
-            elif status == "ok":
-                version = _existing.get("version") if _existing else None
-                if version == LEGACY_ACTIVE_SET_VERSION:
-                    # 审查 P6：v1 → v2 必须走**同一条备份升级路径**（migrate_active_set），
-                    # 直接在这里写 v2 会把 v1 文件无声升级、迁移前快照一份没留。
-                    if on_broken != "backup-overwrite":
-                        return ProfileResult(
-                            status="refused-legacy-v1", path=path, dropped=dropped,
-                            reason="现有活跃集合仍是 v1：先 migrate_active_set"
-                                   "（走备份升级），不要在写路径绕过备份")
-                    legacy_backup = path.with_name(
-                        f"{path.name}{ACTIVE_SET_V1_BACKUP_SUFFIX}")
-                    state = _backup_file(path, legacy_backup,
-                                         validate=_is_v1_active_set_document)
-                    if state != BACKUP_OK:
-                        return ProfileResult(
-                            status=("backup-invalid" if state == BACKUP_INVALID
-                                    else "backup-failed"),
-                            path=path,
-                            reason="备份路径上的既有文件不是有效的 v1 活跃集合"
-                                   "（不覆盖、不升级）" if state == BACKUP_INVALID
-                                   else "备份 v1 文件失败，放弃写入")
-                    backup = legacy_backup
-                elif version != ACTIVE_SET_VERSION:
-                    if on_broken != "backup-overwrite":
-                        return ProfileResult(
-                            status="refused-unsupported-version", path=path,
-                            dropped=dropped,
-                            reason=f"现有活跃集合版本 {version!r} 不支持，拒绝覆盖")
-                    backup = _backup_corrupt(path)
-                    if backup is None:
-                        return ProfileResult(status="backup-failed", path=path,
-                                             reason="备份失败，放弃写入")
-            cwl.atomic_write_json(path, payload)
-    except cwl.ConfigWriteError as exc:
-        return ProfileResult(status=_failure_status(exc), path=path, reason=str(exc))
-    return ProfileResult(status="ok", path=path,
-                         changed=tuple(str(slot) for slot in normalized),
-                         dropped=dropped, backup_path=backup)
-
-
-def migrate_active_set(config_dir: Path | str, *,
-                       timeout: float = cwl.DEFAULT_TIMEOUT_S,
-                       poll: float = cwl.DEFAULT_POLL_S) -> ProfileResult:
-    """v1 → v2 迁移：**先备份、可重跑（幂等）**，绝不覆盖坏文件。
-
-    - v1（含空列表）→ ``[0] + 旧集合``（主代理裁决：空子集合迁移后是 ``[0]``，
-      不是 ``[]``——v1 的 0 是隐式主宠）；
-    - 备份写 ``<file>.v1.bak``（唯一 tmp + 原子发布；中断不在最终名上留残片）。
-      已存在时**先校验它是有效的 v1 文档**：通过 → 保留第一份（重跑不覆盖）；
-      不通过 → ``backup-invalid``（既不覆盖它也不迁移——备份路径上的任意文件不算
-      "备份已完成"）；
-    - v2 → ``already-v2``；文件缺失 → ``no-file``（缺失=新装默认 ``[0]``，不必凭空
-      造文件）；损坏 → ``corrupt``；未知版本 → ``unsupported-version``（都不写）；
-    - 多文件多步骤**不是事务**（文档与日志都如实说），中途失败重跑即可收敛。
-    """
-    path = active_set_path(config_dir)
-    try:
-        with cwl.config_write_lock(path.parent, timeout=timeout, poll=poll):
-            data, status = cwl.read_json_dict(path)
-            if status == "missing":
-                return ProfileResult(status="no-file", path=path,
-                                     reason="活跃集合文件不在（新装默认 [0]，无需创建）")
-            if status != "ok":
-                resolved = "unreadable" if status == "unreadable" else "corrupt"
-                logger.warning("overlay: 活跃集合 %s，不迁移也不覆盖: %s", resolved, path)
-                return ProfileResult(status=resolved, path=path,
-                                     reason=f"读取状态 {status}：不迁移、不覆盖")
-            version = data.get("version") if data else None
-            if version == ACTIVE_SET_VERSION:
-                return ProfileResult(status="already-v2", path=path)
-            if version != LEGACY_ACTIVE_SET_VERSION:
-                return ProfileResult(status="unsupported-version", path=path,
-                                     reason=f"版本 {version!r} 不是 v1，不迁移")
-            raw_slots = data.get("slots")
-            if not isinstance(raw_slots, list):
-                return ProfileResult(status="corrupt", path=path,
-                                     reason="v1 的 slots 不是列表")
-            slots, dropped = _normalize_with_dropped(raw_slots)
-            if dropped:
-                logger.warning("overlay: v1 活跃集合丢弃非法条目 %s", dropped)
-            if SLOT_MIN not in slots:
-                slots.insert(0, SLOT_MIN)
-            backup = path.with_name(f"{path.name}{ACTIVE_SET_V1_BACKUP_SUFFIX}")
-            backup_state = _backup_file(path, backup, validate=_is_v1_active_set_document)
-            if backup_state != BACKUP_OK:
-                return ProfileResult(
-                    status=("backup-invalid" if backup_state == BACKUP_INVALID
-                            else "backup-failed"),
-                    path=path,
-                    reason="备份路径上的既有文件不是有效的 v1 活跃集合"
-                           "（不覆盖、不迁移）" if backup_state == BACKUP_INVALID
-                           else "备份 v1 文件失败，放弃迁移")
-            cwl.atomic_write_json(path, {"version": ACTIVE_SET_VERSION, "slots": slots})
-    except cwl.ConfigWriteError as exc:
-        return ProfileResult(status=_failure_status(exc), path=path, reason=str(exc))
-    return ProfileResult(status="migrated", path=path, backup_path=backup,
-                         changed=tuple(str(slot) for slot in slots), dropped=dropped,
-                         reason="v1 → v2（已备份 .v1.bak，可重跑）")
-
-
-# ------------------------------------------------------------------ 身份分配
-def allocate_slot(*, active_slots: Iterable = (), max_slot: int = SLOT_MAX) -> int:
-    """取**最小非活跃**槽编号（含 0）；``SLOT_COUNT`` 个身份全活跃时抛
-    :class:`CapacityFullError`。
-
-    判据只有**活跃集合**：盘上已有 ``config-slot-N.json`` **不**算占用——
-    重新生成就该落回那个槽并**恢复**它的档案（"恢复"不是"覆盖"）。旧分配器
-    "名额用尽复用最小退役身份并覆盖其位置/设置记忆"的分支被规范废除（跨身份替换
-    禁止），故这里没有 recycle 分支：真满就报错，绝不为了"能生成"去覆盖别宠档案。
-    """
-    active = set(normalize_slots(active_slots, max_slot=max_slot))
-    for candidate in range(SLOT_MIN, int(max_slot) + 1):
-        if candidate not in active:
-            return candidate
-    count = int(max_slot) - SLOT_MIN + 1
-    raise CapacityFullError(
-        f"overlay: 身份空间已满（{SLOT_MIN}..{int(max_slot)} 共 {count} 个身份全部活跃）")
 
 
 # ------------------------------------------------------------------ 档案读
@@ -1356,15 +1064,6 @@ def _backup_holds_values(path: Path, values: Mapping[str, Any]) -> bool:
     if status != "ok" or not isinstance(data, dict):
         return False
     return all(key in data and data[key] == value for key, value in values.items())
-
-
-def _is_v1_active_set_document(path: Path) -> bool:
-    """校验"现有活跃集合备份"确实是 v1 文档（来源/形状都对才认）。"""
-    data, status = cwl.read_json_dict(path)
-    if status != "ok" or not isinstance(data, dict):
-        return False
-    return (data.get("version") == LEGACY_ACTIVE_SET_VERSION
-            and isinstance(data.get("slots"), list))
 
 
 def _is_global_config_snapshot(path: Path, copied_keys: tuple[str, ...]) -> bool:

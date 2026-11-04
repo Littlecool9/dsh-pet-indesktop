@@ -210,11 +210,6 @@ def test_pure_logic_modules_do_not_import_qt():
         assert "PySide6" not in src, f"{name} 引入了 Qt 依赖，破坏纯函数层定位"
 
 
-def test_decode_fanout_does_not_depend_on_window_or_player():
-    src = _read("decode_fanout.py")
-    for banned in ("pet.window", "pet.webm_clip", "from .window", "from .webm_clip",
-                   "import window", "import webm_clip"):
-        assert banned not in src, f"decode_fanout 反向依赖 {banned}，破坏单向依赖"
 
 
 # 多进程多宠退役层（PHASE4_DESIGN.md §3 T6 清单，4.4a 停用 / 4.4b 删除）。

@@ -25,7 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from pet.app import AppShell
-from tests.test_overlay_spawn import _make_persistent_shell
+from tests.helpers.overlay_shell import _make_persistent_shell
 
 app = QApplication.instance() or QApplication([])
 

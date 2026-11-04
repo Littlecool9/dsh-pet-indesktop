@@ -15,14 +15,14 @@ from pet.settings_slot_config import SlotRoutedConfig
 def _views(tmp_path, raw):
     main = Config(base=tmp_path)
     main.dir.mkdir(parents=True, exist_ok=True)
-    path = profiles.slot_profile_path(main.dir, 1)
+    path = profiles.slot_profile_path(main.dir, 0)
     path.write_text(json.dumps(raw), encoding="utf-8")
-    instance = SimpleNamespace(dir=main.dir, path=path, instance_id="slot-1", data={})
-    route = SlotRoutedConfig(instance, main, 1)
+    instance = SimpleNamespace(dir=main.dir, path=path, instance_id="slot-0", data={})
+    route = SlotRoutedConfig(instance, main, 0)
     sprite = object()
-    shell = SimpleNamespace(_spawned_slots={sprite: 1}, _config=main,
+    shell = SimpleNamespace(sprite=sprite, _config=main,
                             _spawn_config_dir=lambda: main.dir)
-    snapshot = profiles.read_slot_snapshot(main.dir, 1)
+    snapshot = profiles.read_slot_snapshot(main.dir, 0)
     return route, _SpriteConfig(shell, sprite, snapshot=snapshot), path
 
 
@@ -134,8 +134,8 @@ def test_valid_modern_values_preserved_and_pack_wins_over_legacy(tmp_path):
 def test_memory_only_modern_settings_are_not_migrated_as_v1():
     sprite = object()
     main = SimpleNamespace(get=lambda key, default=None: default)
-    shell = SimpleNamespace(_spawned_slots={sprite: 1}, _config=main,
-                            _slot_memory={1: {"scale": 1.7}}, _spawn_config_dir=lambda: None)
+    shell = SimpleNamespace(sprite=sprite, _config=main,
+                            _slot_memory={0: {"scale": 1.7}}, _spawn_config_dir=lambda: None)
     runtime = _SpriteConfig(shell, sprite)
     assert runtime.get("scale") == 1.7
     assert runtime.generation is None

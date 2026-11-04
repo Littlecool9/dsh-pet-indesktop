@@ -35,7 +35,7 @@ from pet.frameseq_clip import FrameSeqClip
 from pet.overlay_shell import OverlayShell
 from pet.pet_sprite import PetSprite
 from tests.test_frameseq_clip import _make_frames
-from tests.test_overlay_geometry_parity import _place_center, _ratio_of
+from tests.helpers.overlay_shell import _place_center, _ratio_of
 
 app = QApplication.instance() or QApplication([])
 

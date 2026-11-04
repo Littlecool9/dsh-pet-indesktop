@@ -94,7 +94,6 @@ from . import slot_manager
 from . import window_alerts
 from .context_menus.shared import (
     add_tray_action,
-    animation_icon_cache_drop_library,
     release_menu_tree,
 )
 from .config import (
@@ -310,7 +309,7 @@ class _SpriteConfig:
 
         self._shell = shell
         self._sprite = sprite
-        slot = 0 if sprite is getattr(shell, "sprite", None) else shell._spawned_slots.get(sprite)
+        slot = 0 if sprite is None or sprite is getattr(shell, "sprite", None) else None
         config_dir = shell._spawn_config_dir()
         if snapshot is None and slot is not None and config_dir:
             snapshot = pet_profiles.read_slot_snapshot(config_dir, slot)
@@ -960,18 +959,11 @@ class OverlayShell(QObject):
         self.tray: QSystemTrayIcon | None = None
         self._tray_menu: QMenu | None = None
         self._tray_actions: list = []
-        # 托盘逐只显隐勾选动作（M14：[sprite, QAction]，菜单重建时替换）
-        self._pet_visible_actions: list = []
         self._session_watcher = None
         # D12 指令通道（overlay 拓扑：独立设置进程 → 主进程）；未装时为惰性空转
         self._command_watcher = None
         self._command_timer = QTimer(self)
-        # 4.2b 子肥鱼登记：sprite 顺序 = spawn 顺序 = 活跃宠清单顺序
-        self._spawned: list = []
-        self._spawned_libs: dict = {}
-        self._spawned_slots: dict = {}
-        # B7b per-slot 取源：逐 sprite 的配置视图（配置同步边界重建）与子 sprite
-        # 的各自主气泡跟随器/自言自语宿主/ pet 形宿主。
+        # 逐 sprite 的配置视图（配置同步边界重建）与气泡/自言自语/宿主。
         self._drag_relaxed_sprite = None  # 拖拽期间被放宽域的那只（收尾时恢复）
         self._mixed_dpr_logged = False  # 混合缩放退化只提示一次
         #: 每块屏**上一次真正应用**的矩形（宿主窗局部坐标）。缩放变化时
@@ -990,7 +982,6 @@ class OverlayShell(QObject):
         #: 事务进行中被挡下的重排请求（收口时补做一次）
         self._topology_recheck = False
         self._sprite_cfg_cache: dict = {}
-        self._bubble_followers: dict = {}
         self._sprite_hosts: dict = {}
         self._self_talk_hosts: dict = {}
         # 子宠 slot 配置的 (mtime_ns, size) 签名缓存：目录事件/既有 3s 兜底轮询时
@@ -1149,8 +1140,8 @@ class OverlayShell(QObject):
         self._sound = SpriteSoundPlayer(
             self._config, config_for=self._sprite_config)
         # 4.1b 窗口能力状态（on_top/穿透复合/全屏与光标监视/runtime 避让标记）。
-        # 必须在**复活宠物之前**就位：主宠记着别的屏时，`_spawn_slot` 复活它的
-        # 那一步就会走宿主换屏（`_migrate_to_screen`），而换屏里要重下发窗口能力。
+        # 必须在**建桌宠之前**就位：档案记着别的屏时，建 sprite 的那一步会走
+        # 宿主换屏（`_migrate_to_screen`），而换屏里要重下发窗口能力。
         self._auto_hidden = False
         self._user_mouse_through = bool(self._config.get("mouse_through", False))
         self._auto_cursor_hidden = False
@@ -1164,27 +1155,19 @@ class OverlayShell(QObject):
         if config_dir:
             migration = pet_profiles.migrate_slot0_profile(config_dir)
             # 与 AppShell 同一口径（ops D2）：``target-corrupt`` 只牵连 slot0 这一份档案
-            # → 该槽不复活，别的照常；其余非 ok 状态（源配置坏了/备份失败/锁超时）
-            # 涉及全局面，照旧硬失败。两处判据必须同源，否则两个入口对同一次事故
-            # 给出不同处置（一个降级、一个炸）。
+            # → 该槽不复活；其余非 ok 状态（源配置坏了/备份失败/锁超时）涉及全局面，
+            # 照旧硬失败。两处判据必须同源。
             slot0_unusable = False
             if not migration.ok:
                 if not migration.slot_only_problem:
                     raise RuntimeError(str(migration))
                 slot0_unusable = True
-            pet_profiles.migrate_active_set(config_dir)
-            remembered = list(pet_profiles.load_active_set(config_dir).slots)
-            if slot0_unusable:
-                remembered = [n for n in remembered if n != 0]
-            self._remembered_active = remembered
         else:
-            self._remembered_active = [0]
+            slot0_unusable = False
             self._slot_memory = {0: {key: copy.deepcopy(self._config.get(key))
                                     for key in pet_profiles.PER_PET_KEYS}}
-        if 0 in self._remembered_active:
-            self._spawn_slot(0)
-        # 4.2b：按活跃宠清单复活子肥鱼（D5：依据是运行时清单，不是 slot 配置存在）
-        self._restore_spawned_pets()
+        if not slot0_unusable:
+            self._build_main_sprite()
         self._watcher = FullscreenCursorWatcher(self)
         self._watcher.fullscreen_changed.connect(self._on_fullscreen_changed)
         self._watcher.cursor_visibility_changed.connect(
@@ -1222,11 +1205,8 @@ class OverlayShell(QObject):
         if self._all_sprites():
             return
         reason = self._no_pets_reason()
-        active = list(getattr(self, "_remembered_active", ()) or ())
         config_dir = self._spawn_config_dir() or getattr(self._config, "dir", None)
-        logging.warning(
-            "overlay: 启动后没有任何宠物（活跃集合=%s，配置目录=%s）：%s",
-            active, config_dir, reason)
+        logging.warning("overlay: 启动后没有桌宠（配置目录=%s）：%s", config_dir, reason)
         text = (f"没有可显示的桌宠：{reason}\n"
                 "托盘（或本窗口）的「生成 / 恢复 slot0」可以重建。")
         # 恢复窗开着且还是空白时补一句话（无托盘时它是唯一的可见入口）。
@@ -1255,10 +1235,7 @@ class OverlayShell(QObject):
         diagnosis = self.slot0_profile_diagnosis()
         if diagnosis:
             return diagnosis
-        active = list(getattr(self, "_remembered_active", ()) or ())
-        if not active:
-            return "活跃宠物清单为空（overlay-active-pets.json 里没有有效身份）"
-        return f"活跃清单 {active} 里的宠物都没能建起来（原因见日志）"
+        return "slot0 桌宠没能建起来（原因见日志）"
 
     def _create_host(self, screen):
         """建唯一宿主（合成窗 + 一份控制器组 + 活动区），并接线到壳。
@@ -1672,8 +1649,6 @@ class OverlayShell(QObject):
         self._bubble_follower = (self._make_bubble_follower(self.sprite)
                                  if self.sprite is not None else None)
         self._bind_main_bubble_signals()
-        for sprite in list(self._spawned):
-            self._ensure_sprite_bubble(sprite)
 
     def _bind_main_bubble_signals(self) -> None:
         """主气泡的 hidden 信号/可点态接线（构造后与"提升者跟随器接管"共用）。"""
@@ -1721,40 +1696,18 @@ class OverlayShell(QObject):
         self._apply_bubble_text_scale(getattr(follower, "bubble", None), cfg)
         return follower
 
-    def _ensure_sprite_bubble(self, sprite) -> None:
-        """子 sprite 的气泡跟随器（幂等：已建即返回）。"""
-        if sprite is None or sprite is getattr(self, "sprite", None):
-            return
-        if self._bubble_followers.get(sprite) is not None:
-            return
-        try:
-            self._bubble_followers[sprite] = self._make_bubble_follower(sprite)
-        except Exception:
-            logging.debug("overlay: 子 sprite 气泡建失败", exc_info=True)
-
-    def _close_sprite_bubble(self, sprite) -> None:
-        """退出一只子 sprite：收掉它那只气泡窗（否则留孤儿顶层气泡）。"""
-        follower = self._bubble_followers.pop(sprite, None)
-        if follower is None:
-            return
-        try:
-            follower.close()
-        except Exception:
-            logging.debug("overlay: 子 sprite 气泡收尾失败", exc_info=True)
-
     def _bubble_for(self, sprite):
-        """该 sprite 的气泡跟随器（主 = 壳的主跟随器；子 = 各自主跟随器）。"""
+        """唯一桌宠的气泡跟随器（未知 sprite → None）。"""
         if sprite is None or sprite is getattr(self, "sprite", None):
             return getattr(self, "_bubble_follower", None)
-        return self._bubble_followers.get(sprite)
+        return None
 
     def _rebind_bubble_follower(self, sprite, host) -> None:
         """精灵换窗后把它的气泡跟随器也换到新窗（跨屏移交的唯一收口）。
 
         ``remove_sprite`` 会摘掉该 sprite 的全部位置监听，跟随器又缓存着旧窗原点：
-        不重绑的话气泡停在旧位置、之后也不再跟宠走——实机表现就是"气泡漂在另一块
-        屏"。主宠的跟随器不在 ``_bubble_followers`` 里（那是子宠表），必须经
-        :meth:`_bubble_for` 取，否则主宠跨屏时这一步会被静默跳过。
+        不重绑的话气泡停在旧位置、之后也不再跟宠走。唯一桌宠必须经
+        :meth:`_bubble_for` 取，否则跨屏时这一步会被静默跳过。
         """
         follower = self._bubble_for(sprite)
         if follower is None or host is None:
@@ -1915,7 +1868,7 @@ class OverlayShell(QObject):
         name = str(key or "")
         if not name or target is None:
             return False
-        slot = 0 if target is self.sprite else self._spawned_slots.get(target)
+        slot = 0 if target is self.sprite else None
         if slot is None:
             return False
         ok = self._slot_writer(slot)(name, value)
@@ -1951,9 +1904,7 @@ class OverlayShell(QObject):
             # 旧值是被这次换屏替换掉的过期意图，拿它当"归属"会让后续机械重排
             # 把宠搬到用户早就离开的那块屏，还会把 pending 一起改写掉。
             return None
-        slot = self._spawned_slots.get(sprite)
-        if slot is None and sprite is getattr(self, "sprite", None):
-            slot = 0
+        slot = 0 if sprite is getattr(self, "sprite", None) else None
         if slot is None:
             return None
         name = self._stored_screen_name(self._spawn_config_dir(), slot)
@@ -1978,7 +1929,8 @@ class OverlayShell(QObject):
         """
         from . import pet_profiles
 
-        slot = self._spawned_slots.get(sprite) if slot is None else slot
+        if slot is None:
+            slot = 0 if sprite is getattr(self, "sprite", None) else None
         config_dir = self._spawn_config_dir()
         if slot is None or not config_dir:
             return False
@@ -2207,9 +2159,6 @@ class OverlayShell(QObject):
         follower = getattr(self, "_bubble_follower", None)
         if follower is not None and getattr(follower, "bubble", None) is bubble:
             return self.sprite
-        for sprite, item in self._bubble_followers.items():
-            if item is not None and getattr(item, "bubble", None) is bubble:
-                return sprite
         return None
 
     def _sprite_origin(self, sprite=None) -> QPoint:
@@ -2391,7 +2340,7 @@ class OverlayShell(QObject):
         if not self._any_host_visible():
             return None
         visible = [s for s in self._all_sprites() if self._sprite_visible(s)]
-        return min(visible, key=lambda s: self._spawned_slots.get(s, 0), default=None)
+        return visible[0] if visible else None
 
     def _show_bubble_text(self, text: str, duration_ms: int, **kwargs) -> bool:
         target = self.alert_target_sprite()
@@ -3110,10 +3059,9 @@ class OverlayShell(QObject):
 
     def _apply_bubble_interactive(self) -> None:
         """按快速对话可用性切换气泡可点（旧路径 ``_set_speech_bubble_interactive``）。"""
-        followers = [getattr(self, "_bubble_follower", None), *self._bubble_followers.values()]
-        for follower in followers:
-            if follower is not None:
-                follower.set_interactive(self.quick_chat_available())
+        follower = getattr(self, "_bubble_follower", None)
+        if follower is not None:
+            follower.set_interactive(self.quick_chat_available())
 
     def _on_bubble_clicked(self, sprite) -> None:
         """气泡主体点击 → 快速对话（``window.py:3419`` 语义：提醒/交互气泡 no-op）。"""
@@ -3147,20 +3095,6 @@ class OverlayShell(QObject):
         except Exception:
             logging.exception("overlay: 打开快速对话失败")
             return False
-
-    def select_slot(self, slot) -> bool:
-        target = self._sprite_for_slot(slot)
-        self._selected_slot = slot
-        self._selected_sprite = target
-        if target is None:
-            return False
-        self.set_sprite_visible(target, True)
-        self.set_pet_visible(True)
-        # 抬到前面的必须是**这只所在屏**的窗口（多屏下抬主宿主窗口等于抬错屏）
-        overlay = self.host_for_sprite(target).overlay
-        overlay.raise_()
-        overlay.activateWindow()
-        return True
 
     def open_full_chat(self) -> None:
         """打开完整聊天窗（快速对话气泡的「全文见聊天窗」入口）。"""
@@ -3262,9 +3196,8 @@ class OverlayShell(QObject):
         self._stopped = False
         self._warm_sound_effects_once()  # 首次可见前预热（避免首次发声卡事件循环）
         self._show_all_hosts()
-        # 构造期复活/生成的 sprite 在窗口可见前被压成暂停（见 _spawn_slot 的
-        # 有效可播判定）：显示后必须补放行，否则子宠永久冻在首帧。逐只被藏起
-        # 的仍在恢复侧被跳过（与整窗显隐同一条判据）。
+        # 构造期生成的 sprite 在窗口可见前被压成暂停（见有效可播判定）：
+        # 显示后必须补放行，否则宠永久冻在首帧。被藏起的仍在恢复侧被跳过。
         self._set_all_clips_paused(False)
         self._sync_runtime_marker()  # D7：设置进程避让
         if self.tray is not None:
@@ -3339,10 +3272,8 @@ class OverlayShell(QObject):
                 logging.exception("overlay: 退出时暂停预热失败 (label=%r)", label)
 
     def _shutdown_libraries(self) -> None:
-        """关闭主库与全部子宠库（两处退出路径同一口径，缺陷 14）。"""
+        """关闭唯一的素材库（两处退出路径同一口径，缺陷 14）。"""
         self._shutdown_library(getattr(self, "lib", None), "主肥鱼")
-        for sprite, lib in list(getattr(self, "_spawned_libs", {}).items()):
-            self._shutdown_library(lib, sprite)
 
     def _close_bubble_followers(self) -> None:
         """收掉气泡跟随器（主气泡 + 逐 sprite 的子气泡）。
@@ -3353,12 +3284,6 @@ class OverlayShell(QObject):
         follower = getattr(self, "_bubble_follower", None)
         if follower is not None:
             follower.close()
-        for follower in list(self._bubble_followers.values()):
-            try:
-                follower.close()
-            except Exception:
-                logging.debug("overlay: 停机时子宠气泡收尾失败", exc_info=True)
-        self._bubble_followers = {}
 
     # ---------------------------------------------------------------- 测试收口
     @classmethod
@@ -3443,9 +3368,8 @@ class OverlayShell(QObject):
         self._run_exit_step('摘设置命令监听', self._teardown_settings_command_watch)
         self._run_exit_step('删除运行标记', self._delete_runtime_marker)
         self._run_exit_step('关闭快速对话', self._close_quick_chat)
-        # 4.2a：退出持久化（rx/ry/facing/scale）+ 4.2b：子肥鱼逐只按 slot 身份持久化
+        # 退出持久化（rx/ry/facing/scale）
         self._run_exit_step('持久化窗口位置', self.save_position)
-        self._run_exit_step('持久化子宠位置', self.save_spawned_positions)
         self._run_exit_step('停 overlay 驱动', self._stop_all_hosts)
         # 主库显式 shutdown（缺陷 14）：shutdown 内部已含 pause_warm 与在飞供给
         # 取消；无 shutdown 面的库退回只停预热（旧行为）。
@@ -3464,8 +3388,7 @@ class OverlayShell(QObject):
         （幂等 + 有界等待 + 超时孤儿兜底，见
         ``MovieLibrary.cancel_frameseq_provision``），这里只负责遍历。
         """
-        libs = [self.lib] + [lib for lib in getattr(self, "_spawned_libs", {}).values()]
-        for lib in libs:
+        for lib in [self.lib]:
             cancel = getattr(lib, "cancel_frameseq_provision", None)
             if not callable(cancel):
                 continue
@@ -3560,7 +3483,7 @@ class OverlayShell(QObject):
             note.setVisible(bool(note.text()))
             layout.addWidget(note)
             self._recovery_diagnosis_label = note
-            for label, callback in (("生成 / 恢复桌宠", self.spawn_pet),
+            for label, callback in (("生成 / 恢复桌宠", self.restore_slot0),
                                     ("打开配置目录", self.open_config_dir),
                                     ("slot0 设置", self.open_settings_for),
                                     ("退出应用", self.app.quit)):
@@ -3594,20 +3517,10 @@ class OverlayShell(QObject):
 
         逐条对照 legacy（app.py:3203-3301，见 PR 报告）：
         - 顶层「显示 / 隐藏」「回到右下角」= legacy 主窗两项（overlay 单窗，
-          显隐天然覆盖全部 sprite）；
-        - 「生小肥鱼 / 退出子肥鱼」= overlay 多宠生命周期入口（legacy 在右键
-          菜单/设置页，不重复造第二个实现，直接复用壳的两个公开方法）；
-        - **只要 ≥1 只**就有逐只子菜单「主肥鱼 / 小肥鱼 [slot-N]」= legacy 每窗
-          子菜单，含「回到右下角」「退出这只」（见 :meth:`_exit_pet_from_tray`）；
-          「显示这只」（per-sprite visible，M14）只在 ≥2 只时挂——逐只显隐回答的
-          是"这几只里藏哪只"，只剩一只时顶层「显示 / 隐藏」已经按整窗语义给过；
-          顶层「显示 / 隐藏」仍是整窗语义（overlay 单窗，全显全隐）。
-          **单宠也必须挂**：关闭宠物 ≠ 退出应用（规范 §一/§四），只在 ≥2 只时
-          才建逐只菜单，等于让单宠用户的"关闭"只剩顶层「退出」（= 退出整个应用）
-          一条路——实测发现时就是这样（见 .scratch/product-close-approved-gui-
-          20261011/REPORT.md §5）。0 只时不建（没有"这只"可指，也就不会有
-          指向 None 的条目）；恢复入口是下面那条「生成 / 恢复 slot0」；
-        - 「桌宠设置」按主身份路由（D13）、「退出」= app.quit；
+          显隐天然覆盖唯一的 sprite）；
+        - 没有「生小肥鱼 / 退出子肥鱼 / 退出这只」：多宠已删除，唯一桌宠只能
+          隐藏或随应用退出；slot0 档案损坏时保留「生成 / 恢复 slot0」恢复入口；
+        - 「桌宠设置」按 slot0 路由、「退出」= app.quit；
         - 「鼠标穿透」「开机自启」= legacy 托盘后段两项（穿透只有托盘/设置页能取消；
           自启勾选态按系统登录项实况，弹出前同步）。
 
@@ -3637,55 +3550,19 @@ class OverlayShell(QObject):
         menu = QMenu()
         # 气泡是置顶 Tool 窗口（层级高于菜单）：弹出前先隐藏（legacy 同款）
         menu.aboutToShow.connect(self._hide_bubble_for_menu)
-        # 弹出前同步逐只勾选态（外部改过 sprite.visible 也能反映）
-        menu.aboutToShow.connect(self._sync_tray_pet_visibility)
-        # 本段无一条是纯记账：显隐要动合成窗、归位要动 sprite 位置、生/退桌宠要动
-        # sprite 与各自库（还可能冒泡），全按上面的派发契约走。
+        # 本段无一条是纯记账：显隐要动合成窗、归位要动 sprite 位置，全按上面的
+        # 派发契约走。
         add_tray_action(menu, "显示 / 隐藏", self._toggle_pet_visible)
         add_tray_action(menu, "回到右下角",
                         lambda: self._go_default_corner(self.sprite))
         menu.addSeparator()
-        add_tray_action(menu, "生成 / 恢复 slot0（档案损坏，见日志）"
-                        if self.slot0_profile_diagnosis() and self.sprite is None
-                        else ("生成 / 恢复 slot0" if self.sprite is None else "生小肥鱼"),
-                        self.spawn_pet)
-        add_tray_action(menu, "退出子肥鱼", self.clear_spawned_pets)
-        # tooltip 默认不显示（QMenu 的默认值），而这条关闭入口的 tooltip 正是
-        # "档案还在、怎么弄回来"的说明，必须能看见。
-        menu.setToolTipsVisible(True)
-        visible_actions: list = []
-        entries = self._pet_entries()
-        if entries:
+        if self.sprite is None:
+            add_tray_action(
+                menu,
+                "生成 / 恢复 slot0（档案损坏，见日志）"
+                if self.slot0_profile_diagnosis() else "生成 / 恢复 slot0",
+                self.restore_slot0)
             menu.addSeparator()
-            # 逐只显隐只在"≥2 只"时有意义：它回答的是"这几只里藏哪只"。只剩一只时
-            # 藏它 = 整窗没有内容可画，而那条路顶层「显示 / 隐藏」已经按整窗语义
-            # 给过了（拆成"藏这一只"只会多出一个等价但更弱的状态，且主宠即宿主
-            # 合成窗——SpriteMenuFacade.hide() 记的正是这个口径）。
-            # 关闭入口不受此限：单宠缺的从来不是显隐，而是"关掉它但别退出应用"。
-            per_pet_visibility = len(entries) > 1
-            for sprite, label in entries:
-                # 子菜单也是同一个原生跟踪会话的一部分，会话中做这些同样会被抑制：
-                # 子项与顶层同族（同一批窗面/显隐状态），一律延迟派发。
-                # 关闭观测目标由 ``add_tray_action`` 统一取整棵树（``shared._menu_tree``）：
-                # 子菜单关掉 ≠ 会话结束，根菜单还开着就还在同一次原生跟踪里。
-                sub = menu.addMenu(label)
-                add_tray_action(sub, "回到右下角",
-                                lambda s=sprite: self._go_default_corner(s))
-                if per_pet_visibility:
-                    toggle = add_tray_toggle(
-                        sub, "显示这只", self._sprite_visible(sprite),
-                        lambda want, s=sprite: self.set_sprite_visible(s, want))
-                    visible_actions.append((sprite, toggle))
-                close = add_tray_action(sub, "退出这只",
-                                        lambda s=sprite: self._exit_pet_from_tray(s))
-                close.setToolTip(
-                    "关闭这只桌宠：档案与位置保留，可用托盘「生成 / 恢复 slot0」再恢复；"
-                    "不退出应用。"
-                    if sprite is self.sprite else
-                    "关闭这只桌宠：它自己的档案保留，可用托盘「生小肥鱼」再生成；"
-                    "不影响其它桌宠。")
-        self._pet_visible_actions = visible_actions
-        menu.addSeparator()
         # 与 legacy 托盘同口径：菜单先关、回调延到菜单关闭后执行（原生菜单跟踪
         # 会话里开窗/冒泡会被系统原生菜单会话抑制，见 shared.run_after_menu_closed）。
         add_tray_action(menu, "桌宠设置",
@@ -3760,21 +3637,6 @@ class OverlayShell(QObject):
             except RuntimeError:
                 continue  # 菜单已销毁（wrapper 失效）：跳过
 
-    def _pet_entries(self) -> list:
-        """托盘逐只条目：(sprite, 标签)。主宠在前 = 活跃清单列表头口径。"""
-        entries = [(self.sprite, "主肥鱼 [slot-0]")] if self.sprite is not None else []
-        for sprite in self._spawned:
-            slot = self._spawned_slots.get(sprite)
-            label = f"小肥鱼 [slot-{slot}]" if slot is not None else "小肥鱼"
-            entries.append((sprite, label))
-        return entries
-
-    def _exit_pet_from_tray(self, sprite) -> None:
-        """菜单关闭后按捕获sprite走同一可逆关闭契约；过期目标为空操作。"""
-        from .sprite_menu_facade import SpriteMenuFacade
-
-        SpriteMenuFacade(self, sprite).on_exit_pet()
-
     def _go_default_corner(self, sprite) -> None:
         """把指定 sprite 送回右下角（window.go_default_corner 等价）。
 
@@ -3793,13 +3655,11 @@ class OverlayShell(QObject):
     def _hide_bubble_for_menu(self) -> None:
         """托盘菜单弹出前隐藏气泡（legacy menu.aboutToShow → hide_speech_bubble）。
 
-        气泡是置顶 Tool 窗口，**每只 sprite 各一只**（B7b），故逐只收起。
+        气泡是置顶 Tool 窗口，不随 overlay 隐藏。
         """
-        followers = [getattr(self, "_bubble_follower", None)]
-        followers.extend(list(self._bubble_followers.values()))
-        for follower in followers:
-            if follower is not None:
-                follower.hide()
+        follower = getattr(self, "_bubble_follower", None)
+        if follower is not None:
+            follower.hide()
 
     def _tray_placeholder_icon(self):
         """首帧未就绪时的托盘占位图标 = legacy 同款宠物爪印（app.py:3127）。
@@ -4020,11 +3880,10 @@ class OverlayShell(QObject):
         cfg = self._config
         self._invalidate_sprite_configs()  # 配置同步边界：per-slot 快照重读
         for sprite in list(self._all_sprites()):
-            slot = self._spawned_slots.get(sprite)
-            if slot is None:
+            if sprite is self.sprite:
                 self._apply_sprite_settings_to(sprite)
             else:
-                self._apply_child_profile(slot)
+                self._apply_child_profile(0)
         # 窗口级行为设置（不移动 / 动画间隔）逐宿主下发：每块屏的宠共用同一条
         # 掷骰链策略
         for host in self._hosts:
@@ -4085,7 +3944,7 @@ class OverlayShell(QObject):
     def _config_scale(self, cfg=None) -> float:
         """config ``scale``（桌宠大小）→ sprite 缩放；缺键/坏值走默认。
 
-        夹取范围同配置落库口径（config.py 对 ``spawn_scale`` 的 0.1~4.0），
+        夹取范围与配置落库口径一致（0.1~4.0），
         避免手工写坏的配置文件把 sprite 尺寸设成 0 或天文数字（sprite.scale
         setter 只拒非正数）。
         """
@@ -4422,9 +4281,7 @@ class OverlayShell(QObject):
         # set_clamp_rects 按契约不补钳制，而松手点可能正落在屏间空洞里——
         # 不补这一次，宠会停在没有显示器的地方（看起来凭空消失）。
         sprite.set_pos(QPointF(sprite.pos))
-        slot = self._spawned_slots.get(sprite)
-        if slot is None and sprite is getattr(self, "sprite", None):
-            slot = 0
+        slot = 0 if sprite is getattr(self, "sprite", None) else None
         target = self._screen_of_sprite(sprite)
         stored = (None if slot is None
                   else self._stored_screen_name(self._spawn_config_dir(), slot))
@@ -4554,8 +4411,8 @@ class OverlayShell(QObject):
         """按"身体中心相对可用区比例"恢复位置（window_placement.restore_position
         语义；贴边钳制由 set_pos 的 body_box 钳制收口）。
 
-        实际复活走 ``_spawn_slot`` 的 slot 档案路径（含 ``screen_name``），本方法
-        只在没有档案状态的调用点兜底。
+        实际复活走 slot0 档案路径（含 ``screen_name``），本方法只在没有档案
+        状态的调用点兜底。
         """
         bounds = self._screen_rect(self._screen)
         rx, ry = self._config.get("rx"), self._config.get("ry")
@@ -4574,53 +4431,16 @@ class OverlayShell(QObject):
         if self.sprite is not None:
             self._save_child_geometry(self.sprite, slot=0)
 
-    # ---------------------------------------------------------------- 4.2b 多 sprite 生灭
+    # ---------------------------------------------------------------- slot0 生灭
     def _spawn_config_dir(self):
-        """子肥鱼身份/几何的落盘目录（= 主配置目录）；假配置对象无 dir → None。"""
+        """slot0 身份/几何的落盘目录（= 配置目录）；假配置对象无 dir → None。"""
         return getattr(self._config, "dir", None)
 
-    def _active_slots(self) -> list[int]:
-        """进程内活跃身份（spawn 顺序）= 当前活跃宠清单的内容。"""
-        return sorted(self._remembered_active)
-
     def _all_sprites(self):
-        return ([self.sprite] if self.sprite is not None else []) + list(self._spawned)
+        return [self.sprite] if self.sprite is not None else []
 
     def _sprite_for_slot(self, slot):
-        if slot == 0:
-            return self.sprite
-        return next((s for s in self._spawned if self._spawned_slots.get(s) == slot), None)
-
-    def _persist_active_slots(self) -> bool:
-        """活跃宠清单落盘（spawn/退出/复活各调一次，原子替换）。返回是否真的写成。
-
-        这条路径上的调用者**全是用户显式动作**（生成 / 恢复 / 关闭），所以坏文件走
-        ``on_broken="backup-overwrite"``：先备份再覆盖。默认 ``refuse`` 只适用于
-        "没有用户在场"的写入；在这里继续 refuse 的后果是「生成的宠重启就没了」
-        「关掉的宠重启还在」永远修不好，而 UI 里没有任何解释（2026-10-10 ops D1）。
-
-        失败**必须可见**：调用方的"成功"叙事（菜单关了、宠上屏了）不能盖过这一层——
-        日志 + 气泡点名路径，绝不静默。启动期的自动复活**不写盘**（不替用户改盘、
-        不自动修复坏文件）。
-        """
-        config_dir = self._spawn_config_dir()
-        if not config_dir:
-            return False
-        from . import pet_profiles
-
-        result = pet_profiles.save_active_set(
-            config_dir, self._active_slots(), on_broken="backup-overwrite")
-        if result.status != "ok":
-            logging.error("overlay: 活跃宠清单落盘失败（%s）：%s → %s",
-                          result.status, result.reason, result.path)
-            self.show_bubble(
-                f"桌宠状态没能记住：活跃状态文件写入失败，重启后这次改动会丢失。\n"
-                f"文件：{result.path}", duration_ms=9000)
-            return False
-        if result.backup_path is not None:
-            logging.warning("overlay: 原活跃宠清单不可信，已备份到 %s 后重建",
-                            result.backup_path)
-        return True
+        return self.sprite if slot == 0 else None
 
     def _spawn_failure_text(self, slot: int, exc: Exception) -> str:
         """生成失败的说明文案：点名槽位与**该槽档案路径**，slot0 损坏时用降级诊断。
@@ -4674,80 +4494,45 @@ class OverlayShell(QObject):
         except RuntimeError:                      # 窗口已随进程销毁
             logging.debug("overlay: 恢复窗诊断标签已失效", exc_info=True)
 
-    def spawn_pet(self) -> None:
-        """生小肥鱼（app.py spawn_pet 进程内路径语义 + D6 无锁身份分配）。
-
-        分配 slot 身份 → 建 per-pet 库 + 新 sprite（自主宠向右逐级错开，重叠
-        规避由 body 钳制兜底）→ 进活跃清单并落盘。无可用身份时冒泡告知（B01，
-        分配器兜底后几乎不可达），**建库/读档案失败也一律可见告知**（带该槽档案
-        路径，见 :meth:`_notify_spawn_failed`）；两条失败都不留半只 sprite。
-
-        目标槽仍是**最小非活跃槽**（含 0）：slot0 档案损坏期间每次点都落到 0 并失败，
-        这是用户明确的取舍（最小补位，不静默跳号）；能做的不是绕开它，而是把失败说清楚
-        （2026-10-10 ops D2-新）。
-        """
-        config_dir = self._spawn_config_dir()
-        try:
-            slot = overlay_spawn_state.allocate_slot(
-                config_dir, active_slots=self._active_slots())
-        except Exception:
-            logging.exception("overlay: 生小肥鱼失败（无可用 slot 身份）")
-            # B01：分配兜底后这条路径只剩「128 个身份全活跃」一种可能，但绝不
-            # 能再只写日志——静默失败在用户眼里就是「点了没反应」。
-            self.show_bubble(
-                f"生小肥鱼失败：位置身份已耗尽（1-{overlay_spawn_state.MAX_SCAN_SLOTS}"
-                " 全部占用）", duration_ms=6000)
-            return
-        try:
-            self._spawn_slot(slot)
-        except Exception as exc:
-            logging.exception("overlay: 生小肥鱼失败 (slot=%s)", slot)
-            self._notify_spawn_failed(slot, exc)
-            return
-        self._remembered_active.append(slot)
-        self._slot_signature_cache = self._slot_config_signatures()
-        if slot == 0:
-            self._rebind_main_sprite()
-            self._load_self_talk_settings()
-            self._schedule_self_talk()
-        self._persist_active_slots()
-        self._refresh_tray_menu()  # 托盘逐只条目随生灭重建（4.2c）
-        logging.info("overlay: 已生成子肥鱼 (slot=%s)", slot)
-        # 无宠期留着的待恢复提醒：有新宠上屏时补回（仍是同一条，不重新入队）
-        self._sync_alert_copy()
-
-    def _spawn_slot(self, slot: int) -> None:
+    def restore_slot0(self) -> bool:
+        """用户显式「生成 / 恢复 slot0」：重建唯一的桌宠（档案损坏修复后原地恢复）。"""
+        if self.sprite is not None:
+            return False
         before = set(self._all_sprites())
         try:
-            self._build_slot_sprite(slot)
-        except Exception:
+            self._build_main_sprite()
+        except Exception as exc:
+            logging.exception("overlay: 恢复 slot0 失败")
             for sprite in set(self._all_sprites()) - before:
                 host = self._host_of(sprite)
                 self._close_self_talk_host(sprite)
-                self._close_sprite_bubble(sprite)
                 self._sprite_cfg_cache.pop(sprite, None)
                 self._sprite_hosts.pop(sprite, None)
-                self._spawned_slots.pop(sprite, None)
-                lib = self._spawned_libs.pop(sprite, None) or getattr(sprite, "library", None)
-                if sprite in self._spawned:
-                    self._spawned.remove(sprite)
                 if sprite is self.sprite:
                     self.sprite = self.lib = None
                 if host is not None:
                     host.overlay.remove_sprite(sprite)
-                self._shutdown_library(lib, "failed-spawn")
-            raise
+                self._shutdown_library(getattr(sprite, "library", None), "failed-spawn")
+            self._notify_spawn_failed(0, exc)
+            return False
+        self._slot_signature_cache = self._slot_config_signatures()
+        self._rebind_main_sprite()
+        self._load_self_talk_settings()
+        self._schedule_self_talk()
+        self._refresh_tray_menu()
+        logging.info("overlay: 已恢复 slot0 桌宠")
+        self._sync_alert_copy()
+        return True
 
-    def _build_slot_sprite(self, slot: int) -> None:
-        """按 slot 身份建一只子肥鱼（spawn 与重启复活共用路径，不落清单）。
+    def _build_main_sprite(self) -> None:
+        """建唯一的 slot0 桌宠（启动与显式恢复共用）。
 
-        身份几何（rx/ry/facing/scale）与**角色**从 ``config-slot-N.json`` 读；
-        有记录 = 重启复活，按比例恢复上次位置、按它自己存的角色建库；无记录 =
-        首次生成，自主宠向右错开（角色继承主配置）。spawn 后按该 slot 的配置
-        下发设置，并建它自己的气泡/自言自语宿主（旧架构一窗一气泡一计时）。
+        身份几何（rx/ry/facing/scale）与角色从 ``config-slot-0.json`` 读；有记录
+        按比例恢复上次位置，无记录走首次生成默认值。
         """
         from . import config_write_lock, pet_profiles
 
+        slot = 0
         config_dir = self._spawn_config_dir()
         snapshot = None
         if config_dir:
@@ -4756,14 +4541,7 @@ class OverlayShell(QObject):
                 if snapshot.status != "ok":
                     raise RuntimeError(f"slot-{slot}: {snapshot}")
                 if not snapshot.profile.exists:
-                    from .config import normalize_pet_profile_snapshot
-
-                    source = normalize_pet_profile_snapshot(
-                        pet_profiles.read_slot_profile(config_dir, 0).data)
-                    seed = {key: copy.deepcopy(source[key])
-                            for key in pet_profiles.PER_PET_SETTING_KEYS}
-                    if not self._config.get("spawn_inherit_size", True):
-                        seed["scale"] = self._config.get("spawn_scale", catalog.DEFAULT_SCALE)
+                    seed = pet_profiles.per_pet_defaults()
                     result = pet_profiles.write_profile_settings(config_dir, slot, seed)
                     if not result.ok:
                         raise RuntimeError(f"slot-{slot}: {result}")
@@ -4807,14 +4585,9 @@ class OverlayShell(QObject):
         # 未暂停，隐藏/挂起期生成的子宠若不在这里压住，行为链一起播就按帧率
         # 解码，而窗口根本没有像素要上屏。``visible`` 不动（它逻辑上仍是可见
         # 宠物），窗口真正显示时由整窗显示路径（含 ``start()``）补放行。
-        if (slot != 0 or hasattr(self, "_watcher")) and not self._clips_playable():
+        if hasattr(self, "_watcher") and not self._clips_playable():
             self._set_sprite_clip_paused(sprite, True)
-        if slot == 0:
-            self.sprite, self.lib = sprite, lib
-        else:
-            self._spawned.append(sprite)
-            self._spawned_libs[sprite] = lib
-        self._spawned_slots[sprite] = slot
+        self.sprite, self.lib = sprite, lib
         reader._sprite = sprite
         self._sprite_cfg_cache[sprite] = reader
         self._apply_sprite_settings_to(sprite, reader)
@@ -4827,19 +4600,15 @@ class OverlayShell(QObject):
             # 由这一次落位的几何自存落盘；关闭跨屏时**不记**（那时的落位是临时
             # 承载，写了就把用户多屏下摆好的归属覆盖掉）。
             self._remember_sprite_screen(sprite, pet_screen)
-        # 这只子肥鱼自己的气泡与自己计时的自言自语（旧架构每窗各一套）
-        self._ensure_sprite_bubble(sprite)
         host = self._ensure_self_talk_host(sprite)
         if host is not None:
             host.schedule()
         if config_dir:
-            # 生成/复活即落一次几何：未及优雅退出（崩溃/断电）也能按清单复活
+            # 生成/复活即落一次几何：未及优雅退出（崩溃/断电）也能按档案复活。
             geometry = self._sprite_geometry(
                 sprite, self._screen_rect(self._screen_of_sprite(sprite)))
             if geometry and (state.get("rx") is None or state.get("ry") is None):
                 self._save_child_geometry(sprite, slot=slot, geometry=geometry)
-            # 刚写过该 slot 文件 → 签名缓存同步刷新：否则下一次目录事件会把这次
-            # 自写当成"外部变更"，把**别的**子宠的运行态一起重下发（窄契约破了）。
             self._slot_signature_cache = self._slot_config_signatures()
 
     def _slot_writer(self, slot: int):
@@ -4978,7 +4747,7 @@ class OverlayShell(QObject):
         if self.sprite is None or self._screen_of_sprite(self.sprite) is not screen:
             # 这块屏上还没有主宠作参照（该屏第一只）→ 默认右下角（旧语义）
             return self._default_corner_pos(bounds, sprite.rect())
-        index = len(self._spawned) + 1
+        index = 1
         main_body = self.sprite.body_rect()
         pos = QPointF(main_body.x() + main_body.width() + 24 * index,
                       main_body.y())
@@ -4992,145 +4761,6 @@ class OverlayShell(QObject):
         # 错开之后越过这块屏的右缘：落回这块屏的右下角（活动区是整桌面，越界
         # 会把它生到隔壁屏上去——"新宠自主宠向右错开"只在同一块屏内成立）
         return self._default_corner_pos(bounds, sprite.rect())
-
-    def _restore_spawned_pets(self) -> None:
-        """D5：启动恢复依据 = 活跃宠清单（**不是** slot 配置存在）。
-
-        清单缺失 = 首次运行语义；损坏/缺首字段由 overlay_spawn_state 防御性
-        回退成空清单（只有主宠）。单条复活失败（素材缺失/身份配置被删）只
-        记录并摘除该条，不拖垮启动，也不让坏条目永久留在清单里。
-        """
-        for slot in self._remembered_active:
-            if slot == 0:
-                continue
-            try:
-                self._spawn_slot(slot)
-            except Exception:
-                logging.exception("overlay: 恢复失败，保留活跃身份 slot=%s", slot)
-
-    def _remove_spawned_sprite(self, sprite) -> None:
-        """退出一只子肥鱼：几何先落盘（配置保留）→ remove_sprite（clip 释放
-        V-8 + 行为注销 V-9 挂点）→ 库 shutdown 收尾。
-
-        B7b：随该 sprite 一起收掉它自己的气泡窗、自言自语定时器与缓存视图
-        （旧架构进程退出即整套资源释放；留着就是孤儿顶层气泡 + 空转定时器）。
-        """
-        config_dir = self._spawn_config_dir()
-        slot = self._spawned_slots.pop(sprite, None)
-        self._remembered_active = [n for n in self._remembered_active if n != slot]
-        host = self._host_of(sprite)
-        geometry = (self._sprite_geometry(
-            sprite, self._screen_rect(self._screen_of_sprite(sprite)))
-            if host is not None else None)
-        if config_dir and slot and geometry:
-            self._save_child_geometry(sprite, slot=slot, geometry=geometry)
-        lib = self._spawned_libs.pop(sprite, None)
-        # 菜单缩略图缓存挂壳上、按库身份分键：这只宠退出即定向摘掉它自己的条目
-        # （只摘它的，不动同壳其他宠的图；死条目留着只占 128 条上限）。
-        self._drop_menu_icon_cache_for(lib)
-        if sprite in self._spawned:
-            self._spawned.remove(sprite)
-        if host is not None:
-            host.overlay.remove_sprite(sprite)
-        self._close_self_talk_host(sprite)
-        # 承载气泡收口期：同 _exit_main_pet（先摘引用 + 关闸，再关气泡）；
-        # 走的正是承载宠时才摘引用（不是载体就不动副本）
-        if sprite is self._alert_presenter:
-            self._alert_detach_copy()
-        self._alert_copy_teardown = True
-        try:
-            self._close_sprite_bubble(sprite)
-        finally:
-            self._alert_copy_teardown = False
-        self._sprite_hosts.pop(sprite, None)
-        self._sprite_cfg_cache.pop(sprite, None)
-        shutdown = getattr(lib, "shutdown", None)
-        if callable(shutdown):
-            try:
-                shutdown()
-            except Exception:
-                logging.exception("overlay: 子肥鱼素材库收尾失败")
-        # 这只若是当前提醒的承载宠：整条交接到仍可见的宠（或在无宠时留待恢复）
-        self._sync_alert_copy()
-
-    def clear_spawned_pets(self) -> None:
-        """退出全部子肥鱼（app.py clear_spawned_pets 语义）：逐只出活跃清单
-        （slot 配置保留），最后清单落盘为空——退出即不再复活（D5）。"""
-        for sprite in list(self._spawned):
-            self._remove_spawned_sprite(sprite)
-        self._spawned = []
-        self._persist_active_slots()
-        self._refresh_tray_menu()
-
-    def save_spawned_positions(self) -> None:
-        """退出收口：逐只按各自 slot 身份持久化几何（重启复活的位置来源）。"""
-        config_dir = self._spawn_config_dir()
-        if not config_dir:
-            return
-        for sprite in list(self._spawned):
-            slot = self._spawned_slots.get(sprite)
-            host = self._host_of(sprite)
-            geometry = (self._sprite_geometry(
-                sprite, self._screen_rect(self._screen_of_sprite(sprite)))
-                if host is not None else None)
-            if slot and geometry:
-                self._save_child_geometry(sprite, slot=slot, geometry=geometry)
-
-    def exit_pet(self, sprite=None) -> bool:
-        """退出单只（菜单「退出这只」的 overlay 落点）。
-
-        只移除目标活跃身份，档案保留；slot0与子宠同样可逆，不提升、不退出应用。
-        """
-        target = self.sprite if sprite is None else sprite
-        if target is self.sprite:
-            return self._exit_main_pet()
-        if target in self._spawned:
-            self._remove_spawned_sprite(target)
-            self._persist_active_slots()
-            self._refresh_tray_menu()
-            return True
-        return False
-
-    def _exit_main_pet(self) -> bool:
-        """关闭slot0的呈现资源，保留其档案、共享服务与所有子身份。"""
-        if self.sprite is None:
-            return False
-        self.save_position()
-        old_main, old_lib = self.sprite, self.lib
-        host = self._host_of(old_main)
-        if host is not None:
-            host.overlay.remove_sprite(old_main)
-        self._close_self_talk_host(old_main)
-        # 承载气泡收口期：先摘副本引用 + 关闸，免得关闭动作的 hidden 信号把
-        # "这只宠走了"当成"提醒被收起"，在濒死的气泡上再挂一次（重放）。
-        # 只有走的正是承载宠时才摘引用：不是载体就不该动副本（免得白重挂一次）。
-        if old_main is self._alert_presenter:
-            self._alert_detach_copy()
-        self._alert_copy_teardown = True
-        try:
-            self._close_sprite_bubble(old_main)
-            follower = getattr(self, "_bubble_follower", None)
-            if follower is not None:
-                follower.close()
-        finally:
-            self._alert_copy_teardown = False
-        self._bubble_follower = None
-        self._sprite_cfg_cache.pop(old_main, None)
-        self._spawned_slots.pop(old_main, None)
-        self._sprite_hosts.pop(old_main, None)
-        self.sprite = self.lib = None
-        timer = getattr(self, "_self_talk_timer", None)
-        if timer is not None:
-            timer.stop()
-        self._self_talk_enabled = False
-        self._remembered_active = [n for n in self._remembered_active if n != 0]
-        self._delete_runtime_marker()
-        self._shutdown_library(old_lib, "slot0")
-        self._persist_active_slots()
-        self._refresh_tray_menu()
-        # 承载宠退出：当前提醒整体交接到仍可见的宠上（同 ID、同剩余 TTL、一份副本）
-        self._sync_alert_copy()
-        return True
 
     def _rebind_main_sprite(self) -> None:
         """恢复slot0后重挂其位置监听、气泡与标记。"""
@@ -5222,7 +4852,7 @@ class OverlayShell(QObject):
         if not config_dir:
             return {}
         signatures: dict = {}
-        for slot in {0, *self._active_slots()}:
+        for slot in (0,):
             try:
                 stat = overlay_spawn_state.slot_config_path(
                     config_dir, slot).stat()
@@ -5263,17 +4893,15 @@ class OverlayShell(QObject):
                 self._slot_signature_cache.pop(slot, None)
 
     def _on_settings_command_poll(self) -> None:
-        """既有 3s 兜底轮询：指令消费 + 子宠 slot 设置变更检查（同为事件兜底）。"""
+        """既有 3s 兜底轮询：指令消费 + slot0 设置变更检查（同为事件兜底）。"""
         self._consume_settings_command()
         self._refresh_slot_settings_if_changed()
 
     def _consume_settings_command(self) -> None:
         """消费一条设置进程指令（幂等；无指令 = 空转）。
 
-        指令语义：``exit_spawned_pets`` 的 ``target`` 为空 = 退出全部子肥鱼（设置页
-        「一键退出子肥鱼」），否则只退那个 slot 身份（身份已不在活跃清单 = 空操作，
-        只留日志）；``apply_settings_reset`` = 按刚写下的默认值对齐这一只的运行态
-        （见 :meth:`apply_settings_reset`）。
+        指令语义：``profile_reset`` 只接受 slot-0；``apply_settings_reset`` =
+        按刚写下的默认值对齐运行态（见 :meth:`apply_settings_reset`）。
         """
         config_dir = self._spawn_config_dir()
         if not config_dir:
@@ -5285,24 +4913,17 @@ class OverlayShell(QObject):
         try:
             name, target = command["command"], command["target"]
             if name == overlay_settings_command.CMD_PROFILE_RESET:
-                if target is None or not 0 <= target <= overlay_spawn_state.MAX_SCAN_SLOTS:
+                if target != 0:
                     logging.warning("overlay: profile_reset target=%s 永久无效，失败结束", target)
-                elif not self._apply_child_profile(target):
+                elif not self._apply_child_profile(0):
                     retry = True
-                    logging.warning("overlay: profile_reset slot-%s 未应用，保留有界重试", target)
+                    logging.warning("overlay: profile_reset slot-0 未应用，保留有界重试")
                 else:
-                    logging.info("overlay: profile_reset slot-%s 已同步（位置保留/关闭目标不复活）", target)
+                    logging.info("overlay: profile_reset slot-0 已同步（位置保留）")
             elif name == overlay_settings_command.CMD_APPLY_SETTINGS_RESET:
                 self.apply_settings_reset(target)
-            elif target is None:
-                self.clear_spawned_pets()
             else:
-                sprite = next((item for item in self._spawned
-                               if self._spawned_slots.get(item) == target), None)
-                if sprite is not None:
-                    self.exit_pet(sprite)
-                else:
-                    logging.info("overlay: 指令目标 slot-%s 已关闭，空操作结束", target)
+                logging.info("overlay: 忽略未知指令 %s", name)
         except Exception:
             retry = True
             logging.exception("overlay: 指令应用失败，保留有界重试")
@@ -5334,20 +4955,9 @@ class OverlayShell(QObject):
                 pass
 
     # ---------------------------------------------------------------- D13 逐 sprite 设置路由
-    def sprite_instance_id(self, sprite) -> str:
-        """sprite 的 config 身份：主 sprite = ``slot-0``，子 sprite = 各自 slot 身份。
-
-        D13：独立设置进程按 ``--instance`` 打开对应 ``config-slot-N.json``；主宠的
-        档案身份就是 ``slot-0``（身份空间含 0），故主/子走同一条显式身份通路。
-        陌生 sprite（不在登记表）回退 ``slot-0``，绝不瞎猜 slot。
-        """
-        main_id = "slot-0"
-        if sprite is None or sprite is self.sprite:
-            return main_id
-        slot = self._spawned_slots.get(sprite)
-        if slot is None:
-            return main_id
-        return slot_manager.slot_to_instance_id(int(slot))
+    def sprite_instance_id(self, sprite=None) -> str:
+        """唯一桌宠的档案身份：``slot-0``。"""
+        return "slot-0"
 
     def open_settings_for(self, sprite=None) -> bool:
         """按被点 sprite 的 config 身份打开设置页（D13 落点）。
@@ -5449,7 +5059,6 @@ class OverlayShell(QObject):
                 self._alert_copy_teardown = False
             if sprite is getattr(self, "sprite", None):
                 self._notify_pet_hidden()
-        self._sync_tray_pet_visibility()
         # 可见 sprite 数变化 → 档位机立即重评（零可见 sprite 的目标档位是 T3）
         self._note_sprite_visibility_changed()
         # 承载宠被藏（或在无宠期重新可见）：提醒交接 / 恢复走同一漏斗
@@ -5518,14 +5127,6 @@ class OverlayShell(QObject):
             return
         self.set_sprite_visible(target, not self._sprite_visible(target))
 
-    def _sync_tray_pet_visibility(self) -> None:
-        """托盘弹出前/显隐变更后同步逐只勾选态（外部也可能改过 sprite.visible）。"""
-        for sprite, action in list(getattr(self, "_pet_visible_actions", [])):
-            try:
-                action.setChecked(self._sprite_visible(sprite))
-            except RuntimeError:
-                continue  # 菜单已销毁（wrapper 失效）：跳过
-
     def set_pet_visible(self, visible: bool) -> None:
         """显隐切换（app.py toggle_visible 等价）+ 岛状态同步 + 共享子系统 pause/resume。
 
@@ -5590,14 +5191,9 @@ class OverlayShell(QObject):
 
     # ---------------------------------------------------------------- 预热成对（O3）
     def _all_libraries(self) -> list:
-        """主库 + 全部子宠库（每只子肥鱼各持独立库，M8；None 已摘除的跳过）。"""
-        libs = []
+        """唯一的素材库（None 已摘除的跳过）。"""
         main = getattr(self, "lib", None)
-        if main is not None:
-            libs.append(main)
-        libs.extend(lib for lib in getattr(self, "_spawned_libs", {}).values()
-                    if lib is not None)
-        return libs
+        return [main] if main is not None else []
 
     def _pause_warm_all(self) -> None:
         """隐藏/挂起 → 逐库停预热（在飞首帧预热线程一并收口，见 library.pause_warm）。"""
@@ -5639,11 +5235,9 @@ class OverlayShell(QObject):
 
     def _hide_bubble_for_visibility(self) -> None:
         """整窗隐藏期收起**全部**气泡（气泡是置顶 Tool 窗，不随 overlay 隐藏）。"""
-        followers = [getattr(self, "_bubble_follower", None)]
-        followers.extend(list(self._bubble_followers.values()))
-        for follower in followers:
-            if follower is not None:
-                follower.hide()
+        follower = getattr(self, "_bubble_follower", None)
+        if follower is not None:
+            follower.hide()
 
     def _restore_sticky_bubble(self) -> None:
         """恢复显示：仍挂着的粘滞提醒重新挂上（legacy ``_resume_activity`` 同款）。"""
@@ -5716,17 +5310,6 @@ class OverlayShell(QObject):
             except Exception:
                 logging.exception("overlay: 旧素材库收尾失败")
 
-    def _drop_menu_icon_cache_for(self, library) -> None:
-        """定向摘掉某个素材库的菜单缩略图条目（退出子肥鱼用）。
-
-        缓存挂壳上、键 =（库身份, 动画名）：一份缓存服务同壳所有宠，所以这里按库身份
-        只摘这只宠的条目——整份清掉（``_clear_menu_icon_cache`` 的换角色语义）会把别的
-        宠的图一起丢掉，下次开菜单全部重解码。没开过菜单（缓存尚未创建）时不动作。
-        """
-        cache = getattr(self, "_menu_icon_cache", None)
-        if isinstance(cache, dict):
-            animation_icon_cache_drop_library(cache, library)
-
     def _clear_menu_icon_cache(self) -> None:
         """换角色后清菜单动画缩略图缓存（B08；复审#5 后是**内存卫生**）。
 
@@ -5762,17 +5345,10 @@ class OverlayShell(QObject):
                 logging.exception("overlay: 完整聊天窗/岛对话气泡角色同步失败")
 
     def _switch_child_character(self, sprite, character_id: str, *, persist=True) -> bool:
-        """子宠换角色：换它自己的库 + 写它自己的 slot 配置（主宠一字不动）。
-
-        聊天面不在此同步（B07 调查结论）：快速对话气泡、完整聊天窗、岛对话气泡
-        的角色身份一律取**主配置**（``QuickChatBubble(self._config)``、会话目录按
-        主身份），子宠没有自己的聊天身份通道可言——把主宠的聊天面改成子宠的角色
-        只会错得更远。菜单缩略图缓存是壳级的（同名动画跨角色串图，B08），换库后
-        照清。
-        """
-        slot = self._spawned_slots.get(sprite)
+        """按 slot0 档案换角色：换素材库、写 slot0 档案、同步聊天面。"""
+        slot = 0
         current = getattr(sprite, "_profile_character", None)
-        if slot is None or not character_id:
+        if not character_id:
             return False
         if character_id == current:
             return True
@@ -5794,12 +5370,9 @@ class OverlayShell(QObject):
             self._shutdown_library(new_lib, "未应用角色")
             return False
         sprite_host = self.host_for_sprite(sprite)
-        old_lib = self.lib if slot == 0 else self._spawned_libs.get(sprite)
-        if slot == 0:
-            self.lib = new_lib
-            self._sync_chat_surfaces(selected)
-        else:
-            self._spawned_libs[sprite] = new_lib
+        old_lib = self.lib
+        self.lib = new_lib
+        self._sync_chat_surfaces(selected)
         sprite.library = new_lib
         sprite._profile_character = selected
         sprite_host.behavior.forget(sprite)
@@ -6600,20 +6173,18 @@ class OverlayShell(QObject):
                 logging.debug("overlay: 气泡跟随原点同步失败", exc_info=True)
 
     def _host_bubble_followers(self, host) -> list:
-        """挂在该宿主上的气泡跟随器（主 + 逐只子宠）。"""
-        followers = []
-        for sprite, follower in self._all_bubble_followers():
-            if follower is None:
-                continue
-            if self._host_of(sprite) is host:
-                followers.append(follower)
-        return followers
+        """挂在该宿主上的气泡跟随器（唯一桌宠）。"""
+        follower = getattr(self, "_bubble_follower", None)
+        if follower is None or self._host_of(self.sprite) is not host:
+            return []
+        return [follower]
 
     def _all_bubble_followers(self) -> list:
-        """(sprite, follower) 全表（主宠 + 逐只子宠）。"""
-        items = [(self.sprite, getattr(self, "_bubble_follower", None))]
-        items.extend(self._bubble_followers.items())
-        return [(sprite, follower) for sprite, follower in items if sprite is not None]
+        """(sprite, follower) 全表（唯一桌宠）。"""
+        follower = getattr(self, "_bubble_follower", None)
+        if self.sprite is None or follower is None:
+            return []
+        return [(self.sprite, follower)]
 
     def _end_drag(self, host=None) -> None:
         """拖拽中拔屏/迁移：按当前位置松手收尾，清掉窗口的 grab 状态。
@@ -6706,8 +6277,7 @@ class OverlayShell(QObject):
         if self._session_end_done:
             return
         self._session_end_done = True
-        libs = [self.lib] + [lib for lib in getattr(self, "_spawned_libs", {}).values()]
-        for lib in libs:  # 每只子肥鱼各持独立库（M8）：关机窗口一并停 reader
+        for lib in [self.lib]:  # 关机窗口一并停 reader
             stop_all = getattr(lib, "stop_all_clips", None)
             if callable(stop_all):
                 try:

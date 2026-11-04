@@ -84,7 +84,6 @@ __all__ = [
     "SlotRoutedConfig",
     "classify_slot_status",
     "global_config_of",
-    "is_main_identity",
     "route_settings_config",
     "save_failure_of",
 ]
@@ -628,20 +627,6 @@ def save_failure_of(config) -> SaveFailure | None:
     if isinstance(config, SlotRoutedConfig):
         return config.last_save_failure
     return None
-
-
-def is_main_identity(instance_id) -> bool:
-    """这个实例身份是不是**主宠身份**（``""`` 或 ``slot-0``）。
-
-    G1 起 slot0 有显式身份 ``slot-0``，"主身份"不再等于"空身份"：按字符串真值猜
-    会让主宠自己的设置页把自己当成子宠（「一键退出子肥鱼」据此写出 ``target=0``，
-    两个消费者都把它当子槽去查 → 主 sprite 不在 ``_spawned`` 里 → **静默 no-op**，
-    按钮看着能用、点下去什么都不发生）。判据与 ``AppShell`` 的
-    ``if self.slot_id in (None, 0) else None`` 同源：slot 号，不是身份字符串。
-    """
-    if instance_id is None or instance_id == "":
-        return True
-    return overlay_settings_command.slot_from_instance_id(instance_id) == 0
 
 
 def global_config_of(config):

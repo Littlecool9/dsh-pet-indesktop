@@ -737,7 +737,7 @@ def test_anchor_bar_holds_across_jump_resize_and_domain_navigation(tmp_path, mon
 TAB_BAND_DOMAIN = "桌宠"
 TAB_BAND_KEY = "motion"
 #: 带内用来验「一次点击顶对齐」的普通分区（不用先展开，位置又在页尾附近）。
-TAB_BAND_TARGET = "生小肥鱼"
+TAB_BAND_TARGET = "边缘探头"
 
 
 def _tabs_of(dialog, domain: str) -> SettingsTabContainer:
@@ -782,84 +782,8 @@ def _tab_band(tmp_path, monkeypatch, *, width: int = 1100) -> tuple[int, int, in
     return page_height + overhead, page_height, layer
 
 
-def test_tab_page_bar_counts_the_tab_layer_not_just_the_page(tmp_path, monkeypatch):
-    """页内标签域：「装得下吗」按**整块滚动内容**答（标签页 + 标签栏那一层）。
-
-    只量当前标签页会漏掉标签容器上面那层「标签栏 + 间距」，于是 ``标签页高 <= 视口 <
-    整块内容高`` 这一小段答成"装得下"：跳转条收起来，而用户明明要滚才看得完（实测 1100 宽、
-    桌宠／动作：标签页 1144、层高 52、整块 1196，窗口高 1222…1278）。
-
-    两种到达方向（从装得下的大窗缩进来 / 从装不下的小窗拉进来）都要落在"摆着"，
-    换标签再换回来也不许把答案带走。
-    """
-    start, page_height, layer = _tab_band(tmp_path, monkeypatch)
-    for how in ("down", "up"):
-        dialog = _dialog(tmp_path, monkeypatch)
-        try:
-            tall = how == "down"
-            dialog.resize(1100, start + (layer + 240 if tall else -240))
-            dialog.show()
-            _settle(6)
-            page, bar = _select(dialog, TAB_BAND_DOMAIN)
-            tabs = _tabs_of(dialog, TAB_BAND_DOMAIN)
-            tabs.setCurrentKey(TAB_BAND_KEY)
-            _settle(4)
-            scroll = page.findChild(QScrollArea, "settingsScroll")
-            assert bar.isHidden() is tall, (
-                f"前提：{'大窗里整块内容装得下' if tall else '小窗里整块内容装不下'}，"
-                f"跳转条该{'收起来' if tall else '摆着'}")
-
-            dialog.resize(1100, start)
-            _settle(6)
-            assert _needed_height(scroll) > _available_height(scroll, bar), (
-                f"前提：到达带内后整块内容仍超过视口（整块 {_needed_height(scroll)}px / 可用 "
-                f"{_available_height(scroll, bar)}px：标签页 {page_height}px + 层 {layer}px）")
-            assert bar.isHidden() is False, (
-                f"{how}：整块内容要滚，跳转条不该收起来（只量标签页会漏掉那 {layer}px）")
-            assert _visibility_history(bar) == [False] * 10, "稳定态不许来回翻"
-
-            # 换标签：门槛按该标签重算，答案不许跟着上一个标签走。
-            tabs.setCurrentKey("display")
-            _settle(4)
-            assert bar.isHidden() is True, "只有 1 个区的标签页不摆跳转条"
-            tabs.setCurrentKey(TAB_BAND_KEY)
-            _settle(4)
-            assert bar.isHidden() is False, "换回 6 个区的标签页要回来"
-        finally:
-            dialog.close()
 
 
-def test_tab_page_last_group_can_be_top_aligned_inside_that_band(tmp_path, monkeypatch):
-    """带内点页尾那几组的 chip 也要一次顶对齐：页尾留白同样按整块内容答「装不装得下」。
-
-    只量标签页时留白在这一段是 0，滚动范围只剩几十像素：跳转条摆着、点下去却顶不到
-    y=8（实测 1100 宽、桌宠／动作、窗口高 1264：点「生小肥鱼」只滚到 52，目标 979）。
-    """
-    start, _page_height, layer = _tab_band(tmp_path, monkeypatch)
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        dialog.resize(1100, start)
-        dialog.show()
-        _settle(6)
-        page, bar = _select(dialog, TAB_BAND_DOMAIN)
-        target = _section(dialog, TAB_BAND_DOMAIN, TAB_BAND_TARGET, TAB_BAND_KEY)
-        _settle(4)
-        scroll = page.findChild(QScrollArea, "settingsScroll")
-        assert bar.isHidden() is False, "前提：带内跳转条摆着"
-        assert _past_end_padding(dialog, TAB_BAND_DOMAIN, TAB_BAND_KEY) > 0, (
-            f"整块内容要滚，页尾留白不该是 0（标签页之外还有 {layer}px 的标签那一层）")
-        assert target.card.isHidden() is False, "前提：目标是不用先展开的普通分区"
-
-        want = target.mapTo(scroll.widget(), QPoint(0, 0)).y() - 8
-        next(chip for chip in _chips(bar) if chip.text() == TAB_BAND_TARGET).click()
-        _settle(4)
-        landed = scroll.verticalScrollBar().value()
-        assert landed == want, (
-            f"点「{TAB_BAND_TARGET}」后滚到 {landed}（目标 {want}）：滚动范围仍不够"
-            f"（maximum={scroll.verticalScrollBar().maximum()}）")
-        assert target.mapTo(scroll.viewport(), QPoint(0, 0)).y() == 8
-    finally:
-        dialog.close()
 
 
 def test_chips_name_their_section_and_take_keyboard_focus(tmp_path, monkeypatch):
@@ -1002,7 +926,6 @@ def test_the_last_group_of_a_page_can_be_top_aligned_in_one_click(tmp_path, monk
             app.processEvents()
             for domain, tab_key, title in (
                 ("AI 与对话", None, "余额与服务状态"),
-                ("桌宠", "motion", "生小肥鱼"),
             ):
                 _page_widget, bar = _select(dialog, domain)
                 scroll = _page(dialog, domain).findChild(QScrollArea, "settingsScroll")
@@ -1112,9 +1035,10 @@ def test_anchor_bar_rebuilds_when_the_in_page_tab_changes(tmp_path, monkeypatch)
 
         tabs.setCurrentKey("motion")
         app.processEvents()
-        assert bar.isHidden() is False
+        # 只剩 3 个区（< ANCHOR_MIN_BLOCKS=4）：跳转条不摆，但 chip 仍按当前标签重建。
+        assert bar.isHidden() is True
         assert [chip.text() for chip in _chips(bar)] == [
-            "动画与移动", "拖动", "边缘探头", "生小肥鱼"]
+            "动画与移动", "拖动", "边缘探头"]
 
         tabs.setCurrentKey("display")
         app.processEvents()

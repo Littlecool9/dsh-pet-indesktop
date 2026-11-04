@@ -175,31 +175,6 @@ def test_overlay_switch_character_syncs_island_chat_bubble(tmp_path):
         _teardown(overlay)
 
 
-def test_overlay_promotion_switches_open_chat_window_to_promoted_character(tmp_path):
-    """R03-A 端到端：主宠退出提升子宠后，已开着的聊天窗与它取的会话换成提升者的。
-
-    走真 AppShell + 真 PetInstance + 真聊天窗（``switch_character`` 真换
-    ``character_id`` 并按新角色重取会话），只把素材库与窗口构造换成替身。
-    """
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        overlay.overlay.show()
-        overlay.spawn_pet()
-        child = overlay._spawned[0]
-        # 子宠换角色（产品路径：写它自己的 slot 配置，主配置一字不动）
-        overlay.switch_character("nova", child)
-        overlay.open_full_chat()
-        window = inst.modern_chat_window
-        assert window is not None and window.character_id != "nova"
-
-        assert overlay.exit_pet(overlay.sprite) is True
-
-        assert overlay.sprite is None
-        assert child in overlay._spawned
-        assert window.character_id != "nova", "关闭0不能改变共享会话角色"
-        assert window.session.character_id == window.character_id
-    finally:
-        _teardown(overlay)
 
 
 # ---------------------------------------------------------------- A2 提醒落气泡
@@ -225,31 +200,6 @@ def test_todo_reminder_bubbles_on_overlay_host(tmp_path):
         _teardown(overlay)
 
 
-def test_show_bubble_returns_delivery_verdict_on_overlay_host(tmp_path):
-    """overlay 壳的 ``show_bubble`` 返回交付真值（不是 None）。
-
-    交付确认制（免打扰汇报 / 待办 / 报时）靠这个返回值判断"到底上没上
-    屏"：真上屏 True，让路/抑制 False，且绝不返回 None（早期成功失败都
-    返回 None，只能当"已展示"，误判出静默丢失）。
-    """
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        overlay.overlay.show()
-        overlay.spawn_pet()
-
-        assert overlay.show_bubble("普通气泡") is True
-
-        # 审批提醒占着气泡位：普通气泡让路，返回 False
-        overlay.show_alert("审批请求", buttons=[("同意", lambda: None)])
-        assert overlay._alert_current is not None
-        assert overlay.show_bubble("普通气泡") is False
-
-        # 设置页抑制期
-        overlay.clear_alerts()
-        overlay.set_bubble_suppressed(True)
-        assert overlay.show_bubble("普通气泡") is False
-    finally:
-        _teardown(overlay)
 
 
 class _NoThread:
@@ -356,41 +306,6 @@ def test_legacy_topology_hosts_unchanged(tmp_path):
 
 
 # ---------------------------------------------------------------- O5 指令通道归属
-def test_settings_command_belongs_to_overlay_host_not_app(tmp_path):
-    """overlay 拓扑下「退出子肥鱼」指令由壳独占消费，AppShell 不得抢先摘走。
-
-    两条 watcher 盯同一个配置目录，都调 ``consume_command``（**消费即删**）。
-    AppShell 侧的 ``clear_spawned_pets`` / slot 身份在 overlay 下都没有目标
-    （子宠是 sprite，不在 ``_instances`` 里），谁先跑谁把指令摘走 → 设置页
-    「一键退出子肥鱼」静默失效。故 app 侧在 overlay 拓扑下必须让路。
-    """
-    from pet import overlay_settings_command as cmd
-
-    shell, inst, overlay = _make_overlay_app(tmp_path)
-    try:
-        shell._install_config_watcher()          # app 侧 watcher（真装、真盯同一目录）
-        overlay.spawn_pet()
-        assert overlay._spawned, "用例前置：有子宠才谈得上退出"
-        config_dir = overlay._config.dir
-        # 两条 watcher 并存且职责不同：app 侧 = 主配置外部修改 → 应用链，
-        # 壳侧 = 设置指令 + per-slot 签名。两者都保留（去重的是指令消费，不是 watcher）。
-        assert shell._config_watcher is not None
-        assert overlay._command_watcher is not None
-        assert str(config_dir) in shell._config_watcher.directories()
-        assert str(config_dir) in overlay._command_watcher.directories()
-        assert cmd.write_command(config_dir, cmd.CMD_EXIT_SPAWNED_PETS)
-        # app 侧 watcher 槽（QFileSystemWatcher.directoryChanged 的真实接线点）
-        shell._on_config_dir_changed(str(config_dir))
-        assert cmd.command_path(config_dir).exists(), \
-            "AppShell 把指令摘走了：壳侧再也消费不到（overlay 下它没有目标可执行）"
-        shell._poll_settings_process()          # 3s 轮询兜底同样不得摘走
-        assert cmd.command_path(config_dir).exists(), "轮询兜底路径也摘走了指令"
-        # 壳侧照常消费并真的退出那只子肥鱼
-        overlay._on_settings_command_dir_changed(str(config_dir))
-        assert overlay._spawned == []
-    finally:
-        shell._teardown_config_watcher()
-        _teardown(overlay)
 
 
 def test_hidden_hint_uses_overlay_tray(tmp_path, monkeypatch):

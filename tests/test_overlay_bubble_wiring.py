@@ -77,33 +77,6 @@ def test_scale_change_through_refresh_reflows_visible_bubble(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_on_sprite_scale_changed_reflows_main_follower(tmp_path):
-    """壳侧显式落点（右键菜单改大小的接缝）：``on_sprite_scale_changed(sprite)``。
-
-    调用方 = ``sprite_menu_facade.change_scale``（改大小后按新 pet_scale 重排）；
-    B7b 起每只 sprite 有**自己**的跟随器，这里只动被改的那一只（其它宠的气泡
-    不受影响）。
-    """
-    shell, _lib, follower = _make_shell(tmp_path)
-    try:
-        shell.sprite.scale = 1.3
-        shell.on_sprite_scale_changed(shell.sprite)
-        assert follower.bubble.reflows, "改大小后必须重排主气泡"
-        assert follower.bubble.reflows[-1][1] == pytest.approx(1.3)
-
-        # 子宠有自己那只跟随器：改它的缩放只重排它自己那只
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        child_follower = shell._bubble_followers[child]
-        child_follower.bubble = _RecordingBubble()
-        main_reflows = len(follower.bubble.reflows)
-        child.scale = 0.7
-        shell.on_sprite_scale_changed(child)
-        assert child_follower.bubble.reflows[-1][1] == pytest.approx(0.7)
-        assert len(follower.bubble.reflows) == main_reflows, "主气泡不被子宠的缩放牵动"
-    finally:
-        shell.clear_spawned_pets()
-        shell._delete_runtime_marker()
 
 
 # ---------------------------------------------------------------- 换角色：refresh_anchor
@@ -122,34 +95,6 @@ def test_switch_character_refreshes_bubble_anchor(tmp_path):
 
 
 # ---------------------------------------------------------------- 逐只显隐：收气泡
-def test_set_sprite_visible_hides_main_bubble_only(tmp_path):
-    """隐藏主 sprite 必须收气泡（M14 逐只显隐）；隐藏子宠不动主气泡。
-
-    offscreen 的可见性约束：壳（``overlay``）没 ``show()`` 时
-    ``OverlayShell.show_bubble`` 会在第一道门早退（``if not self.isVisible():
-    return False``）——气泡根本没上屏，而替身气泡的 ``isVisible()`` 还会停在构造
-    默认值上，于是"气泡在显"成了假前提（hide 分支照样通过，等于白测）。这里先把
-    壳真上屏，并让替身从隐藏态起步、只能经 ``show_text`` 转显，前提由
-    ``show_bubble`` 的真实返回值 + 替身的状态迁移共同作证。
-    """
-    shell, _lib, follower = _make_shell(tmp_path)
-    try:
-        follower.bubble.set_visible(False)
-        shell.overlay.show()
-        app.processEvents()
-        assert shell.isVisible() is True, "前提：壳真上屏（否则 show_bubble 早退丢弃）"
-
-        assert shell.show_bubble("在吗") is True, "前提：气泡真上了屏"
-        assert follower.bubble.isVisible() is True
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.set_sprite_visible(child, False)
-        assert follower.bubble.isVisible() is True, "隐藏子宠不该收主宠的气泡"
-        shell.set_sprite_visible(shell.sprite, False)
-        assert follower.bubble.isVisible() is False, "隐藏主宠必须收起气泡"
-    finally:
-        shell.clear_spawned_pets()
-        shell._delete_runtime_marker()
 
 
 # ---------------------------------------------------------------- 识屏发起者默认值

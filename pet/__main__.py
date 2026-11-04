@@ -52,22 +52,6 @@ def _exec_settings(app, config, *, include_ai: bool = True, initial_page: str = 
         lock.unlock()
 
 
-def _settings_instance_id(argv) -> str:
-    """从 --settings 附加参数里取 instance_id（缺省空 = 主宠，按 slot0 分流，#271）。
-
-    进程内多窗时第二窗的 config 是
-    config-slot-N.json，而进程级 DSH_PET_INSTANCE 仍是主窗的；主进程会显式
-    追加 --instance slot-N 把子进程指到正确的那份配置。
-    """
-    try:
-        index = argv.index("--instance")
-    except ValueError:
-        return ""
-    if index + 1 >= len(argv):
-        return ""
-    return str(argv[index + 1] or "").strip()
-
-
 def _settings_page(argv) -> str:
     try:
         index = argv.index("--settings-page")
@@ -99,10 +83,8 @@ def _run_settings(config=None) -> int:
     if config is None:
         from .config import Config
 
-        # DSH_PET_INSTANCE 由主进程经环境继承下来：子肥鱼的设置进程编辑的是
-        # 它自己的 config-slot-N.json，与主进程同一份文件；多窗场景由主进程
-        # 追加 --instance 显式指明。
-        config = Config(instance_id=_settings_instance_id(sys.argv))
+        # 只剩一只桌宠：设置进程永远编辑它自己的 slot0 档案。
+        config = Config(instance_id="slot-0")
     try:
         config.dir.mkdir(parents=True, exist_ok=True)
     except OSError:

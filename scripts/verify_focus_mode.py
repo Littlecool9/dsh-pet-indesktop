@@ -382,7 +382,7 @@ def suite_tests(output, part="all"):
     count = re.search(r"(\d+) tests? collected", collected.stdout)
     assert collected.returncode == 0 and count and len(ids) == int(count[1]), "Incomplete collection"
     assert len(ids) == len(set(ids)), "Duplicate collected cases"
-    decode = {"tests/test_decode_fanout.py", "tests/test_decode_fanout_integration.py"}
+    decode = set()
     files = sorted({node.split("::", 1)[0] for node in ids})
     groups = {Path(f).stem: [f] for f in files if f not in decode and Path(f).name < "test_q"}
     groups.update({"q-onward": [f for f in files if f not in decode and Path(f).name >= "test_q"],

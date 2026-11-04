@@ -323,23 +323,6 @@ def test_start_skips_sound_warm_when_both_switches_off(monkeypatch):
     assert calls == []
 
 
-def test_three_in_process_pets_warm_sound_once(monkeypatch):
-    """三宠同进程（overlay 多宠 = spawn 进同一壳）：预热只发生一次。"""
-    instance = FakeInstance(FakeConfig({"click_sound_enabled": True}))
-    shell = OverlayShell(
-        app, instance,
-        screen=FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)),
-        sprite_factory=lambda lib, pos, scale: _BodySprite(lib, pos, scale))
-    shell._create_main_library = FakeLibrary
-    calls = []
-    _warm_spy(monkeypatch, calls)
-
-    shell.start()
-    shell.spawn_pet()
-    shell.spawn_pet()
-
-    assert len(shell._spawned) == 2  # 前提：三宠确实同进程存在
-    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------- 屏事件：geometryChanged 比例迁移
@@ -456,25 +439,6 @@ def test_about_to_quit_cancels_frameseq_provision():
     assert shell.lib.provision_cancels == 1
 
 
-def test_about_to_quit_cancels_provision_for_spawned_libraries(monkeypatch):
-    """子肥鱼各持独立库（M8）：逐库取消，不只主库。"""
-    instance = FakeInstance(FakeConfig({"click_sound_enabled": False}))
-    shell = OverlayShell(
-        app, instance,
-        screen=FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)),
-        sprite_factory=lambda lib, pos, scale: _BodySprite(lib, pos, scale))
-    shell._create_main_library = FakeLibrary
-    calls = []
-    _warm_spy(monkeypatch, calls)
-    shell.start()
-    shell.spawn_pet()
-    spawned = list(shell._spawned_libs.values())
-    assert spawned                                     # 前提：确实有子库
-
-    shell._on_about_to_quit()
-
-    assert shell.lib.provision_cancels == 1
-    assert [lib.provision_cancels for lib in spawned] == [1] * len(spawned)
 
 
 # ---------------------------------------------------------------- app.py 拓扑分支
@@ -517,30 +481,8 @@ def test_app_start_takes_overlay_shell(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- D0 门控解绑（T3）
-def test_hub_and_shared_subsystems_are_always_on(tmp_path, monkeypatch):
-    """D0 + 4.4b：hub 常开、共享子系统常建，**不再有任何 spawn flag 门控**。
-
-    契约来源 PHASE4_DESIGN T3/D0：多 sprite/多窗同角色若各建解码链会退化成
-    N 路独立 ffmpeg；共享子系统缺位则是静默缺失。4.4b 起 spawn 开关键已删除，
-    """
-    shell = AppShell(app, Config(tmp_path))
-    try:
-        assert shell._decode_hub.enabled is True       # hub 常开
-        assert shell._shared is not None               # 共享子系统常建
-    finally:
-        shell._shared.stop_all()
 
 
-def test_overlay_topology_hub_respects_shared_decode_off(tmp_path, monkeypatch):
-    """用户级总闸 `experimental_shared_decode` 仍然生效。"""
-    cfg = Config(tmp_path)
-    cfg.set("experimental_shared_decode", False)
-    shell = AppShell(app, cfg)
-    try:
-        assert shell._decode_hub.enabled is False
-        assert shell._shared is not None               # 两项门控彼此独立
-    finally:
-        shell._shared.stop_all()
 
 
 # ---------------------------------------------------------------- 边缘探头壳层接线
@@ -614,29 +556,6 @@ def test_switch_character_without_bubble_sync_seam_is_quiet():
     assert instance.chat_syncs == ["nova"]
 
 
-def test_switch_child_character_does_not_touch_chat_surfaces():
-    """子宠换角色**不**同步聊天面：子宠没有自己的聊天身份通道。
-
-    快速对话气泡/完整聊天窗/岛气泡的身份都取主配置（``QuickChatBubble(
-    self._config)``、会话目录按主身份），子宠换角色没有对应身份可同步；这条
-    锁住「不做」的决定，防止未来把主宠的聊天面误改到子宠的角色上。
-    """
-    instance = _ChatSyncInstance()
-    shell = OverlayShell(
-        app, instance,
-        screen=FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)),
-        sprite_factory=lambda lib, pos, scale: _BodySprite(lib, pos, scale))
-    shell._create_main_library = FakeLibrary
-    bubble = _FakeQuickChatBubble()
-    shell._quick_chat = bubble
-    shell.spawn_pet()
-    child = shell._spawned[0]
-
-    shell.switch_character("nova", child)
-
-    assert shell._spawned_libs[child] is not None
-    assert bubble.switched == []
-    assert instance.chat_syncs == []
 
 
 # ------------------------------------------------- 关闭主位：留空、不提升、不退出应用（G1）
@@ -672,48 +591,5 @@ def _make_slot0_close_shell(tmp_path, main_character, child_character):
     return shell, instance, child
 
 
-def test_closing_slot0_leaves_it_empty_without_promoting_a_child(tmp_path):
-    """关闭主宠 = slot0 留空，档案保留：子宠**不**接管主身份、不退出应用。
-
-    旧语义（子宠提升为主身份、角色接管进主配置）已废除：身份空间稳定，
-    没有任何路径能把一只宠的身份"接管"成主身份。
-    """
-    shell, instance, child = _make_slot0_close_shell(tmp_path, "shenshen", "nova")
-    bubble = _FakeQuickChatBubble()
-    shell._quick_chat = bubble
-
-    assert shell.exit_pet(shell.sprite) is True
-
-    assert shell.sprite is None, "关闭主宠后 slot0 留空，不被子宠接管"
-    assert shell._spawned == [child], "子宠仍在它自己的身份上"
-    assert 0 not in shell._remembered_active, "活跃集合只去掉 slot0"
-    assert 1 in shell._remembered_active, "子宠的活跃身份不受影响"
-    assert bubble.switched == [], "关闭主宠不把聊天面改到子宠的角色上"
-    assert instance.chat_syncs == [], "共享会话的角色不因主位留空而改变"
 
 
-def test_closing_slot0_keeps_its_profile_and_can_be_restored(tmp_path):
-    """关闭主宠可逆：slot0 档案（角色/几何）留在盘上，再生成时按它恢复。
-
-    旧"新旧主同角色仍走同一提升入口"的断言随之废除——不提升就没有"接管后的
-    主配置"可读，这里改为锁住**档案保留 + 可再生成**这条可逆契约。
-    """
-    shell, instance, child = _make_slot0_close_shell(tmp_path, "shenshen", "shenshen")
-    bubble = _FakeQuickChatBubble()
-    shell._quick_chat = bubble
-    from pet import pet_profiles
-
-    config_dir = shell._spawn_config_dir()
-    profile_before = pet_profiles.read_slot_profile(config_dir, 0).data
-
-    assert shell.exit_pet(shell.sprite) is True
-
-    assert shell.sprite is None
-    assert pet_profiles.read_slot_profile(config_dir, 0).data == profile_before, \
-        "关闭主宠不动它的档案"
-    assert shell._config.get("character") == "shenshen", "主配置的角色不被改写"
-
-    shell.spawn_pet()
-    assert shell.sprite is not None, "关闭后可再生成 slot0"
-    assert shell._sprite_config(shell.sprite).get("character") == "shenshen"
-    assert instance.chat_syncs == [], "重生成不重打招呼（没有提升事件）"

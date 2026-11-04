@@ -57,20 +57,6 @@ def test_refresh_settings_resyncs_sprite(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_spawned_sprite_gets_config_sync(tmp_path):
-    """spawn 的子肥鱼同样按 config 应用（不是只吃构造默认）。"""
-    shell, _config = _make_shell(tmp_path, {"playback_speed": 0.75})
-    try:
-        shell._spawn_slot(7)
-        spawned = shell._spawned[-1]
-        assert spawned.playback_speed == 0.75
-        lib = shell._spawned_libs.pop(spawned)
-        shutdown = getattr(lib, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
-        shell._delete_runtime_marker()
-    finally:
-        shell._delete_runtime_marker()
 
 
 def test_stop_halts_self_talk_timer(tmp_path):
@@ -95,41 +81,3 @@ def test_stop_halts_self_talk_timer(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_scale_applies_at_runtime(tmp_path):
-    """设置页改大小 → refresh_settings 即生效；子宠按**它自己**的 slot 配置取源。
-
-    B7b 改写：原断言锁"子宠 scale 本批不动（归 B7b）"——那是 B7a 的过渡口径。
-    新契约 = 旧版"每只宠各读自己那份 config"：子宠的缩放/速率由它自己的
-    ``config-slot-N.json`` 决定，主宠的设置不再拖走子宠，反之亦然。
-    """
-    from tests.helpers import overlay_shell as toggle
-    from pet import overlay_spawn_state as ovs
-
-    shell, cfg = toggle._make_slot_shell(tmp_path, scale=0.5)
-    try:
-        assert shell.sprite.scale == pytest.approx(0.5)
-        # 主宠的"大小"同样是每宠键：真值在 ``config-slot-0.json``（生产里设置页经
-        # SlotRoutedConfig 写它；裸 ``Config.set`` 只改全局那份，全局保存会把每宠键
-        # 过滤掉，改不动任何一只宠）。
-        assert ovs.write_slot_setting(cfg.dir, 0, "scale", 1.0,
-                                      user_customized=True)
-        shell.refresh_settings()
-        assert shell.sprite.scale == pytest.approx(1.0)
-
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        # 这只子肥鱼自己的设置页保存了 0.5 → 只有它按 0.5 走
-        assert ovs.write_slot_setting(cfg.dir, 1, "scale", 0.5,
-                                      user_customized=True)
-        shell._on_settings_command_dir_changed(str(cfg.dir))
-        assert child.scale == pytest.approx(0.5)
-        assert shell.sprite.scale == pytest.approx(1.0)
-
-        # slot0 档案再改：主宠跟着变，子宠按自己那份不变
-        assert ovs.write_slot_setting(cfg.dir, 0, "scale", 0.72,
-                                      user_customized=True)
-        shell.refresh_settings()
-        assert shell.sprite.scale == pytest.approx(0.72)
-        assert child.scale == pytest.approx(0.5)
-    finally:
-        toggle._teardown(shell)

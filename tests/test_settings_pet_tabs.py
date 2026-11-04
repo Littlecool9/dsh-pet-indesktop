@@ -31,7 +31,7 @@ EXPECTED_TABS = (("display", "显示"), ("motion", "动作"))
 #: 标签 1 的主视线组序。
 TAB1_PRIMARY = ("显示",)
 #: 标签 2 的组序。
-TAB2_SECTIONS = ("动画与移动", "拖动", "边缘探头", "生小肥鱼")
+TAB2_SECTIONS = ("动画与移动", "拖动", "边缘探头")
 
 TAB1_ROWS = (
     "scale", "bubble_text_scale", "pet_opacity",
@@ -40,7 +40,6 @@ TAB1_ADVANCED_ROWS = ()
 TAB2_ROWS = (
     "playback_speed", "animation_gap", "no_move",
     "lock_position", "shift_drag", "edge_probe",
-    "spawn_inherit_size", "spawn_scale", "clear_spawned_pets",
 )
 TAB2_ADVANCED_ROWS = ()
 def _qapp():
@@ -165,11 +164,6 @@ def test_group_order_inside_each_tab_puts_the_advanced_group_last(dialog):
 def test_every_pet_row_routes_to_its_tab_and_is_reachable(dialog):
     """每行都由标签键路由到，切到所属标签后可见——分页没有丢掉任何一行。"""
     tabs = _pet_tabs(dialog)
-    # 「小肥鱼大小」只在**关闭**「生小肥鱼继承大小」时才显示（既有依赖契约）：
-    # 先满足依赖，再断言"切到所属标签后确实看得到"，否则量到的是依赖隐藏而非分页。
-    _row(dialog, "spawn_inherit_size").control.setChecked(False)
-    _qapp().processEvents()
-
     routing = {}
     routing.update({key: "display" for key in TAB1_ROWS})
     routing.update({key: "display" for key in TAB1_ADVANCED_ROWS})

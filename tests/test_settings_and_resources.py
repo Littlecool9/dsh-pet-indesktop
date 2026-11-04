@@ -61,17 +61,10 @@ def test_modern_settings_dialog_round_trip(qapp, tmp_path: Path):
         assert dialog.agent_sound_check.isChecked() is False
         assert dialog.agent_sound_volume_spin.value() == 65
         assert dialog.agent_sound_cooldown_spin.value() == 2.0
-        assert dialog.spawn_inherit_size_check.isChecked() is True
-        assert not hasattr(dialog, "spawn_inherit_dynamic_island_check"), (
-            "孤儿开关已退役：这个键没有任何生产消费者（旧读点在 "
-            "slot_manager.seed_slot_config_from_main，生产 0 调用点），设置页不得再暴露它")
 
         # 2. 模拟用户修改各个设置项
         dialog.click_sound_volume_spin.setValue(85)
         dialog.click_sound_picker.set_pack({"kind": "builtin", "id": "duck", "path": ""})
-        dialog.spawn_inherit_size_check.setChecked(False)
-        dialog.spawn_scale_combo.setCurrentData(0.5)
-
         dialog.agent_sound_check.setChecked(True)
         dialog.agent_sound_start_check.setChecked(True)
         dialog.agent_sound_start_picker.setText("C:/custom/start.wav")
@@ -90,11 +83,6 @@ def test_modern_settings_dialog_round_trip(qapp, tmp_path: Path):
     reloaded_cfg = route_settings_config(Config(cfg_root, instance_id="slot-0"))
     assert reloaded_cfg.get("click_sound_volume") == 0.85
     assert reloaded_cfg.get("click_sound_pack") == {"kind": "builtin", "id": "duck", "path": ""}
-    assert reloaded_cfg.get("spawn_inherit_size") is False
-    assert abs(reloaded_cfg.get("spawn_scale") - 0.5) < 1e-6
-    assert reloaded_cfg.get("spawn_inherit_dynamic_island") is False, (
-        "设置页不再回写这个死键（唯一行为读点在 slot_manager.seed_slot_config_from_main，"
-        "生产 0 调用点；新 spawn 只拷 PER_PET_SETTING_KEYS，岛是进程级单例读主配置）")
 
     agent_cfg = reloaded_cfg.get("agent_link")
     assert agent_cfg["sound_enabled"] is True
@@ -153,23 +141,6 @@ def test_import_dialogue_template_reads_entries_and_top_level_phrases(tmp_path, 
         dialog.deleteLater()
 
 
-def test_spawn_size_controls_visibility(qapp, tmp_path: Path):
-    """生小肥鱼继承大小开启时隐藏自定义大小；关闭后显示。"""
-    cfg_root = tmp_path / "appdata"
-    cfg = Config(cfg_root)
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        row = dialog.findChild(SettingRow, "settingRow_spawn_scale")
-        assert row is not None
-        assert row.isHidden() is True, "默认继承大小，不应显示自定义小肥鱼大小"
-
-        dialog.spawn_inherit_size_check.setChecked(False)
-        assert row.isHidden() is False
-
-        dialog.spawn_inherit_size_check.setChecked(True)
-        assert row.isHidden() is True
-    finally:
-        dialog.deleteLater()
 
 
 def test_agent_sound_controls_visibility_and_subcontrols(qapp, tmp_path: Path):
@@ -528,162 +499,15 @@ def test_position_autosave_does_not_set_user_customized(tmp_path):
     assert reloaded.get("user_customized") is False
 
 
-def test_clear_spawned_pets_button_routes_through_shell_callback(
-        qapp, tmp_path: Path, monkeypatch):
-    """批 E：设置界面「一键清除」优先调 PetWindow 已接线的 on_clear_spawned_pets
-    （= AppShell 路径，自带确认框与进程内子窗前置于关闭）——对话框不再二次确认，
-    也不直接走文件级清理。"""
-    from PySide6.QtWidgets import QMessageBox, QWidget
-
-    calls = []
-    parent = QWidget()
-    parent.on_clear_spawned_pets = lambda: calls.append("shell")
-    cfg = Config(tmp_path / "appdata")
-    questions = []
-    monkeypatch.setattr(
-        QMessageBox, "question",
-        lambda *a, **kw: (questions.append(a),
-                          QMessageBox.StandardButton.Cancel)[1])
-    dialog = ModernSettingsDialog(cfg, parent, include_ai=False)
-    try:
-        dialog.clear_spawned_pets_btn.click()
-        assert calls == ["shell"], "应调用 win.on_clear_spawned_pets 回调"
-        assert questions == [], "走 shell 回调时对话框不应二次确认"
-    finally:
-        dialog.deleteLater()
-        parent.close()
-        qapp.processEvents()
 
 
-def test_clear_spawned_pets_button_falls_back_without_callback(
-        qapp, tmp_path: Path, monkeypatch):
-    """批 E + 4.4a：拿不到 win.on_clear_spawned_pets（无父窗/独立设置进程）时
-    统一走 D12 指令通道——写指令文件由主进程消费，不再直接文件级清理。"""
-    from PySide6.QtWidgets import QMessageBox
-
-    from pet import overlay_settings_command as cmd
-
-    cfg = Config(tmp_path / "appdata")
-    monkeypatch.setattr(
-        QMessageBox, "question",
-        lambda *a, **kw: QMessageBox.StandardButton.Yes)
-    infos = []
-    monkeypatch.setattr(
-        QMessageBox, "information", lambda *a, **kw: infos.append(a))
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        dialog._on_clear_spawned_pets()
-        command = cmd.read_command(cfg.dir)
-        assert command is not None, "回退路径必须写下 D12 指令"
-        assert command["command"] == cmd.CMD_EXIT_SPAWNED_PETS
-        assert command["target"] is None           # 主身份 = 全部子肥鱼
-        assert infos == [], "批 I：结果弹窗已移除（结果写日志）"
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()
-        cmd.command_path(cfg.dir).unlink(missing_ok=True)
 
 
-def test_clear_spawned_pets_targets_all_for_slot0_identity(qapp, tmp_path: Path):
-    """slot0 的**显式身份**不能把全局动作变成 `target=0`（终审 A04-c）。
-
-    G1 起主宠身份的字符串是 ``slot-0``（不再等于空串）。旧写法直接
-    ``slot_from_instance_id(instance_id)`` → 写出 ``target=0``，而两个消费者都把非 None
-    target 当**子槽**去 ``_spawned`` 里找（主 sprite 不在其中）→ 按钮看着能用、点下去
-    静默 no-op。判据必须是"是不是主身份"，不是身份字符串的真值。
-    """
-    from pet import overlay_settings_command as cmd
-    from pet.settings_slot_config import is_main_identity
-
-    for instance_id in ("", "slot-0"):
-        assert is_main_identity(instance_id) is True, instance_id
-        cfg = Config(tmp_path / f"appdata-{instance_id or 'main'}", instance_id=instance_id)
-        dialog = ModernSettingsDialog(cfg, include_ai=False)
-        try:
-            assert dialog.clear_spawned_pets_btn.isEnabled() is True, (
-                f"{instance_id!r} 是主身份，这个按钮在主宠页必须可用")
-            dialog._on_clear_spawned_pets()
-        finally:
-            dialog.deleteLater()
-            qapp.processEvents()
-        command = cmd.read_command(cfg.dir)
-        assert command is not None
-        assert command["command"] == cmd.CMD_EXIT_SPAWNED_PETS
-        assert command["target"] is None, (
-            f"{instance_id!r} 的「一键退出子肥鱼」必须发全局动作（target=None）")
-        cmd.command_path(cfg.dir).unlink(missing_ok=True)
 
 
-def test_clear_spawned_pets_stays_disabled_with_a_reachable_hint_on_a_child_page(
-        qapp, tmp_path: Path):
-    """子宠页：动作仍不可用，但提示必须指向**真实可达**的地方（终审 A04-c）。
-
-    「退出全部子肥鱼」是全局动作，子宠页里没有"子肥鱼"这个对象可管；旧 tooltip
-    "请在主肥鱼的设置里操作"在主宠页自己也被置灰时指向了一个不存在的入口。
-    """
-    cfg = Config(tmp_path / "appdata", instance_id="slot-3")
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        button = dialog.clear_spawned_pets_btn
-        assert button.isEnabled() is False
-        assert "托盘" in button.toolTip(), "提示必须指向真实可达的入口（托盘/右键菜单）"
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()
 
 
-def test_clear_spawned_pets_row_copy_does_not_promise_data_deletion(qapp, tmp_path: Path):
-    """行文案与实现一致：只关宠物，档案/会话/待办全部保留（终审 A04-c）。"""
-    from pet.modern_settings_dialog import SettingRow
-
-    cfg = Config(tmp_path / "appdata")
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        row = dialog.findChild(SettingRow, "settingRow_clear_spawned_pets")
-        assert row is not None
-        hint = row.hint_label.text()
-        assert "保留" in hint and "删除" not in hint, hint
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()
 
 
-def test_clear_spawned_pets_button_fallback_runs_without_dialogs(
-        qapp, tmp_path: Path, monkeypatch):
-    """批 I：回退路径无确认框无结果框，一键直接静默执行。"""
-    from PySide6.QtWidgets import QMessageBox
-
-    from pet import overlay_settings_command as cmd
-
-    cfg = Config(tmp_path / "appdata")
-    questions = []
-    monkeypatch.setattr(
-        QMessageBox, "question",
-        lambda *a, **kw: (questions.append(1),
-                          QMessageBox.StandardButton.Cancel)[1])
-    infos = []
-    monkeypatch.setattr(
-        QMessageBox, "information", lambda *a, **kw: infos.append(a))
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        dialog._on_clear_spawned_pets()
-        assert questions == [], "批 I：无确认框"
-        assert cmd.read_command(cfg.dir) is not None, "回退路径直接写指令执行"
-        assert infos == [], "批 I：无结果框"
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()
-        cmd.command_path(cfg.dir).unlink(missing_ok=True)
 
 
-def test_clear_spawned_pets_button_disabled_for_child_config(qapp, tmp_path):
-    """批 G：子肥鱼（slot-N）的设置对话框禁用「一键退出」按钮——该操作只对
-    主肥鱼开放（子鱼进程执行会把主鱼当子鱼杀掉）。"""
-    cfg = Config(tmp_path / "appdata", instance_id="slot-1")
-    dialog = ModernSettingsDialog(cfg, include_ai=False)
-    try:
-        assert not dialog.clear_spawned_pets_btn.isEnabled()
-        assert dialog.clear_spawned_pets_btn.toolTip()
-    finally:
-        dialog.deleteLater()
-        qapp.processEvents()

@@ -669,24 +669,6 @@ class ModernSettingsDialog(QDialog):
                 behavior_content,
             )
         )
-        behavior_layout.addWidget(
-            SettingsSection(
-                "生小肥鱼",
-                [
-                    SettingRow(
-                        "spawn_inherit_size",
-                        "生小肥鱼继承大小",
-                        "开启后生成的小肥鱼与主肥鱼大小一致；关闭后使用下方为小肥鱼单独选择的大小。",
-                        self.spawn_inherit_size_check,
-                    ),
-                    SettingRow("spawn_scale", "小肥鱼大小", "关闭“继承大小”时，新生成小肥鱼使用的桌面尺寸。", self.spawn_scale_combo, stacked=True),
-                    SettingRow(
-                        "clear_spawned_pets", "一键退出子肥鱼", "关闭所有已生成的小肥鱼。它们的档案、设置、会话与待办数据全部保留，随时可以再生成。", self.clear_spawned_pets_btn
-                    ),
-                ],
-                behavior_content,
-            )
-        )
         # 「点击反馈」与「自言自语」两组归「互动」域（settings_interaction 构建，
         # 行数预算原因；组名与顺序的既有契约见 tests/test_menu_layout.py）。
         # Agent 联动：音效设置
@@ -924,14 +906,12 @@ class ModernSettingsDialog(QDialog):
         if hasattr(self, "pro_enabled_check"):
             self.pro_enabled_check.toggled.connect(self._update_proactive_controls)
             self.pro_idle_check.toggled.connect(self._update_proactive_idle_controls)
-        self.spawn_inherit_size_check.toggled.connect(self._update_spawn_size_controls)
         self._update_self_talk_controls(self.self_talk_check.isChecked())
         self._update_translucency_controls(self.menu_translucent_check.isChecked())
         self._update_island_controls(self.island_enabled_check.isChecked())
         self._sync_menu_action_states()
         if hasattr(self, "pro_enabled_check"):
             self._update_proactive_controls(self.pro_enabled_check.isChecked())
-        self._update_spawn_size_controls(self.spawn_inherit_size_check.isChecked())
         # 初始同步须在全部 SettingRow 构建完成后执行，否则 findChild 找不到行
         self._update_click_sound_controls(self.click_sound_check.isChecked())
         self._update_agent_sound_controls(self.agent_sound_check.isChecked())
@@ -1408,51 +1388,6 @@ class ModernSettingsDialog(QDialog):
     def _update_translucency_controls(self, enabled: bool) -> None:
         self._set_setting_rows_visible(("menu_opacity",), enabled)
 
-    def _update_spawn_size_controls(self, inherit_size: bool) -> None:
-        """“生小肥鱼继承大小”关闭时才显示独立小肥鱼大小选择。"""
-        self._set_setting_rows_visible(
-            ("spawn_scale",),
-            not bool(inherit_size),
-            dependency="spawn_inherit_size",
-        )
-
-    def _on_clear_spawned_pets(self) -> None:
-        """一键静默退出所有小肥鱼（slot-N）；它们的设置与数据保留。
-
-        优先走 PetWindow 上已接线的 ``on_clear_spawned_pets``（= AppShell 路径，
-        含进程内子窗前置于关闭）；拿不到回调（独立设置进程：本进程既无桌宠壳也
-        无 sprite 世界）时统一走 **D12 指令通道**：写指令文件，由主进程
-        （OverlayShell / AppShell）经 config 目录 watcher + 轮询消费。
-
-        **这是全局动作，target 由"身份是不是主宠"决定，不由身份字符串真值决定**（判据与
-        ``settings_slot_config.is_main_identity`` 同源 = slot 号，不是字符串）：主身份 →
-        ``target=None``（= 退全部子肥鱼，两个消费者的"No target"分支），子宠身份 → 该子槽。
-        旧写法回填 ``slot_from_instance_id(instance_id)``，而 slot0 从 G1 起有显式
-        ``slot-0`` 身份 ⇒ 主宠页写出 ``target=0``，消费者把它当**子槽**去 ``_spawned`` 里找
-        （主 sprite 不在其中）→ 静默 no-op。
-
-        4.4a：legacy 的跨进程 taskkill 回退（child_pet_cleanup / runtime 标记 / slot 锁）
-        随多进程多宠退役层停用——两个拓扑现在共用同一条指令通道，不再有拓扑分叉。
-
-        批 I：无确认框无结果框（操作不删数据可重新生成，子肥鱼消失即反馈）。
-        """
-        callback = getattr(self.parentWidget(), "on_clear_spawned_pets", None)
-        if callable(callback):
-            callback()
-            return
-        from .overlay_settings_command import (
-            CMD_EXIT_SPAWNED_PETS,
-            slot_from_instance_id,
-            write_command,
-        )
-        from .settings_slot_config import is_main_identity
-        target = (None if is_main_identity(self.config.instance_id)
-                  else slot_from_instance_id(self.config.instance_id))
-        if write_command(self.config.dir, CMD_EXIT_SPAWNED_PETS, target=target):
-            logging.info("退出子肥鱼：已写下指令（target=%s，主进程消费）", target)
-        else:
-            logging.warning("退出子肥鱼：写指令文件失败，本次未执行")
-
     def _apply_agent_sound_enabled_now(self, checked: bool) -> None:
         """音效总开关即时生效，不等对话框关闭（合并写回，不动其他 agent_link 键）。
 
@@ -1643,7 +1578,6 @@ class ModernSettingsDialog(QDialog):
                     ("动画与移动", claim("playback_speed", "animation_gap", "no_move")),
                     ("拖动", claim("lock_position", "shift_drag")),
                     ("边缘探头", claim("edge_probe")),
-                    ("生小肥鱼", claim("spawn_inherit_size", "spawn_scale", "clear_spawned_pets")),
                 ]
             ),
         )
@@ -2010,8 +1944,6 @@ class ModernSettingsDialog(QDialog):
         maximum = max(self.min_spin.value(), self.max_spin.value())
         texts = [line.strip()[:120] for line in self.texts_edit.toPlainText().splitlines() if line.strip()]
         self.config.set("scale", float(self.scale_combo.currentData()))
-        self.config.set("spawn_inherit_size", self.spawn_inherit_size_check.isChecked())
-        self.config.set("spawn_scale", float(self.spawn_scale_combo.currentData()))
         self.config.set("on_top", self.on_top_check.isChecked())
         self.config.set("no_move", self.no_move_check.isChecked())
         self.config.set("mouse_through", self.mouse_through_check.isChecked())

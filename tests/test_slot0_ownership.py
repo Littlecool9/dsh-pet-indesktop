@@ -45,16 +45,6 @@ def test_global_save_never_resurrects_migrated_pet_keys(tmp_path):
     assert not (profiles.PER_PET_KEYS & json.loads(cfg.path.read_text(encoding='utf8')).keys())
 
 
-def test_global_reset_preserves_all_profiles_and_active(tmp_path):
-    cfg = Config(base=tmp_path, instance_id='')
-    for n in (0, 1, 128):
-        profiles.write_profile_settings(cfg.dir, n, {'rx': n / 128, 'scale': 0.9})
-    profiles.save_active_set(cfg.dir, [1, 128])
-    paths = [profiles.slot_profile_path(cfg.dir, n) for n in (0, 1, 128)]
-    paths.append(profiles.active_set_path(cfg.dir))
-    before = {path: path.read_bytes() for path in paths}
-    assert cfg.reset_to_defaults()
-    assert all(path.read_bytes() == before[path] for path in paths)
 
 
 def test_raw_slot_config_cannot_write(tmp_path):

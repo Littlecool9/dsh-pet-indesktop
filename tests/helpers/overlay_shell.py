@@ -89,3 +89,63 @@ def _teardown(shell):
     # Drain deferred sound callbacks delivered with QTimer.singleShot(0, ...).
     QApplication.processEvents()
     QApplication.processEvents()
+
+
+def _make_persistent_shell(base, values=None):
+    """Real on-disk Config shell + real PetSprite (slot0 only).
+
+    Returns ``(shell, made_libraries)``; ``_create_main_library`` is replaced by a
+    factory that records each library it builds.
+    """
+    from pet.config import Config
+    from pet.overlay_shell import OverlayShell
+    from pet.pet_sprite import PetSprite
+    from tests.test_overlay_window_capabilities import FakeScreen
+
+    config = Config(str(base))
+    for key, value in (values or {}).items():
+        config.set(key, value)
+    config.save()
+    instance = _SlotInstance(config)
+    screen = FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040))
+    shell = OverlayShell(
+        app, instance, screen=screen,
+        sprite_factory=lambda lib, pos, scale: PetSprite(lib, pos=pos, scale=scale))
+    main_lib = fac.RichLibrary()
+    if shell.sprite is not None:
+        shell.lib = main_lib
+        shell.sprite.library = main_lib
+    made: list = []
+
+    def make_lib():
+        lib = fac.RichLibrary()
+        made.append(lib)
+        return lib
+
+    shell._create_main_library = make_lib
+    return shell, made
+
+
+def _place_center(sprite, cx, cy):
+    """Place a sprite so its rect centre is at ``(cx, cy)`` (subject to clamping)."""
+    from PySide6.QtCore import QPointF
+
+    rect = sprite.rect()
+    sprite.set_pos(QPointF(cx - rect.width() / 2.0, cy - rect.height() / 2.0))
+    return sprite.rect()
+
+
+def _ratio_of(rect, bounds):
+    """Body-centre ratio relative to a bounds rect (same geometry as the product)."""
+    return ((rect.x() + rect.width() / 2.0 - bounds.x()) / bounds.width(),
+            (rect.y() + rect.height() / 2.0 - bounds.y()) / bounds.height())
+
+
+def _teardown(shell, clip=None):
+    """Stop a shell, close overlays and delete its runtime marker."""
+    shell.stop()
+    for overlay in list(shell.driver.overlays):
+        overlay.close()
+    if clip is not None:
+        clip.close()
+    shell._delete_runtime_marker()

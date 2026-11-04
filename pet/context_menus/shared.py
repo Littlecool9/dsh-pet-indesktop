@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QMenu
 from .. import autostart as autostart_mod
 from .. import catalog
 from ..harness_launcher import launch_harness_gui
-from .icons import fitted_pet_pixmap_icon, pet_avatar_menu_icon, vector_menu_icon
+from .icons import fitted_pet_pixmap_icon, vector_menu_icon
 from .menu_styles.common import inherit_menu_style
 
 log = logging.getLogger(__name__)
@@ -69,25 +69,6 @@ def animation_icon_cache_hit(entry, library):
     if ref is None or ref() is not library:
         return None
     return image
-
-
-def animation_icon_cache_drop_library(cache: dict, library) -> int:
-    """按库身份定向摘掉缓存条目（退出子肥鱼）；返回摘掉的条数。
-
-    键只带 ``id()``，没有"库 → 键"的反查表，所以逐个条目比身份。除该库自己的条目外，
-    引用已死（库已回收）与没有身份凭证（不支持弱引用的库）的条目一并摘掉——这两类对
-    任何库都是永不命中，留着只占 128 条上限与内存。
-    """
-    if not isinstance(cache, dict) or library is None:
-        return 0
-    removed = 0
-    for key, entry in list(cache.items()):
-        ref = entry[0] if isinstance(entry, tuple) and len(entry) == 2 else None
-        owner = ref() if ref is not None else None
-        if ref is None or owner is None or owner is library:
-            cache.pop(key, None)
-            removed += 1
-    return removed
 
 
 class _AnimationIconFailure:
@@ -956,34 +937,6 @@ def add_autostart(menu: QMenu, pet=None, *, icons: bool = True):
 
     action.toggled.connect(toggle)
     return action
-
-
-def add_spawn_pet(menu: QMenu, pet):
-    callback = getattr(pet, "on_spawn_pet", None)
-    if callback is None:
-        return None
-    if str(menu.property("menuStyle") or "") == "modern":
-        icon = pet_avatar_menu_icon(menu, pet)
-    else:
-        icon = QIcon()
-    action = menu.addAction(icon, "生小肥鱼")
-    action.setProperty("closeOnTrigger", True)
-    connect_action(action, callback)
-    return action
-
-
-def add_clear_spawned_pets(menu: QMenu, pet, *, icons: bool = True):
-    """右键菜单快捷入口：退出所有小肥鱼（slot-N），设置与数据保留。"""
-    callback = getattr(pet, "on_clear_spawned_pets", None)
-    if callback is None:
-        return None
-    return add_action(
-        menu,
-        "退出子肥鱼",
-        "clear" if icons else None,
-        callback,
-        close_on_trigger=True,
-    )
 
 
 def add_edge_probe(menu: QMenu, pet, *, icons: bool = True):

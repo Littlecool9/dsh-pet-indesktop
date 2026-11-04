@@ -849,9 +849,6 @@ class Config:
             "screen_name": None,
             "facing": "left",
             "scale": catalog.DEFAULT_SCALE,
-            "spawn_inherit_size": True,  # 生小肥鱼继承主肥鱼大小（False 用 spawn_scale）
-            "spawn_scale": catalog.DEFAULT_SCALE,  # 关闭继承时生小肥鱼使用的尺寸
-            "spawn_inherit_dynamic_island": False,  # 生小肥鱼继承主肥鱼灵动岛（默认关=不开灵动岛）
             "user_customized": False,  # 批 C：仅当用户在该子肥鱼自己的设置界面保存过才置真
             "on_top": True,
             "no_move": False,
@@ -960,10 +957,6 @@ class Config:
             # 退出杀进程、下一次 start() 自然 fresh spawn（把 47→64MB 的 ffmpeg
             # 内部累积周期性清零）。0 = 关闭回收（回退保险）；否则范围 [2, 120]。
             "ffmpeg_recycle_minutes": 10,
-            # 批5.3：同角色共享解码链（进程内帧扇出）开关，默认开。多宠恒为
-            # 进程内多窗/多 sprite（`experimental_single_process_spawn` 键已随
-            # 4.4b 退役删除），关掉即回每窗独立解码。
-            "experimental_shared_decode": True,
             # 设置页进程隔离：默认开 = 设置页拉到独立进程（--settings），关窗即
             # 进程退出，OS 连锅端走首开留下的字体/样式/模块高水位（无卸载 API）；
             # False = 完全回退进程内对话框旧路径（排障/回退保险，不新增控件）。
@@ -1079,9 +1072,6 @@ class Config:
             "on_top",
             "no_move",
             "character",
-            "spawn_inherit_size",
-            "spawn_scale",
-            "spawn_inherit_dynamic_island",
             "user_customized",
             "playback_speed",
             "animation_gap_seconds",
@@ -1149,7 +1139,6 @@ class Config:
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
             "ffmpeg_recycle_minutes",
-            "experimental_shared_decode",
             "settings_process_isolation",
             "hotkey_open_chat",
             "hotkey_look_screen",
@@ -1321,14 +1310,12 @@ class Config:
         _migrate_pet_profile_values(self.data, raw)
 
     def _migrate_decode_broker_config(self, raw: dict) -> None:
-        """批5.3：decode_broker_enabled 退役（shm broker 下线，共享解码改由
-        进程内 DecodeFanoutHub 承担）。迁移语义（SETTINGS-CHANGE-GATES）：读旧值
-        → 记一次 info → 忽略（键从 defaults/白名单移除，不再归一/进入 self.data）。"""
+        """decode_broker_enabled 已退役：读旧值 → 记一次 info → 忽略。"""
         if getattr(self, "_decode_broker_migrated", False):
             return
         if "decode_broker_enabled" in raw:
             old = raw.get("decode_broker_enabled")
-            logging.getLogger(__name__).info("配置键 decode_broker_enabled 已退役（批5.3 共享解码改为进程内 fan-out），忽略旧值 %r", old)
+            logging.getLogger(__name__).info("配置键 decode_broker_enabled 已退役，忽略旧值 %r", old)
             raw.pop("decode_broker_enabled", None)
         self._decode_broker_migrated = True
 
@@ -1459,9 +1446,6 @@ class Config:
         self.data["animation_gap_seconds"] = _float_or_default(self.data.get("animation_gap_seconds"), DEFAULT_ANIMATION_GAP_SECONDS, 0.0, 3600.0)
         self.data["cursor_hidden_passthrough"] = _bool_or_default(self.data.get("cursor_hidden_passthrough"), True)
         self.data["allow_cross_screen"] = _bool_or_default(self.data.get("allow_cross_screen"), False)
-        self.data["spawn_inherit_size"] = _bool_or_default(self.data.get("spawn_inherit_size"), True)
-        self.data["spawn_scale"] = _float_or_default(self.data.get("spawn_scale"), catalog.DEFAULT_SCALE, 0.1, 4.0)
-        self.data["spawn_inherit_dynamic_island"] = _bool_or_default(self.data.get("spawn_inherit_dynamic_island"), False)
         self.data["context_menu_layout"] = _clean_menu_layout_override(self.data.get("context_menu_layout"))
         self.data["context_menu_appearance"] = _clean_menu_appearance(self.data.get("context_menu_appearance"))
         # 动画菜单连播（#221）：布尔走 _bool_or_default（防手写 "false" 被当开）
@@ -1526,8 +1510,6 @@ class Config:
         self.data["first_frame_cache_max_mb"] = 8 if int(_ffb) == 32 else int(_ffb)
         # 批10-A1 预测式预热提前量：夹到 [200, 600] 毫秒（默认 350）。
         self.data["predict_prewarm_lead_ms"] = int(_float_or_default(self.data.get("predict_prewarm_lead_ms"), 350, 200, 600))
-        # 批5.3 共享解码链开关：同规防字符串布尔误开（默认开）。
-        self.data["experimental_shared_decode"] = _bool_or_default(self.data.get("experimental_shared_decode"), True)
         # 设置页进程隔离：同规防字符串布尔误开；默认开（关掉 = 回退进程内设置页）。
         self.data["settings_process_isolation"] = _bool_or_default(self.data.get("settings_process_isolation"), True)
 
@@ -1590,9 +1572,6 @@ class Config:
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
             "ffmpeg_recycle_minutes",
-            "spawn_inherit_size",
-            "spawn_scale",
-            "spawn_inherit_dynamic_island",
             "todo_reminder_enabled",
             "todo_reminder_lead_minutes",
             "focus_mode",

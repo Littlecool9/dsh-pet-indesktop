@@ -732,8 +732,7 @@ class FrameSeqClip(QObject):
 
     @property
     def decode_throttle_divisor(self) -> int:
-        """与 WebMClip 同形的只读属性——window/decode_fanout 按属性读
-        （普通方法会在该路径 TypeError，4.4b 评审实测 484~546 次/45s）。"""
+        """与 WebMClip 同形的只读属性（消费方按属性读，不能是普通方法）。"""
         return 1
 
     @property

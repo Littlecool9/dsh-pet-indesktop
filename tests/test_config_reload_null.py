@@ -133,7 +133,6 @@ def test_reload_keeps_in_memory_position_when_keys_are_absent(tmp_path):
 @pytest.mark.parametrize("key,value", [
     ("playback_speed", 2.0),
     ("scale", 1.5),
-    ("spawn_scale", 1.5),
     ("self_talk_image_chance", 40),
     ("click_sound_volume", 0.5),
 ])
