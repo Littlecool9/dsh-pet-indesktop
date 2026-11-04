@@ -962,19 +962,20 @@ def test_menu_autostart_persists_wanted_flag(tmp_path, monkeypatch):
     （``autostart_wanted`` 为真但系统项被安全软件清掉 → 提醒用户重新启用）
     因此永远看不到用户勾过。
 
-    真 QMenu + 真 Config + 真 PetWindow 建菜单，只把系统登录项边界（autostart
-    模块）打桩；断言配置落盘，而不只是内存里的 Config 对象。
+    真 QMenu + 真 Config 直调共享建造器 ``add_autostart``（两个拓扑共用），
+    只把系统登录项边界（autostart 模块）打桩；断言配置落盘，而不只是内存里的
+    Config 对象。
     """
     import json
+    from types import SimpleNamespace
 
     from PySide6.QtWidgets import QApplication, QMenu
 
     import pet.context_menus.shared as shared_mod
-    import tests.test_context_menu_lifecycle as lc
     from pet.config import Config
-    from pet.context_menu import populate_context_menu
+    from pet.context_menus.shared import add_autostart
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     applied: list[bool] = []
     monkeypatch.setattr(shared_mod.autostart_mod, "is_enabled", lambda: False)
     monkeypatch.setattr(shared_mod.autostart_mod, "set_enabled",
@@ -982,13 +983,9 @@ def test_menu_autostart_persists_wanted_flag(tmp_path, monkeypatch):
     config = Config(base=tmp_path)
     config.save()
     assert config.get("autostart_wanted") is False
-    win = lc.PetWindow(lc.FakeLibrary(), config)
     menu = QMenu()
     try:
-        populate_context_menu(menu, win)
-        action = next(a for action in menu.actions()
-                      if action.menu() is not None
-                      for a in action.menu().actions() if a.text() == "开机自启")
+        action = add_autostart(menu, SimpleNamespace(cfg=config))
         action.setChecked(True)
         assert applied == [True], "系统登录项照常写入"
         assert config.get("autostart_wanted") is True
@@ -996,8 +993,7 @@ def test_menu_autostart_persists_wanted_flag(tmp_path, monkeypatch):
         assert persisted["autostart_wanted"] is True, "必须落盘（自检读的是盘上的值）"
     finally:
         menu.close()
-        win.close()
-        app.processEvents()
+        QApplication.processEvents()
 
 
 def test_modern_provisional_config_falls_back_to_keyring(tmp_path, monkeypatch):

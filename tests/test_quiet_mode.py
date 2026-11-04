@@ -246,10 +246,14 @@ class RecordingBubble:
                 super().__init__()
                 inner.shown: list[dict] = []
                 inner.dismiss_calls = 0
+                inner._raw_text = ""
+                inner._visible = True
 
             def show_text(inner, text, anchor, duration_ms, *, pet_scale=None,
                           subtitle="", sticky=False, buttons=None,
                           title_first=False, width_locked=False):
+                inner._raw_text = str(text)
+                inner._visible = True
                 inner.shown.append({
                     "text": str(text), "sticky": bool(sticky),
                     "duration_ms": int(duration_ms), "buttons": buttons,
@@ -263,13 +267,20 @@ class RecordingBubble:
                 pass
 
             def hide(inner):
-                pass
+                inner._visible = False
 
             def isVisible(inner):
-                return True
+                return inner._visible
 
             def dismiss(inner):
                 inner.dismiss_calls += 1
+                inner._visible = False
+
+            def close(inner):
+                pass
+
+            def set_interactive(inner, _on):
+                pass
 
         self._bubble = _Bubble()
 
@@ -279,12 +290,16 @@ class RecordingBubble:
 
 @pytest.fixture
 def win(qapp, tmp_path):
-    from tests.pet_window_fakes import make_pet_window
+    import tests.test_sprite_menu_facade as fac
 
-    window = make_pet_window(tmp_path)
-    window._speech_bubble = RecordingBubble()
-    yield window
-    window.close()
+    shell, _lib = fac._make_shell(tmp_path)
+    shell._bubble_follower.bubble = RecordingBubble()
+    shell.overlay.show()
+    qapp.processEvents()
+    yield shell
+    shell.overlay.hide()
+    shell.stop()
+    shell._delete_runtime_marker()
     qapp.processEvents()
 
 
@@ -579,27 +594,18 @@ def test_default_duration_setting_moves_the_menu_marker(qapp, tmp_path):
     assert "30 分钟（默认）" not in labels
 
 
-def test_window_menu_path_exposes_quiet_entry(qapp, tmp_path):
-    """窗口侧菜单要有免打扰入口。
+def test_window_menu_path_exposes_quiet_entry(win):
+    """overlay 全量菜单要有免打扰入口。
 
-    overlay（facade）路径由 ``test_sprite_menu_parity.py`` 锁死——facade 直接复用
-    context_menus 的同一套建造器，两条路径共用这一处菜单结构。
-    旧版扁平布局退役后只剩这一条窗口侧路径（2026-10-08）。
+    facade 直接复用 context_menus 的同一套建造器；旧版扁平布局与 PetWindow
+    路径已退役，overlay 是唯一产品菜单路径。
     """
-    from PySide6.QtWidgets import QMenu
+    from pet.sprite_menu_facade import build_sprite_full_menu
 
-    from pet.context_menu import populate_context_menu
-    from tests.pet_window_fakes import make_pet_window
-
-    window = make_pet_window(tmp_path, runtime_id="slot-quiet")
-    menu = QMenu()
-    populate_context_menu(menu, window)
-
+    menu = build_sprite_full_menu(win)
     titles = [action.text() for action in menu.actions()]
     titles += [a.menu().title() for a in menu.actions() if a.menu() is not None]
     assert any(title.startswith("免打扰") for title in titles), "菜单缺少免打扰入口"
-    window.close()
-    qapp.processEvents()
 
 
 def test_overlay_facade_host_can_build_quiet_menu(qapp, tmp_path):
@@ -624,24 +630,16 @@ def test_overlay_facade_host_can_build_quiet_menu(qapp, tmp_path):
     ]
 
 
-def test_menu_entry_is_a_submenu_with_durations(qapp, tmp_path):
-    from PySide6.QtWidgets import QMenu
+def test_menu_entry_is_a_submenu_with_durations(win):
+    from pet.sprite_menu_facade import build_sprite_full_menu
 
-    from pet.context_menu import populate_context_menu
-    from tests.pet_window_fakes import make_pet_window
-
-    window = make_pet_window(tmp_path, runtime_id="slot-quiet-sub")
-    menu = QMenu()
-    populate_context_menu(menu, window)
-
+    menu = build_sprite_full_menu(win)
     submenus = [a.menu() for a in menu.actions() if a.menu() is not None]
     quiet = [s for s in submenus if s.title().startswith("免打扰")]
     assert quiet, "菜单缺少免打扰子菜单"
     assert [a.text() for a in quiet[0].actions() if a.text()][:4] == [
         "15 分钟", "30 分钟（默认）", "1 小时", "2 小时",
     ]
-    window.close()
-    qapp.processEvents()
 
 
 def test_appshell_fullscreen_broadcast_flips_quiet(qapp):
@@ -666,19 +664,11 @@ def test_appshell_fullscreen_broadcast_flips_quiet(qapp):
 
 
 class _ProxyShell:
-    """``MultiWindowProxy`` 的最小宿主：一只真实 PetWindow。"""
+    """``MultiWindowProxy`` 的最小宿主：一只真实 OverlayShell。"""
 
     def __init__(self, config, win) -> None:
         self.config = config
         self.instances = [type("Instance", (), {"win": win})()]
-
-
-class _AppShellStub:
-    """``AppShell._on_shared_fullscreen`` 的最小实例（只用到 _shared/_instances）。"""
-
-    def __init__(self, win) -> None:
-        self._shared = object()
-        self._instances = [type("Instance", (), {"win": win})()]
 
 
 class _HiddenHost:
@@ -705,10 +695,11 @@ def _wire_quiet_pipeline(tmp_path, *, qapp):
     与 ``MultiWindowProxy``。
     """
     from pet.multi_window_shared import SharedSubsystems
-    from tests.pet_window_fakes import make_pet_window
+    import tests.test_sprite_menu_facade as fac
 
-    win = make_pet_window(tmp_path, runtime_id="slot-quiet-chain")
-    win._speech_bubble = RecordingBubble()
+    win, _lib = fac._make_shell(tmp_path)
+    win._bubble_follower.bubble = RecordingBubble()
+    win.overlay.show()
     proxy = _make_proxy(win)
     ticker = quiet_mode.QuietTicker(also_on_fullscreen=lambda: True, interval_ms=10)
     stub = type("Subs", (), {"proxy": proxy})()
@@ -718,15 +709,12 @@ def _wire_quiet_pipeline(tmp_path, *, qapp):
 
 def test_fullscreen_round_trip_delivers_report_after_window_restored(qapp, tmp_path):
     """全屏进 → 隐藏+暂存 → 全屏出 → 恢复显示 → 收到汇报（真实扇出顺序）。"""
-    from pet.app import AppShell
-
     win, proxy, ticker = _wire_quiet_pipeline(tmp_path, qapp=qapp)
-    shell = _AppShellStub(win)
     try:
         assert win.isVisible() is True
 
-        # 进入全屏：真实扇出隐藏窗口（全屏避让），免打扰等效同时立闸
-        AppShell._on_shared_fullscreen(shell, True)
+        # 进入全屏：overlay 壳隐藏宿主窗口（全屏避让），免打扰等效同时立闸
+        win._on_fullscreen_changed(True)
         assert win.isVisible() is False
         assert quiet_mode.shared_quiet_state().suppression_active() is True
 
@@ -737,13 +725,15 @@ def test_fullscreen_round_trip_delivers_report_after_window_restored(qapp, tmp_p
         assert quiet_mode.shared_quiet_state().pending_count() == 1
 
         # 退出全屏：窗口先恢复显示，随后才结算并汇报
-        AppShell._on_shared_fullscreen(shell, False)
+        win._on_fullscreen_changed(False)
         assert win.isVisible() is True
         assert quiet_mode.shared_quiet_state().pending_count() == 0, "交付确认后才排空"
         assert "1 条提醒" in _shown_texts(win)[-1]
     finally:
         ticker.stop()
-        win.close()
+        win.overlay.hide()
+        win.stop()
+        win._delete_runtime_marker()
         qapp.processEvents()
 
 
@@ -753,7 +743,7 @@ def test_report_waits_for_a_presentation_target_instead_of_being_dropped(qapp, t
     try:
         quiet_mode.shared_quiet_state().set_fullscreen(True)
         quiet_mode.shared_quiet_state().remember("卡住了")
-        win.hide()
+        win.set_pet_visible(False)
         qapp.processEvents()
 
         quiet_mode.shared_quiet_state().set_fullscreen(False)
@@ -761,23 +751,26 @@ def test_report_waits_for_a_presentation_target_instead_of_being_dropped(qapp, t
         assert quiet_mode.shared_quiet_state().pending_count() == 1, "无交付目标时不得排空"
         assert win._alert_current is None
 
-        win.show()
+        win.set_pet_visible(True)
         qapp.processEvents()
         _spin(qapp, lambda: quiet_mode.shared_quiet_state().pending_count() == 0)
         assert "1 条提醒" in _shown_texts(win)[-1]
     finally:
         ticker.stop()
-        win.close()
+        win.overlay.hide()
+        win.stop()
+        win._delete_runtime_marker()
         qapp.processEvents()
 
 
 def test_hidden_proxy_queues_ordinary_alert_during_quiet(qapp, tmp_path):
     """M3：共享代理先筛可见窗——免打扰分流必须在筛选**之前**（隐藏窗也要进队列）。"""
-    from tests.pet_window_fakes import make_pet_window
+    import tests.test_sprite_menu_facade as fac
 
-    win = make_pet_window(tmp_path, runtime_id="slot-hidden-proxy")
-    win._speech_bubble = RecordingBubble()
-    win.hide()
+    win, _lib = fac._make_shell(tmp_path)
+    win._bubble_follower.bubble = RecordingBubble()
+    win.overlay.show()
+    win.set_pet_visible(False)
     qapp.processEvents()
     try:
         quiet_mode.shared_quiet_state().start(15)
@@ -789,7 +782,9 @@ def test_hidden_proxy_queues_ordinary_alert_during_quiet(qapp, tmp_path):
         assert win._alert_current is None
         assert quiet_mode.shared_quiet_state().pending_count() == 1
     finally:
-        win.close()
+        win.overlay.hide()
+        win.stop()
+        win._delete_runtime_marker()
         qapp.processEvents()
 
 

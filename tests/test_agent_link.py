@@ -1005,17 +1005,20 @@ class TestAgentStateDebounce:
 class TestAgentMenuRebound:
     def test_decline_rolls_back_checkbox(self, tmp_path, monkeypatch):
         """用户拒绝授权后，菜单勾选态必须回滚，不允许 UI 骗人。"""
-        from PySide6.QtWidgets import QApplication
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
+        from types import SimpleNamespace
 
-        app = QApplication.instance() or QApplication([])
+        from PySide6.QtWidgets import QApplication
+        from pet.sprite_menu_facade import SpriteMenuFacade
+
+        QApplication.instance() or QApplication([])
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.No)
 
         cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
+        mgr = AgentLinkManager(SimpleNamespace(), cfg, min_interval=0.0)
         try:
+            shell = SimpleNamespace(_config=cfg, sprite=object(), agent_link_manager=mgr)
+            facade = SpriteMenuFacade(shell)
+
             class FakeAction:
                 def __init__(self):
                     self.checked = True  # 用户刚勾上
@@ -1028,16 +1031,11 @@ class TestAgentMenuRebound:
                     self.checked = v
 
             act = FakeAction()
-            win._toggle_agent_link("claude", True, act)
+            facade.toggle_agent_link("claude", True, act)
             assert act.checked is False  # 回滚
             assert cfg.data["agent_link"]["claude"] is False  # 配置未开启
         finally:
-            # 窗口必须关闭：否则泄漏的真实窗口会在共享事件循环上继续推进动画链，
-            # 后续测试 processEvents 时持续拉起 reader 线程（跨测试干扰）。
-            win.close()
-            win.deleteLater()
-            # 处理 deleteLater 投递的 Qt 清理事件，避免窗口的动画/reader 事件泄漏到后续测试。
-            app.processEvents()
+            mgr.shutdown()
 
     def test_bom_prefixed_file_tolerated(self, tmp_path):
         """PowerShell Add-Content -Encoding UTF8 会在新建文件首行写 BOM，
@@ -2183,84 +2181,79 @@ class TestAgentLinkChainingAndActivity:
         assert bubbles[-1] == "正在读取 cat a.py"
 
     def test_window_smooth_chaining(self, tmp_path):
-        """4. window 侧平滑衔接（用真实 PetWindow + MovieLibrary，offscreen，参考 TestAgentMenuRebound 的构造）：
-        win._switch('优雅女仆舞')（一次性动作）后 win.request_link_anim('写代码') →
-        当前 anim 仍是 '优雅女仆舞' 且 _pending_link_anim=='写代码'（不打断）；
-        手动调 win._on_anim_ended('优雅女仆舞') → anim 变为 '写代码'。
-        再测：待机中（win.anim 在 win.idles 里）request_link_anim 立即切换。
-        request_link_idle 在一次性动作播放中不切回待机（anim 不变、pending 清空）。"""
+        """4. overlay 侧平滑衔接（真壳 + 真 PetSprite + ``_LinkAnimChain``）：
+        一次性动作在播时 ``request_link_anim`` 只存待播、不打断；动作播完
+        （tick 下降边沿）再接续待播。待机中请求立即切换；一次性动作在播时
+        ``request_link_idle`` 不切回待机（pending 清空、当前动画不变）。"""
         from PySide6.QtWidgets import QApplication
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
+        import tests.test_sprite_menu_facade as fac
 
-        app = QApplication.instance() or QApplication([])
-        cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
-
+        QApplication.instance() or QApplication([])
+        shell, lib = fac._make_shell(tmp_path)
+        lib.acts.append("act2")
+        lib._clips["act2"] = lib._clips["act1"]
         try:
-            # 确保 '优雅女仆舞' 是一次性动作 (acts)
-            assert "优雅女仆舞" in win.acts
-            win._switch("优雅女仆舞")
-            assert win.anim == "优雅女仆舞"
-            assert win._is_one_shot_playing() is True
+            shell.overlay.show()
+            shell.request_link_anim("act1")
+            assert shell._link_anim_current == "act1"
+            assert shell._pending_link_anim is None
 
-            win.request_link_anim("写代码")
-            assert win.anim == "优雅女仆舞"
-            assert win._pending_link_anim == "写代码"
+            shell.request_link_anim("act2")
+            assert shell._pending_link_anim == "act2", "一次性动作在播时不得打断"
+            assert shell._link_anim_current == "act1"
 
-            # 手动调 _on_anim_ended('优雅女仆舞') → 播放待播的 '写代码'
-            win._on_anim_ended("优雅女仆舞")
-            assert win.anim == "写代码"
-            assert win._pending_link_anim is None
+            # 动作播完：tick 观测下降边沿 → 播放待播
+            shell.behavior.forget(shell.sprite)
+            shell._link_chain._was_busy = True
+            shell._link_chain.tick([shell.sprite], 0.016)
+            assert shell._pending_link_anim is None
+            assert shell._link_anim_current == "act2"
 
-            # 待机中（win.anim 在 win.idles 里）request_link_anim 立即切换
-            idle_name = win.idles[0]
-            win._switch(idle_name)
-            assert win.anim in win.idles
-            assert win._is_one_shot_playing() is False
+            # 待机中请求立即切换
+            shell.behavior.forget(shell.sprite)
+            shell.request_link_idle()
+            assert shell._link_anim_current is None
+            shell.behavior.forget(shell.sprite)
+            shell.request_link_anim("act1")
+            assert shell._link_anim_current == "act1"
 
-            win.request_link_anim("吃Token")
-            assert win.anim == "吃Token"
-
-            # request_link_idle 在一次性动作播放中不切回待机（anim 不变、pending 清空）
-            win._switch("优雅女仆舞")
-            win._pending_link_anim = "写代码"
-            win.request_link_idle()
-            assert win.anim == "优雅女仆舞"
-            assert win._pending_link_anim is None
+            # 一次性动作在播时 request_link_idle 不切回待机、pending 清空
+            shell.request_link_anim("act2")
+            assert shell._pending_link_anim == "act2"
+            shell.request_link_idle()
+            assert shell._link_anim_current is None
+            assert shell._pending_link_anim is None
+            assert shell.sprite._clip_name == "act1"
         finally:
-            win.close()
-            win.deleteLater()
+            shell._delete_runtime_marker()
 
     def test_on_anim_ended_continuation(self, tmp_path):
-        """5. _on_anim_ended 联动续播：构造 PetWindow 后，设置 win._link_anim_current='写代码'，
-        win._link_next_provider=lambda: '吃Token'，调 win._on_anim_ended('写代码') → anim=='吃Token'；
-        provider 返回 None 时走正常动画链（不抛异常即可）。"""
+        """5. 一次性动作结束后的联动续播：``_LinkAnimChain`` 观测下降边沿后
+        向 provider 要下一个动作并播放；provider 返回 None 时不抛异常。"""
         from PySide6.QtWidgets import QApplication
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
+        import tests.test_sprite_menu_facade as fac
 
-        app = QApplication.instance() or QApplication([])
-        cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
-
+        QApplication.instance() or QApplication([])
+        shell, lib = fac._make_shell(tmp_path)
+        lib.acts.append("act2")
+        lib._clips["act2"] = lib._clips["act1"]
         try:
-            win._link_anim_current = "写代码"
-            win._link_next_provider = lambda: "吃Token"
-            win._on_anim_ended("写代码")
-            assert win.anim == "吃Token"
-            assert win._link_anim_current == "吃Token"
+            shell.overlay.show()
+            shell._link_anim_current = "act1"
+            shell.set_link_next_provider(lambda: "act2")
+            shell.behavior.forget(shell.sprite)
+            shell._link_chain._was_busy = True
+            shell._link_chain.tick([shell.sprite], 0.016)
+            assert shell._link_anim_current == "act2"
 
             # provider 返回 None 时走正常动画链（不抛异常）
-            win._link_next_provider = lambda: None
-            win._on_anim_ended("吃Token")
-            # 正常推进，不抛异常
-            assert win._link_anim_current is None
+            shell.set_link_next_provider(lambda: None)
+            shell.behavior.forget(shell.sprite)
+            shell._link_chain._was_busy = True
+            shell._link_chain.tick([shell.sprite], 0.016)
+            assert shell._link_anim_current == "act2"
         finally:
-            win.close()
-            win.deleteLater()
+            shell._delete_runtime_marker()
 
 
 
