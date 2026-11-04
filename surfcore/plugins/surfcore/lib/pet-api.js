@@ -133,6 +133,45 @@ export function createPetApiService({ chat, purpose, petService, stateDir, curre
       json(res, 200, { ok: true, ...chat.publicConfig(), serverTime: Date.now() });
       return;
     }
+    if (req.method === 'GET' && suffix === '/persona') {
+      json(res, 200, chat.persona());
+      return;
+    }
+    if (req.method === 'GET' && suffix === '/budget') {
+      const result = await chat.budget();
+      json(res, result.ok ? 200 : 503, result);
+      return;
+    }
+    if (req.method === 'POST' && suffix === '/usage') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req, PET_BODY_LIMIT)) || '{}'); } catch {
+        json(res, 400, { ok: false, code: 'invalid-json', error: '请求体不是合法 JSON', hint: '发送 application/json，body 必须是合法 JSON 对象。' });
+        return;
+      }
+      const result = chat.recordDirectUsage({ model: body.model, usage: body.usage, label: body.label });
+      json(res, result.ok ? 200 : (result.code === 'invalid-usage' ? 400 : 503), result);
+      return;
+    }
+    if (req.method === 'POST' && suffix === '/self-talk') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req, PET_BODY_LIMIT)) || '{}'); } catch {
+        json(res, 400, { ok: false, code: 'invalid-json', error: '请求体不是合法 JSON', hint: '发送 application/json，body 必须是合法 JSON 对象。' });
+        return;
+      }
+      const context = body && typeof body.context === 'object' && body.context ? body.context : {};
+      const result = await chat.selfTalk({ context });
+      const status = result.ok
+        ? 200
+        : result.code === 'busy'
+          ? 409
+          : result.code === 'budget-blocked'
+            ? 429
+            : result.code === 'llm-unavailable'
+              ? 503
+              : 502;
+      json(res, status, result);
+      return;
+    }
     if (req.method === 'GET' && suffix === '/history') {
       const limit = Number(url.searchParams.get('limit')) || 60;
       json(res, 200, chat.history(limit));
@@ -167,7 +206,10 @@ export function createPetApiService({ chat, purpose, petService, stateDir, curre
     if (req.method === 'POST' && suffix === '/focus') {
       let body = {};
       try { body = JSON.parse((await readBody(req, PET_BODY_LIMIT)) || '{}'); } catch {}
-      const state = chat.setFocus(body.enabled === true, body.source || 'pet');
+      const state = chat.setFocus(body.enabled === true, body.source || 'pet', {
+        phase: body.phase,
+        endsAt: body.endsAt,
+      });
       json(res, 200, { ok: true, focus: state });
       return;
     }

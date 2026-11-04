@@ -25,7 +25,13 @@ const PREFIX = '/dsh-surfcore/pet-api';
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-api-test-'));
 let emitted = [];
-let focusState = { enabled: false, updatedAt: '', source: '' };
+let focusState = { enabled: false, updatedAt: '', source: '', phase: '', endsAt: 0 };
+let selfTalkResult = null;
+let budgetResult = null;
+let usageResult = null;
+let lastSelfTalkContext = null;
+let lastUsageBody = null;
+let lastFocusOptions = null;
 
 const chat = {
   token: () => TOKEN,
@@ -33,7 +39,37 @@ const chat = {
   history: (limit) => ({ ok: true, limit, messages: [] }),
   poll: async ({ since, waitMs, clientId }) => ({ ok: true, since, waitMs, clientId, events: [], nextSince: 7 }),
   chat: async ({ text, modality }) => ({ ok: true, reply: { id: 'm1', text: `reply:${text}`, modality, audio: { key: 'deadbeef' } } }),
-  setFocus: (enabled, source) => { focusState = { enabled, source, updatedAt: 'now' }; return focusState; },
+  persona: () => ({
+    ok: true,
+    role: { id: 'demo', name: '小咪' },
+    persona: '# 小咪\n温柔一点。',
+    owner: { name: '主人' },
+    hash: 'abcdef012345',
+  }),
+  selfTalk: async ({ context }) => {
+    lastSelfTalkContext = context;
+    return selfTalkResult || { ok: true, text: '今天也要慢慢来。', role: { name: '小咪' } };
+  },
+  budget: async () => budgetResult || {
+    ok: true, available: true, scope: 'other', blocked: false, message: '',
+    usage: { other: { cost: 1.5, tokens: 2000 } },
+    limits: { other: { cny: 8, tokens: null } },
+  },
+  recordDirectUsage: ({ model, usage, label }) => {
+    lastUsageBody = { model, usage, label };
+    return usageResult || { ok: true, recorded: true, label: `桌宠直连：${label || ''}`, model: model || '' };
+  },
+  setFocus: (enabled, source, options) => {
+    lastFocusOptions = options;
+    focusState = {
+      enabled,
+      source,
+      updatedAt: 'now',
+      phase: enabled ? String(options?.phase || '') : '',
+      endsAt: enabled ? Number(options?.endsAt || 0) : 0,
+    };
+    return focusState;
+  },
   readAudio: (key) => (key === 'deadbeef' ? { bytes: Buffer.from('RIFFxxxxWAVE') } : null),
   emit: (event) => { emitted.push(event); },
   status: () => ({
@@ -203,6 +239,76 @@ console.log('## 6. 音频与发现文件');
   const host = JSON.parse(fs.readFileSync(hostFile, 'utf8'));
   ok(host.baseUrl === BASE && host.token === TOKEN && host.api === PREFIX, 'host.json 含 baseUrl / token / api');
   ok(host.version === 1, 'host.json 带协议版本号（桌宠据此判断兼容）');
+}
+
+console.log('## 7. 桌宠客户端扩展接口（人格 / 自言自语 / 额度 / 直连用量 / 专注阶段）');
+{
+  const noToken = await call({ pathname: '/persona', headers: { host: '127.0.0.1:57981' } });
+  ok(noToken.res.statusCode === 401, '/persona 没有令牌 → 401（和旧接口同一把锁）');
+
+  const persona = await call({ pathname: '/persona', headers: loopback });
+  ok(persona.res.statusCode === 200 && persona.data?.ok === true, '/persona → 200');
+  ok(persona.data?.role?.id === 'demo' && persona.data?.role?.name === '小咪', '/persona 带角色 id/name');
+  ok(persona.data?.owner?.name === '主人', '/persona 带主人称呼');
+  ok(persona.data?.persona?.includes('# 小咪'), '/persona 返回完整人格卡文本');
+  ok(/^[a-f0-9]{12}$/.test(persona.data?.hash || ''), '/persona 的 hash 是 12 位短 sha1');
+  ok(Object.keys(persona.data ?? {}).sort().join(',') === 'hash,ok,owner,persona,role', '/persona 字段集合稳定');
+
+  const selfTalk = await call({
+    method: 'POST', pathname: '/self-talk', headers: jsonPost(),
+    body: '{"context":{"focus":{"phase":"work","endsAt":1700000000000},"recent":"刚写完代码"}}',
+  });
+  ok(selfTalk.res.statusCode === 200 && selfTalk.data?.text === '今天也要慢慢来。', '/self-talk → 200 + 文本');
+  ok(selfTalk.data?.role?.name === '小咪', '/self-talk 带角色名');
+  ok(lastSelfTalkContext?.recent === '刚写完代码', '/self-talk 把 context.recent 透传给对话服务');
+  ok(lastSelfTalkContext?.focus?.phase === 'work', '/self-talk 把 context.focus 透传给对话服务');
+
+  selfTalkResult = { ok: false, code: 'busy', error: '还在生成', hint: '等这次返回后再试' };
+  const busy = await call({ method: 'POST', pathname: '/self-talk', headers: jsonPost(), body: '{}' });
+  ok(busy.res.statusCode === 409 && busy.data?.code === 'busy', '并发自言自语 → 409 + code=busy');
+  ok(Boolean(busy.data?.hint), 'busy 失败带 hint');
+
+  selfTalkResult = { ok: false, code: 'budget-blocked', error: '额度用完', hint: '明天再试' };
+  const blocked = await call({ method: 'POST', pathname: '/self-talk', headers: jsonPost(), body: '{}' });
+  ok(blocked.res.statusCode === 429 && blocked.data?.code === 'budget-blocked', '额度拦截 → 429 + code=budget-blocked');
+  ok(Boolean(blocked.data?.hint), '额度拦截失败带 hint');
+  selfTalkResult = null;
+
+  const badJson = await call({ method: 'POST', pathname: '/self-talk', headers: jsonPost(), body: '{oops' });
+  ok(badJson.res.statusCode === 400 && badJson.data?.code === 'invalid-json', '/self-talk 非法 JSON → 400 + code=invalid-json');
+  ok(Boolean(badJson.data?.hint), '非法 JSON 失败带 hint');
+
+  const budget = await call({ pathname: '/budget', headers: loopback });
+  ok(budget.res.statusCode === 200 && budget.data?.available === true, '/budget → 200 + available');
+  ok(budget.data?.scope === 'other' && budget.data?.blocked === false, '/budget 用 other 作用域且未拦截');
+  ok(budget.data?.usage?.other?.tokens === 2000 && budget.data?.limits?.other?.cny === 8, '/budget 带 usage/limits 快照');
+
+  budgetResult = { ok: false, code: 'budget-unavailable', error: '读不到', hint: '检查插件日志' };
+  const budgetFail = await call({ pathname: '/budget', headers: loopback });
+  ok(budgetFail.res.statusCode === 503 && budgetFail.data?.code === 'budget-unavailable', '额度服务不可用 → 503 + code');
+  ok(Boolean(budgetFail.data?.hint), '额度服务失败带 hint');
+  budgetResult = null;
+
+  const usage = await call({
+    method: 'POST', pathname: '/usage', headers: jsonPost(),
+    body: '{"model":"deepseek-flash","usage":{"outputTokens":12,"inputTokens":30},"label":"看图"}',
+  });
+  ok(usage.res.statusCode === 200 && usage.data?.recorded === true, '/usage → 200 + recorded');
+  ok(lastUsageBody?.model === 'deepseek-flash' && lastUsageBody?.usage?.outputTokens === 12, '/usage 透传 model/usage');
+  ok(lastUsageBody?.label === '看图', '/usage 透传 label');
+
+  usageResult = { ok: false, code: 'invalid-usage', error: 'usage 不合法', hint: '至少带一个数字 token 字段' };
+  const usageFail = await call({ method: 'POST', pathname: '/usage', headers: jsonPost(), body: '{"usage":{}}' });
+  ok(usageFail.res.statusCode === 400 && usageFail.data?.code === 'invalid-usage', '非法 usage → 400 + code=invalid-usage');
+  ok(Boolean(usageFail.data?.hint), '非法 usage 失败带 hint');
+  usageResult = null;
+
+  const focus = await call({
+    method: 'POST', pathname: '/focus', headers: jsonPost(),
+    body: '{"enabled":true,"source":"pet","phase":"short_break","endsAt":"2026-11-04T10:00:00.000Z"}',
+  });
+  ok(focus.res.statusCode === 200 && focus.data?.focus?.phase === 'short_break', '/focus 接收 phase');
+  ok(lastFocusOptions?.endsAt === '2026-11-04T10:00:00.000Z', '/focus 把 endsAt 原样交给对话服务归一化');
 }
 
 fs.rmSync(stateDir, { recursive: true, force: true });
