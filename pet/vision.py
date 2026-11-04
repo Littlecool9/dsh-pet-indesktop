@@ -332,6 +332,15 @@ def _post_vision_request(
     已耗尽，函数直接抛出 VisionError 停止后续重试。
     pet_name: 可选，桌宠角色显示名；用于在 user 文本里追加自我识别提示，
     让模型认出截图角落里的桌宠就是自己，而不是陌生程序。"""
+    # 直连模型共用 SurfCore 的人格卡与额度闸门（离线/无服务时行为不变）。
+    from . import surfcore_link
+
+    usage_label = surfcore_link.current_usage_label()
+    allowed, blocked_message = surfcore_link.budget_gate(usage_label)
+    if not allowed:
+        raise VisionError(blocked_message or "今天的额度用完了，明天再试或调高额度。")
+    if messages_override is None:
+        system_prompt = surfcore_link.persona_or(system_prompt) or ""
     # 延迟导入：无 Chat 变体（pet.chat 被排除）下本函数不会被调用
     from .chat.providers import _make_ssl_context, normalize_chat_endpoint, build_browser_headers
     # 视觉独立端点仅在「不同聊天模型」时生效；同聊天模型时强制跟随聊天配置，
@@ -458,6 +467,9 @@ def _post_vision_request(
         if finish == 'length' and reasoning:
             raise VisionError('她想太多把话噎住了（思考超 token），再点一次试试')
         raise VisionError('视觉模型没说话（空回复）')
+    usage = data.get('usage') if isinstance(data, dict) else None
+    if isinstance(usage, dict):
+        surfcore_link.report_usage(model_name, usage, usage_label)
     return text
 
 

@@ -1283,6 +1283,14 @@ class AppShell:
         self._module_host = host
         self._module_registry = registry
         registry.start_all(host, self.config)
+        # 直连模型的核心接缝：模块启动后把 surfcore 服务接进来（模块缺失也安装，
+        # 以便离线时继续用磁盘上的人格卡缓存）。核心代码只经这里读服务。
+        try:
+            from . import surfcore_link
+
+            surfcore_link.bind(self, cache_dir=getattr(self.config, "dir", None))
+        except Exception:
+            logging.debug("SurfCore 直连接缝安装失败", exc_info=True)
 
     def _apply_module_config(self) -> None:
         registry = getattr(self, "_module_registry", None)
@@ -1293,6 +1301,12 @@ class AppShell:
         registry = getattr(self, "_module_registry", None)
         if registry is not None:
             registry.stop_all()
+        try:
+            from . import surfcore_link
+
+            surfcore_link.reset()
+        except Exception:
+            logging.debug("SurfCore 直连接缝清理失败", exc_info=True)
 
     def running_module(self, module_id: str):
         """运行中的模块实例；没启动/失败/被依赖挡住时返回 None。"""
