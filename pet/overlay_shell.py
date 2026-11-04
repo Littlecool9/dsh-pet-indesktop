@@ -96,13 +96,8 @@ from .context_menus.shared import (
     add_tray_action,
     release_menu_tree,
 )
-from .config import (
-    DEFAULT_SELF_TALK_BUBBLE_STYLE,
-    DEFAULT_SELF_TALK_DURATION_SECONDS,
-    DEFAULT_SELF_TALK_MAX_INTERVAL,
-    DEFAULT_SELF_TALK_MIN_INTERVAL,
-)
-from .asset_paths import default_self_talk_image_dir, resolve_asset_path
+from .config import DEFAULT_SELF_TALK_BUBBLE_STYLE
+from .asset_paths import resolve_self_talk_image_dir
 from .overlay_peripherals import FullscreenCursorWatcher
 from .overlay_window import OverlayWindow
 from .pet_sprite import INTERACTION_DRAG, PetSprite
@@ -161,22 +156,8 @@ def self_talk_image_cache_edge(image_scale: float, dpr: float = 1.0) -> int:
     return int(math.ceil(box * _SELF_TALK_IMAGE_CACHE_SLACK - 1e-6))
 
 
-def _resolve_self_talk_image_dir(raw: str) -> str:
-    """解析自言自语配图目录（语义逐行对齐 ``window.py:123``）。
-
-    为什么不直接 import 那个私有函数：overlay 拓扑不构造 PetWindow，壳不该
-    为了一个 8 行路径换算去依赖 ``pet.window`` 的私有面；这里按源实现的语义
-    逐行镜像，行为差异一眼可查。用户显式配置的外部目录被删除后不再回退内置
-    彩蛋池（用户删目录的意图就是"不要再看图"），相对路径（内置 assets）保留
-    回退以兼容便携包目录迁移。
-    """
-    raw = str(raw or "").strip()
-    if not raw:
-        return ""
-    candidate = Path(raw).expanduser()
-    if candidate.is_absolute() and not candidate.is_dir():
-        return ""
-    return str(resolve_asset_path(raw, default_self_talk_image_dir()))
+#: 兼容旧测试/旧调用面的私有名；实现已收口到 ``asset_paths``（模块与壳共用）。
+_resolve_self_talk_image_dir = resolve_self_talk_image_dir
 
 
 def _import_quick_chat():
@@ -436,159 +417,6 @@ class _SpriteServicePresenter(_SpritePetHost):
         fn = getattr(self._shell, "request_link_anim", None)
         if callable(fn):
             fn(name)
-
-
-class _SpriteSelfTalkHost:
-    """一只**子** sprite 的自言自语宿主（``window_alerts`` host 形函数的适配面）。
-
-    旧架构每只宠各自计时、各自冒泡（``window.py:458-480`` + ``:740``）；主 sprite
-    在单进程壳里仍走壳自身的自言自语机（``OverlayShell._self_talk_*``，历史行为
-    逐点不变），本类只服务子 sprite：各自一份配置快照、各自一个**单发**定时器
-    （不新增常驻高频表——每次冒泡后重排下一次，与旧版同构）。
-    """
-
-    def __init__(self, shell, sprite) -> None:
-        self._shell = shell
-        self._sprite = sprite
-        # 属性名必须叫 ``_self_talk_timer``：``window_alerts`` 的 host 形函数
-        # 直接读写它（``schedule_self_talk`` 停表 + 起表）。
-        self._self_talk_timer = QTimer(shell)
-        self._self_talk_timer.setSingleShot(True)
-        self._self_talk_timer.timeout.connect(self._on_timeout)
-        self._last_self_talk_text: str | None = None
-        self._self_talk_images_checked_at = 0.0
-        self.reload()
-
-    # ---------------------------------------------------------------- 配置面
-    @property
-    def cfg(self):
-        return self._shell._sprite_config(self._sprite)
-
-    # ``window_alerts`` 的 host 形函数直接读这些私有属性（同 PetWindow 口径）
-    @property
-    def _bubble_suppressed(self) -> bool:
-        return bool(getattr(self._shell, "_bubble_suppressed", False))
-
-    def _bubble_blocked(self, sprite=None) -> bool:
-        """本 sprite 的气泡门禁（设置页抑制期）。"""
-        return self._shell._bubble_blocked(
-            self._sprite if sprite is None else sprite)
-
-    @property
-    def _sticky_bubble_active(self) -> bool:
-        return bool(getattr(self._shell, "_sticky_bubble_active", False))
-
-    @property
-    def _alert_current(self):
-        return getattr(self._shell, "_alert_current", None)
-
-    @property
-    def _bubble_busy_until(self) -> float:
-        return float(getattr(self._shell, "_bubble_busy_until", 0.0))
-
-    def isVisible(self) -> bool:  # noqa: N802 (Qt/PetWindow 命名)
-        return self._shell._sprite_speech_visible(self._sprite)
-
-    def reload(self) -> None:
-        """（重）读该 sprite 自己那份 self_talk 配置（配置同步边界调用）。"""
-        cfg = self.cfg
-        self._self_talk_enabled = bool(cfg.get("self_talk_enabled", False))
-        self._self_talk_texts = window_alerts.read_self_talk_texts(
-            cfg.get("self_talk_texts"))
-        self._self_talk_duration_seconds = _clamped_float(
-            cfg.get("self_talk_duration_seconds"),
-            DEFAULT_SELF_TALK_DURATION_SECONDS, 1.0, 300.0)
-        self._self_talk_image_dir = str(cfg.get("self_talk_image_dir", "") or "")
-        self._self_talk_images = list_self_talk_images(
-            _resolve_self_talk_image_dir(self._self_talk_image_dir))
-        self._self_talk_image_scale = _clamped_float(
-            cfg.get("self_talk_image_scale"), 100, 50.0, 300.0) / 100.0
-        self._self_talk_min_interval = max(5.0, _clamped_float(
-            cfg.get("self_talk_min_interval"),
-            DEFAULT_SELF_TALK_MIN_INTERVAL, 0.0, 86400.0))
-        self._self_talk_max_interval = max(self._self_talk_min_interval, _clamped_float(
-            cfg.get("self_talk_max_interval"),
-            DEFAULT_SELF_TALK_MAX_INTERVAL, 0.0, 86400.0))
-        self._self_talk_images_checked_at = time.monotonic()
-        # 配图 decode 走壳共享的路径→QImage 缓存 + 后台预热线程（各 sprite 的
-        # 图片清单不同，缓存按绝对路径天然不串号）；**不动**壳的代次计数器，
-        # 免得 spawn 一只子宠就把主宠在飞的解码作废。
-        self._shell._warm_shared_self_talk_images(
-            [str(path) for path in self._self_talk_images])
-
-    # ---------------------------------------------------------------- 调度/冒泡
-    def schedule(self, *, after_display: bool = False) -> None:
-        window_alerts.schedule_self_talk(self, after_display=after_display)
-
-    def _schedule_self_talk(self, *, after_display: bool = False) -> None:
-        """host 形别名（``window_alerts.on_self_talk_timeout`` 读这个私有名）。"""
-        self.schedule(after_display=after_display)
-
-    def stop(self) -> None:
-        self._self_talk_timer.stop()
-
-    def close(self) -> None:
-        self.stop()
-        timer, self._self_talk_timer = self._self_talk_timer, None
-        if timer is not None:
-            try:
-                timer.deleteLater()
-            except RuntimeError:
-                pass
-
-    def _on_timeout(self) -> None:
-        window_alerts.on_self_talk_timeout(self)
-
-    def _show_self_talk_text(self, text: str) -> bool:
-        if self._bubble_blocked():
-            return False
-        return self._shell._show_bubble_text_for(
-            self._sprite, str(text), int(round(self._self_talk_duration_seconds * 1000)))
-
-    def _show_random_self_talk(self) -> bool:
-        """随机一条自言自语（文本或配图），落点 = 这只 sprite 自己的气泡。
-
-        抽样/出图概率复用 ``window_alerts`` 的纯逻辑函数；配图只走壳的预热缓存
-        （GUI 线程绝不付磁盘/解码税——冷缓存回退文本，与主宠同口径）。
-        """
-        service = self._shell.focus_service()
-        if service is not None and service.focusing:
-            return False
-        if self._bubble_blocked():
-            return False
-        if self._sticky_bubble_active or self._alert_current is not None:
-            return False
-        now = time.monotonic()
-        if now - self._self_talk_images_checked_at > 60.0:
-            self._self_talk_images_checked_at = now
-            live = [path for path in self._self_talk_images if path.is_file()]
-            if len(live) != len(self._self_talk_images):
-                self._self_talk_images = live
-        picked = window_alerts.pick_self_talk_choice(
-            self._self_talk_texts, self._self_talk_images,
-            window_alerts.self_talk_image_chance(self))
-        if picked is None:
-            return False
-        kind, value = picked
-        duration_ms = int(round(self._self_talk_duration_seconds * 1000))
-        if kind == "image":
-            self._last_self_talk_text = None
-            follower = self._shell._bubble_for(self._sprite)
-            if follower is None:
-                return False
-            cache = getattr(self._shell, "_self_talk_image_cache", {})
-            image = cache.get(str(value))
-            if image is None or image.isNull():
-                self._shell._warm_shared_self_talk_images([str(value)])
-                if not self._self_talk_texts:
-                    return False
-                self._last_self_talk_text = self._self_talk_texts[0]
-                return self._show_self_talk_text(self._last_self_talk_text)
-            return follower.show_image(
-                value, duration_ms, image_scale=self._self_talk_image_scale,
-                pixmap=QPixmap.fromImage(image))
-        self._last_self_talk_text = value
-        return self._show_self_talk_text(value)
 
 
 class _SettingsIdentityConfig:
@@ -983,7 +811,6 @@ class OverlayShell(QObject):
         self._topology_recheck = False
         self._sprite_cfg_cache: dict = {}
         self._sprite_hosts: dict = {}
-        self._self_talk_hosts: dict = {}
         # 子宠 slot 配置的 (mtime_ns, size) 签名缓存：目录事件/既有 3s 兜底轮询时
         # 用它筛出"配置真的变了"（只 stat；内容读只在命中变化时发生）。
         self._slot_signature_cache = None
@@ -1184,9 +1011,10 @@ class OverlayShell(QObject):
         self._apply_window_capabilities()
         # 4.1c 气泡跟随（真实 PetSpeechBubble；静默降级）
         self._bind_bubble()
-        # 自言自语族（周期气泡 / 点击台词 / 配图 / 朗读）：旧架构唯一宿主是
-        # PetWindow（window.py:458-480 + :740），overlay 拓扑下必须由本壳装配
-        self._init_self_talk()
+        # 自言自语调度/选择由 pet.modules.self_talk 负责；壳只保留气泡呈现与
+        # 配图预热缓存（见 show_self_talk / prepare_self_talk）。构造期先按当前
+        # 配置预热一次，与旧壳「建壳即装自言自语」的时序一致。
+        self._refresh_self_talk_media()
         # 4.3 后半：联动动作链接续控制器（extras 尾段观测一次性动作结束边沿）
         self._link_chain = _LinkAnimChain(self)
         self.driver.add_extra_controller(self._link_chain)
@@ -2007,110 +1835,43 @@ class OverlayShell(QObject):
         sprite.set_pos(QPointF(sprite.pos) + center - QPointF(body.center()))
         sprite.home_screen = screen
         self._refresh_sprite_bubble_style(sprite)
-        self._reload_self_talk_hosts([sprite])
-        if slot == 0 and hasattr(self, "_self_talk_timer"):
-            self._load_self_talk_settings()
-            self._schedule_self_talk()
+        if slot == 0:
             self._sync_chat_surfaces(character)
+            self._notify_module_config()
         sprite._profile_character = character
         sprite._profile_generation = cfg.generation
         return True
 
-    # ---- 子 sprite 的自言自语宿主（各自计时；主 sprite 仍走壳自身的机）----
-    def _ensure_self_talk_host(self, sprite):
-        """子 sprite 的自言自语宿主（幂等）；主 sprite/未知身份返回 None。"""
-        if sprite is None or sprite is getattr(self, "sprite", None):
-            return None
-        host = self._self_talk_hosts.get(sprite)
-        if host is None:
-            host = _SpriteSelfTalkHost(self, sprite)
-            self._self_talk_hosts[sprite] = host
-        return host
+    # ---- 自言自语呈现面（调度/选择在 pet.modules.self_talk）----------------
+    def _notify_module_config(self) -> None:
+        """配置同步边界通知模块重新读配置（模块框架入口，不 import 具体模块）。"""
+        shell = getattr(self._instance, "shell", None)
+        apply = getattr(shell, "_apply_module_config", None)
+        if callable(apply):
+            try:
+                apply()
+            except Exception:
+                logging.debug("overlay: 模块配置同步失败", exc_info=True)
 
-    def _self_talk_host(self, sprite):
-        """该 sprite 的自言自语宿主（主 sprite = 壳自身，兼容 host 形调用）。"""
-        if sprite is None or sprite is getattr(self, "sprite", None):
-            return self
-        return self._self_talk_hosts.get(sprite)
+    def _notify_self_talk_visible(self, visible: bool) -> None:
+        """桌宠显隐同步给模块（隐藏停表 / 显示重排的旧语义）。"""
+        shell = getattr(self._instance, "shell", None)
+        host = getattr(shell, "_module_host", None)
+        setter = getattr(host, "set_self_talk_visible", None)
+        if callable(setter):
+            try:
+                setter(bool(visible))
+            except Exception:
+                logging.debug("overlay: 自言自语显隐同步失败", exc_info=True)
 
-    def _close_self_talk_host(self, sprite) -> None:
-        host = self._self_talk_hosts.pop(sprite, None)
-        if host is not None:
-            host.close()
-
-    def _schedule_self_talk_for(self, sprite, *, after_display: bool = False) -> None:
-        """按 sprite 排下一次自言自语（主 = 壳的表，子 = 它自己的单发表）。"""
-        if sprite is None or sprite is getattr(self, "sprite", None):
-            self._schedule_self_talk(after_display=after_display)
-            return
-        host = self._self_talk_hosts.get(sprite)
-        if host is not None:
-            host.reload()
-            host.schedule(after_display=after_display)
-
-    def _stop_all_self_talk_hosts(self) -> None:
-        for host in list(self._self_talk_hosts.values()):
-            host.stop()
-
-    def _resume_all_self_talk_hosts(self) -> None:
-        for host in list(self._self_talk_hosts.values()):
-            host.schedule()
-
-    def _reload_self_talk_hosts(self, sprites) -> None:
-        """指定子宠的 self_talk 配置热改（配置同步边界）：重读 + 重排下一次。"""
-        for sprite in list(sprites):
-            host = self._self_talk_hosts.get(sprite)
-            if host is None:
-                continue
-            host.reload()
-            host.schedule()
-
-    def _init_self_talk(self) -> None:
-        """自言自语状态装配 + 周期定时器（``window.py:458-480`` / ``:740`` 对齐）。
-
-        overlay 拓扑下 PetWindow 不构造，这一族（周期气泡、点击台词、配图、
-        朗读）没有别的宿主，缺这一步就整族静默失效。文本池走
-        ``window_alerts.read_self_talk_texts``（host 形共享实现）；DEFAULT
-        常量取 ``pet/config.py``（不在壳里依赖 ``pet.window`` 的再导出面）。
-        """
-        self._load_self_talk_settings()
-        self._self_talk_timer = QTimer(self)
-        self._self_talk_timer.setSingleShot(True)
-        self._self_talk_timer.timeout.connect(self._on_self_talk_timeout)
-        self._schedule_self_talk()  # 首次排程（window.py:740）
-
-    def _load_self_talk_settings(self) -> None:
-        """（重）读 self_talk 族配置字段。构造期由 _init_self_talk 调一次；
-        运行期配置变更由 refresh_settings 再调——否则改开关/间隔/点击行为
-        /配图目录要重启才生效（「改了没反应」会被当成 bug 报回来）。"""
-        config = self._sprite_config(self.sprite)
-        self._self_talk_enabled = self.sprite is not None and bool(config.get("self_talk_enabled", False))
-        self._self_talk_texts = window_alerts.read_self_talk_texts(
-            config.get("self_talk_texts"))
-        self._self_talk_duration_seconds = max(
-            1.0, min(300.0, float(config.get(
-                "self_talk_duration_seconds", DEFAULT_SELF_TALK_DURATION_SECONDS))))
-        self._self_talk_image_dir = str(config.get("self_talk_image_dir", "") or "")
-        self._self_talk_images = list_self_talk_images(
-            _resolve_self_talk_image_dir(self._self_talk_image_dir))
-        self._self_talk_image_scale = max(
-            0.5, min(3.0, float(config.get("self_talk_image_scale", 100)) / 100.0))
-        self._self_talk_min_interval = max(
-            5.0, float(config.get(
-                "self_talk_min_interval", DEFAULT_SELF_TALK_MIN_INTERVAL)))
-        self._self_talk_max_interval = max(
-            self._self_talk_min_interval,
-            float(config.get(
-                "self_talk_max_interval", DEFAULT_SELF_TALK_MAX_INTERVAL)))
-        # 点击路径共享：实际显示的文本（图片气泡显式记 None，朗读据此静默）
-        self._last_self_talk_text: str | None = None
-        # 表达风格 picker：window_alerts.expression_style_text 惰性建，先占位
-        self._expression_picker = None
-        self.click_show_balance = bool(config.get("click_show_balance", False))
-        # 配图缓存按**签名**重建（清单 mtime/size + 目标显示尺寸），后台解码预热
-        # ——GUI 只在出泡时取缓存（同步读图是 100-256ms 慢帧源，py-spy 实测）。
-        # 签名没变就什么都不做：绝大多数 refresh 改的是气泡风格/间隔这类与配图
-        # 无关的键，旧实现每次都清空重解全部配图（24 张 36.8MB 的 CPU+IO）。
+    def prepare_self_talk(self, *, images, image_scale) -> None:
+        """接收模块选出的配图清单：按签名重建/预热共享解码缓存（GUI 不读盘）。"""
+        self._self_talk_images = [Path(str(path)) for path in (images or [])]
+        try:
+            scale = float(image_scale)
+        except (TypeError, ValueError):
+            scale = 1.0
+        self._self_talk_image_scale = max(0.5, min(3.0, scale))
         signature = self._self_talk_image_cache_signature()
         if (getattr(self, "_self_talk_image_cache_sig", None) == signature
                 and getattr(self, "_self_talk_image_cache", None)):
@@ -2120,6 +1881,61 @@ class OverlayShell(QObject):
         self._self_talk_image_cache_sig = signature
         self._self_talk_images_checked_at = time.monotonic()
         self._warm_self_talk_images()
+
+    def _refresh_self_talk_media(self) -> None:
+        """外部配置变更后重读配图目录/大小并准备缓存（呈现侧，不做选择/调度）。"""
+        config = self._sprite_config(self.sprite)
+        image_dir = str(config.get("self_talk_image_dir", "") or "")
+        images = [str(path) for path in list_self_talk_images(
+            _resolve_self_talk_image_dir(image_dir))]
+        try:
+            scale = float(config.get("self_talk_image_scale", 100)) / 100.0
+        except (TypeError, ValueError):
+            scale = 1.0
+        self.prepare_self_talk(images=images, image_scale=scale)
+
+    def self_talk_ready(self) -> bool:
+        """自言自语上屏门禁（可见/抑制/专注/提醒让路/重要气泡占用）。"""
+        if not self.isVisible():
+            return False
+        if time.monotonic() < self._bubble_busy_until:
+            return False
+        service = self.focus_service()
+        if service is not None and service.focusing:
+            return False
+        if self._bubble_blocked():
+            return False
+        if self._sticky_bubble_active or self._alert_current is not None:
+            return False
+        return True
+
+    def show_self_talk(self, *, text=None, image=None, duration_ms: int = 3200,
+                       image_scale=None) -> bool:
+        """按既有气泡路径呈现一条自言自语；返回是否真的上屏。
+
+        文本落主 sprite 头顶；配图只走 worker 预热缓存（冷缓存回退文本由模块
+        负责，GUI 线程绝不同步读图/解码）。
+        """
+        if not self.self_talk_ready():
+            return False
+        self._apply_bubble_interactive()
+        if image is not None:
+            follower = getattr(self, "_bubble_follower", None)
+            if follower is None:
+                return False
+            cache = getattr(self, "_self_talk_image_cache", {})
+            cached = cache.get(str(image))
+            if cached is None or cached.isNull():
+                self._warm_shared_self_talk_images([str(image)])
+                return False
+            scale = (self._self_talk_image_scale if image_scale is None
+                     else max(0.5, min(3.0, float(image_scale))))
+            return bool(follower.show_image(
+                image, int(duration_ms), image_scale=scale,
+                pixmap=QPixmap.fromImage(cached)))
+        if text is None:
+            return False
+        return bool(self._show_bubble_text(str(text), int(duration_ms)))
 
     def _install_shared_link(self) -> None:
         """把本壳接进共享联动链（``AppShell._wire_shared_subsystems`` 的等价物）。
@@ -2632,95 +2448,7 @@ class OverlayShell(QObject):
         self._sticky_subtitle = ""
         self._sticky_buttons = None
 
-    # ---- 自言自语族（window.py:3686-3708 的 sprite 等价 host 面）----
-    def _schedule_self_talk(self, *, after_display: bool = False) -> None:
-        """排下一次自言自语（``window_alerts.schedule_self_talk`` host 形转发）。"""
-        window_alerts.schedule_self_talk(self, after_display=after_display)
-
-    def _on_self_talk_timeout(self) -> None:
-        """周期定时器到点（``window_alerts.on_self_talk_timeout`` host 形转发）。"""
-        window_alerts.on_self_talk_timeout(self)
-
-    def _show_self_talk_text(self, text: str) -> bool:
-        """自言自语文本落地（sprite 版，**不可**直接复用 window_alerts 同名函数）。
-
-        差异点：``window_alerts.show_self_talk_text`` 会
-        ``from .window import _set_speech_bubble_interactive``，而那个实现判的是
-        ``host.on_open_quick_chat``——旧 PetWindow 的快速对话回调名。sprite 壳上
-        叫 ``open_quick_chat``（见 ``_apply_bubble_interactive``），直接复用会把
-        气泡每次置为「不可点」，快速对话入口静默失效。这里改用壳自己的可点态
-        切换，文本交给跟随器，锚点由 follower 自算（气泡锚 sprite 身体框）。
-        """
-        if self._bubble_blocked():
-            return False
-        self._apply_bubble_interactive()
-        return self._show_bubble_text(
-            str(text), int(self._self_talk_duration_seconds * 1000))
-
-    def _show_random_self_talk(self) -> bool:
-        """随机一条自言自语（文本或配图）。
-
-        抽样与出图概率复用 ``window_alerts`` 的纯逻辑函数
-        （``pick_self_talk_choice`` / ``self_talk_image_chance``，无 host 依赖）；
-        落地走 sprite 版气泡面（配图 = 刀 1 的 ``SpriteBubbleFollower.show_image``），
-        不触碰 window 私面。
-        """
-        service = self.focus_service()
-        if service is not None and service.focusing:
-            return False
-        if self._bubble_blocked():
-            return False
-        # 审批等一直挂着的气泡优先，自言自语不覆盖（window_alerts 同款守卫）
-        if self._sticky_bubble_active or self._alert_current is not None:
-            return False
-        # 惰性剔除运行期间被删除的图片——但 stat 是磁盘税（py-spy 实测
-        # 每次自言自语 timeout 全量 is_file 一遍 = 48-56ms 慢帧），
-        # 60s 才复查一次（配置热改路径会主动重置该时刻）。
-        now = time.monotonic()
-        if now - getattr(self, "_self_talk_images_checked_at", 0.0) > 60.0:
-            self._self_talk_images_checked_at = now
-            live_images = [path for path in self._self_talk_images
-                           if path.is_file()]
-            if len(live_images) != len(self._self_talk_images):
-                self._self_talk_images = live_images
-                # 清单变了：图片缓存按新清单裁剪（decode 在 worker，
-                # 见 _warm_self_talk_images）
-                cache = getattr(self, "_self_talk_image_cache", None)
-                if isinstance(cache, dict):
-                    live_keys = {str(p) for p in live_images}
-                    for key in [k for k in cache if k not in live_keys]:
-                        cache.pop(key, None)
-        picked = window_alerts.pick_self_talk_choice(
-            self._self_talk_texts, self._self_talk_images,
-            window_alerts.self_talk_image_chance(self))
-        if picked is None:
-            return False
-        kind, value = picked
-        duration_ms = int(round(self._self_talk_duration_seconds * 1000))
-        self._apply_bubble_interactive()
-        if kind == "image":
-            # 图片气泡没有可朗读的文本：显式记 None，点击路径据此保持安静
-            self._last_self_talk_text = None
-            follower = getattr(self, "_bubble_follower", None)
-            if follower is None:
-                return False
-            # 只走 worker 预热好的缓存（GUI 同步读图+解码是 100-256ms 慢帧
-            # 源，py-spy 实测）；缓存未命中（decode 在飞/读取失败）这次先
-            # 回退文本，下次命中再出图——绝不在 GUI 线程付磁盘/解码税。
-            cache = getattr(self, "_self_talk_image_cache", {})
-            image = cache.get(str(value))
-            if image is None or image.isNull():
-                self._warm_self_talk_images()
-                if not self._self_talk_texts:
-                    return False
-                self._last_self_talk_text = self._self_talk_texts[0]
-                return self._show_self_talk_text(self._last_self_talk_text)
-            return follower.show_image(
-                value, duration_ms, image_scale=self._self_talk_image_scale,
-                pixmap=QPixmap.fromImage(image))
-        self._last_self_talk_text = value
-        return self._show_self_talk_text(value)
-
+    # ---- 自言自语配图缓存（呈现侧；调度/选择已迁到 pet.modules.self_talk）----
     def _self_talk_gen_now(self) -> int:
         """当前配图预热换代戳（加载 worker 的作废判据回读口）。"""
         return getattr(self, "_self_talk_image_warm_gen", 0)
@@ -3336,12 +3064,6 @@ class OverlayShell(QObject):
             recovery.close()
         self._run_exit_step('移除应用级事件过滤器',
                             lambda: self.app.removeEventFilter(self))
-        timer = getattr(self, "_self_talk_timer", None)
-        if timer is not None:
-            # M9：stop 后不再自我重排（引用环也让壳可被回收）
-            self._run_exit_step('停自我重排定时器', timer.stop)
-        # B7b：子宠各自的计时同样停表
-        self._run_exit_step('停止子宠自言自语计时', self._stop_all_self_talk_hosts)
         self._run_exit_step('摘设置命令监听', self._teardown_settings_command_watch)
         # 配图加载守护线程不归 Qt 管（threading.Thread）：换代戳推一格，在飞
         # 批次下一张图前自查作废——否则壳已停、线程还在往壳的缓存里写，进程
@@ -3783,10 +3505,12 @@ class OverlayShell(QObject):
     def refresh_settings(self) -> None:
         """外部配置变更应用点（AppShell._apply_external_config_change 扇出）。"""
         self._apply_window_capabilities()
-        # self_talk 族热改：重读字段并按新口径重排程（schedule_self_talk
-        # 先停表再按 enabled 早退，开/关/改间隔都收敛到这一条路径）。
-        self._load_self_talk_settings()
-        self._schedule_self_talk()
+        # 配置同步边界：丢掉 per-slot 快照，下面重读的配图/显现字段才是新值。
+        self._invalidate_sprite_configs()
+        # 自言自语：配图缓存由壳准备，调度/选择由模块经 _notify_module_config
+        # 重新读配置（开/关/改间隔都收敛到模块自己的 schedule）。
+        self._refresh_self_talk_media()
+        self._notify_module_config()
         # The visible presenter may be any slot; style and text size belong to
         # each pet, never to the process-wide configuration.
         for sprite in self._all_sprites():
@@ -4518,7 +4242,6 @@ class OverlayShell(QObject):
             logging.exception("overlay: 恢复 slot0 失败")
             for sprite in set(self._all_sprites()) - before:
                 host = self._host_of(sprite)
-                self._close_self_talk_host(sprite)
                 self._sprite_cfg_cache.pop(sprite, None)
                 self._sprite_hosts.pop(sprite, None)
                 if sprite is self.sprite:
@@ -4530,8 +4253,8 @@ class OverlayShell(QObject):
             return False
         self._slot_signature_cache = self._slot_config_signatures()
         self._rebind_main_sprite()
-        self._load_self_talk_settings()
-        self._schedule_self_talk()
+        self._refresh_self_talk_media()
+        self._notify_module_config()
         self._refresh_tray_menu()
         logging.info("overlay: 已恢复 slot0 桌宠")
         self._sync_alert_copy()
@@ -4613,9 +4336,6 @@ class OverlayShell(QObject):
             # 由这一次落位的几何自存落盘；关闭跨屏时**不记**（那时的落位是临时
             # 承载，写了就把用户多屏下摆好的归属覆盖掉）。
             self._remember_sprite_screen(sprite, pet_screen)
-        host = self._ensure_self_talk_host(sprite)
-        if host is not None:
-            host.schedule()
         if config_dir:
             # 生成/复活即落一次几何：未及优雅退出（崩溃/断电）也能按档案复活。
             geometry = self._sprite_geometry(
@@ -5173,17 +4893,12 @@ class OverlayShell(QObject):
                     # 才把它捞出来（pump 自带可见性/门禁复判，被挡就原地等着）
                     self._pump_alerts()
             self._resume_shared_subsystems()
-            if getattr(self, "_self_talk_timer", None) is not None:
-                self._schedule_self_talk()
-            self._resume_all_self_talk_hosts()   # 子宠各自的计时同样恢复
+            self._notify_self_talk_visible(True)
             self._set_all_clips_paused(False)
             self._resume_warm_all()
             self._note_sprite_visibility_changed()
         else:
-            timer = getattr(self, "_self_talk_timer", None)
-            if timer is not None:
-                timer.stop()
-            self._stop_all_self_talk_hosts()
+            self._notify_self_talk_visible(False)
             self._hide_bubble_for_visibility()
             self._hide_all_hosts()
             for host in self._hosts:

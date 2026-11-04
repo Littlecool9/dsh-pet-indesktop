@@ -6,7 +6,7 @@
 再在对应池里等权选一条。
 """
 
-from pet import window_alerts as alerts
+from pet.modules.self_talk import selection as alerts
 
 TEXTS = ["好女孩……", "再陪你一会儿。"]
 IMAGES = ["a.jpg", "b.png"]
@@ -58,16 +58,9 @@ def test_image_chance_reads_config_with_safe_fallback():
         def get(self, key, default=None):
             return default if self._value is None else self._value
 
-    class _Host:
-        def __init__(self, cfg):
-            self.cfg = cfg
-
-        def get(self, *_args, **_kwargs):  # 防呆：误用 host.get 也能被这条用例抓住
-            raise AssertionError("应通过 host.cfg.get 读取")
-
-    assert alerts.self_talk_image_chance(_Host(_Cfg())) == alerts.DEFAULT_IMAGE_CHANCE
-    assert alerts.self_talk_image_chance(_Host(_Cfg(0))) == 0
-    assert alerts.self_talk_image_chance(_Host(_Cfg(77))) == 77
+    assert alerts.self_talk_image_chance(_Cfg()) == alerts.DEFAULT_IMAGE_CHANCE
+    assert alerts.self_talk_image_chance(_Cfg(0)) == 0
+    assert alerts.self_talk_image_chance(_Cfg(77)) == 77
     assert alerts.self_talk_image_chance(object()) == alerts.DEFAULT_IMAGE_CHANCE
 
 

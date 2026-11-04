@@ -30,3 +30,18 @@ def resolve_asset_path(path: str | Path | None, fallback: Path) -> Path:
         return candidate if candidate.exists() else fallback
     bundled = bundled_assets_root() / candidate
     return bundled if bundled.exists() else fallback
+
+
+def resolve_self_talk_image_dir(raw: str | Path | None) -> str:
+    """解析自言自语配图目录（语义逐行对齐旧 ``window.py`` 的私有实现）。
+
+    用户显式配置的**绝对**外部目录被删除后不再回退内置彩蛋池（删目录 = 不要再看图）；
+    相对路径（内置 assets）保留回退以兼容便携包目录迁移；空串 = 未配置。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    candidate = Path(text).expanduser()
+    if candidate.is_absolute() and not candidate.is_dir():
+        return ""
+    return str(resolve_asset_path(text, default_self_talk_image_dir()))

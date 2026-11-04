@@ -13,6 +13,7 @@ MODULES: tuple[str, ...] = (
     "pet.modules.surfcore",
     "pet.modules.harness",
     "pet.modules.hotkeys",
+    "pet.modules.self_talk",
     "pet.modules.network_info",
     "pet.modules.focus",
     "pet.modules.quick_launch",

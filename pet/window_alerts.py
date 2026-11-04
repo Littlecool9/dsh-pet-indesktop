@@ -1,4 +1,4 @@
-"""Alert queue / bubble-suppression / self-talk helpers (host-based).
+"""Alert queue / bubble-suppression helpers (host-based).
 
 PetWindow retains thin compatibility methods passing itself as host, so
 existing callers, signal connections and test patches (including unbound
@@ -12,12 +12,10 @@ host 自己给（overlay 壳带一个 ``_bubble_blocked`` 适配面），本模�
 from __future__ import annotations
 
 import logging
-import random
 from collections import deque
 
 from . import quiet_mode
 from .clock import time as _clock  # 可补丁时钟 seam：pet.clock.time.monotonic
-from .config import DEFAULT_SELF_TALK_TEXTS
 from . import window_placement
 
 _log = logging.getLogger("dsh-pet-standalone")
@@ -558,82 +556,3 @@ def on_speech_bubble_hidden(host) -> None:
             )
         except RuntimeError:
             return
-
-
-def read_self_talk_texts(value) -> list[str]:
-    if not isinstance(value, list):
-        return list(DEFAULT_SELF_TALK_TEXTS)
-    texts = []
-    for item in value:
-        text = str(item).strip()[:120]
-        if text and text not in texts:
-            texts.append(text)
-    return texts or list(DEFAULT_SELF_TALK_TEXTS)
-
-
-def schedule_self_talk(host, *, after_display: bool = False) -> None:
-    host._self_talk_timer.stop()
-    if not host._self_talk_enabled or not (
-        host._self_talk_texts or host._self_talk_images
-    ):
-        return
-    delay = random.uniform(host._self_talk_min_interval, host._self_talk_max_interval)
-    if after_display:
-        delay += host._self_talk_duration_seconds
-    host._self_talk_timer.start(max(1000, int(round(delay * 1000))))
-
-
-DEFAULT_IMAGE_CHANCE = 30  # 与 config.py 的 DEFAULT_SELF_TALK_IMAGE_CHANCE 保持一致
-
-
-def self_talk_image_chance(host) -> int:
-    """自言自语出图概率（百分比 0~100）。
-
-    与其它自言自语设置同样在运行时读配置、不缓存到窗口字段：概率随时会改，
-    而且读不到配置时要按默认值走——不让一次读取失败变成"点了不出图"。
-    """
-    cfg = getattr(host, "cfg", None)
-    if cfg is None:
-        return DEFAULT_IMAGE_CHANCE
-    try:
-        value = float(cfg.get("self_talk_image_chance", DEFAULT_IMAGE_CHANCE))
-    except Exception:
-        return DEFAULT_IMAGE_CHANCE
-    return int(max(0.0, min(100.0, value)))
-
-
-def pick_self_talk_choice(texts, images, image_chance):
-    """按出图概率抽一条自言自语，返回 ``(kind, value)``；两边都空返回 None。
-
-    为什么要先掷骰子：图片目录常有几十张图，和文本混在一起**等权随机**会让图片
-    彻底压过文本——实测 24 张图 + 5 句文本 → 出图概率 82.8%，点击桌宠几乎总是
-    弹图。现在先决定"这次出图还是出文本"，再在对应池里等权选一条，用户设的百分比
-    就是真实概率（0 = 只出文本，100 = 只出图）。
-
-    只有一边有内容时不掷骰子：必须显示那一边，否则这一次点击会什么都不出现。
-    """
-    clean_texts = [text for text in (texts or []) if str(text).strip()]
-    image_list = list(images or [])
-    if not clean_texts and not image_list:
-        return None
-    if not image_list:
-        return ("text", random.choice(clean_texts))
-    if not clean_texts:
-        return ("image", random.choice(image_list))
-    chance = max(0.0, min(100.0, float(image_chance)))
-    if random.random() * 100.0 < chance:
-        return ("image", random.choice(image_list))
-    return ("text", random.choice(clean_texts))
-
-
-def on_self_talk_timeout(host) -> None:
-    if _clock.monotonic() < host._bubble_busy_until:
-        # 重要气泡占用中：本次自言自语跳过，重新排队下一次
-        host._schedule_self_talk()
-        return
-    displayed = False
-    if host._self_talk_enabled and host.isVisible():
-        displayed = host._show_random_self_talk()
-    host._schedule_self_talk(after_display=displayed)
-
-
