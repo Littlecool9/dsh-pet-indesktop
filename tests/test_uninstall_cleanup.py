@@ -51,10 +51,10 @@ def test_uninstall_cleanup_runs_all_steps(tmp_path, monkeypatch):
     config = _config(tmp_path)
     monkeypatch.setattr("pet.autostart.disable", lambda: True)
     monkeypatch.setattr(
-        "pet.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: True)
+        "pet.modules.agent_link.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: True)
     )
     monkeypatch.setattr(
-        "pet.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: True)
+        "pet.modules.agent_link.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: True)
     )
     monkeypatch.setattr(uninstall_cleanup, "other_instances_use_agent", lambda config, key: False)
 
@@ -68,10 +68,10 @@ def test_uninstall_cleanup_reports_step_failures(tmp_path, monkeypatch):
     config = _config(tmp_path)
     monkeypatch.setattr("pet.autostart.disable", lambda: False)
     monkeypatch.setattr(
-        "pet.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: False)
+        "pet.modules.agent_link.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: False)
     )
     monkeypatch.setattr(
-        "pet.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: False)
+        "pet.modules.agent_link.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: False)
     )
     monkeypatch.setattr(uninstall_cleanup, "other_instances_use_agent", lambda config, key: False)
 
@@ -85,7 +85,7 @@ def test_uninstall_cleanup_skips_bridge_when_other_instance_uses_dsh(tmp_path, m
     config = _config(tmp_path)
     monkeypatch.setattr("pet.autostart.disable", lambda: True)
     monkeypatch.setattr(
-        "pet.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: True)
+        "pet.modules.agent_link.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: True)
     )
     # 其他实例仍在使用 DSH 联动：桥接插件必须保留
     def fake_other_instances(cfg, key):
@@ -103,7 +103,7 @@ def test_uninstall_cleanup_skips_claude_when_other_instance_uses_claude(tmp_path
     config = _config(tmp_path)
     monkeypatch.setattr("pet.autostart.disable", lambda: True)
     monkeypatch.setattr(
-        "pet.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: True)
+        "pet.modules.agent_link.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: True)
     )
     # 其他实例仍在使用 Claude 联动：hooks 必须保留
     def fake_other_instances(cfg, key):
@@ -121,10 +121,10 @@ def test_uninstall_cleanup_deletes_claude_when_no_other_instance(tmp_path, monke
     config = _config(tmp_path)
     monkeypatch.setattr("pet.autostart.disable", lambda: True)
     monkeypatch.setattr(
-        "pet.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: True)
+        "pet.modules.agent_link.agent_link.ClaudeCodeMonitor.uninstall_hooks", classmethod(lambda cls: True)
     )
     monkeypatch.setattr(
-        "pet.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: True)
+        "pet.modules.agent_link.agent_link.DshMonitor.uninstall_bridge", classmethod(lambda cls: True)
     )
     monkeypatch.setattr(uninstall_cleanup, "other_instances_use_agent", lambda config, key: False)
 
@@ -256,11 +256,11 @@ def test_uninstall_cleanup_removes_hooks_despite_own_slot_residue(tmp_path, monk
         "pet.autostart.disable", lambda: (removed.append("autostart"), True)[1]
     )
     monkeypatch.setattr(
-        "pet.agent_link.ClaudeCodeMonitor.uninstall_hooks",
+        "pet.modules.agent_link.agent_link.ClaudeCodeMonitor.uninstall_hooks",
         classmethod(lambda cls: (removed.append("claude"), True)[1]),
     )
     monkeypatch.setattr(
-        "pet.agent_link.DshMonitor.uninstall_bridge",
+        "pet.modules.agent_link.agent_link.DshMonitor.uninstall_bridge",
         classmethod(lambda cls: (removed.append("dsh"), True)[1]),
     )
 

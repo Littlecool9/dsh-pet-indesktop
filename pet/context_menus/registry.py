@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QMenu, QWidgetAction
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .shared import (
     add_action,
-    add_agent_link_menu,
     add_autostart,
     add_edge_probe,
     add_hide_pet,
@@ -134,7 +133,6 @@ class MenuActionRegistry:
             # 始终可用：消费统计与其它开关无关。
             "agent_cost": MenuActionSpec(add_agent_cost),
             "edge_probe": MenuActionSpec(add_edge_probe),
-            "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,
                 lambda pet: sys.platform == "win32" and callable(getattr(pet, "on_open_chat", None)),

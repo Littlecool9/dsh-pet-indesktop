@@ -33,11 +33,12 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication
 
-import pet.agent_link as agent_link
-from pet import click_sound, dsh_state, dsh_probe
-from pet.agent_link import AgentLinkManager
+import pet.modules.agent_link.agent_link as agent_link
+from pet import click_sound, dsh_probe
+from pet.modules.agent_link import dsh_state
+from pet.modules.agent_link.agent_link import AgentLinkManager
 from pet.config import Config
-from pet.dsh_state import DshState
+from pet.modules.agent_link.dsh_state import DshState
 
 _SUCCEED_WORDS = ("已完成本轮任务", "执行完成", "已顺利完成")
 

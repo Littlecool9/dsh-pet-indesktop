@@ -585,12 +585,13 @@ class SpriteMenuFacade:
 
     # ---------------------------------------------------------------- Agent 联动
     def _agent_manager(self):
-        """共享联动管理器：壳注入面优先，缺失时从 SharedSubsystems 回填
-        （等价 window.py ``_ensure_agent_link_manager``）。"""
+        """共享联动管理器：壳注入面优先，缺失时从模块宿主服务回填
+        （核心不 import agent_link 模块；模块缺失 = 联动关闭）。"""
         manager = getattr(self._shell, "agent_link_manager", None)
         if manager is None:
-            shared = getattr(self._app_shell, "_shared", None)
-            manager = getattr(shared, "agent_link", None)
+            from .module_host import module_service
+
+            manager = module_service(self._app_shell, "agent_link")
             if manager is not None:
                 try:
                     self._shell.agent_link_manager = manager

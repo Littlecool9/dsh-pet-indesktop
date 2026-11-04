@@ -123,7 +123,7 @@ def test_r7_same_text_without_id_not_deduped(tmp_path, probes):
 
 
 def _make_link_mgr(tmp_path, agent_link_cfg=None):
-    from pet.agent_link import AgentLinkManager
+    from pet.modules.agent_link.agent_link import AgentLinkManager
     from pet.config import Config
 
     bubbles: list[str] = []
@@ -178,7 +178,7 @@ def test_r7_agent_link_identical_activity_after_cooldown_both_surface(tmp_path):
 
 
 def test_r7_agent_link_repeated_sound_after_cooldown_plays_again(tmp_path, monkeypatch):
-    from pet import agent_link
+    from pet.modules.agent_link import agent_link
 
     played: list[object] = []
     monkeypatch.setattr(agent_link, "play_sound",

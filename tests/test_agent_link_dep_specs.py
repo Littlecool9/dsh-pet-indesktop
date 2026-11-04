@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from pet import agent_link
-from pet.agent_link import DshMonitor
+from pet.modules.agent_link import agent_link
+from pet.modules.agent_link.agent_link import DshMonitor
 
 
 def _profile(tmp_path: Path, name: str = "web", deps: dict | None = None) -> Path:
@@ -317,7 +317,7 @@ class TestScheduling:
     def test_apply_config_schedules_check_when_dsh_enabled(self, tmp_path, monkeypatch):
         from PySide6.QtWidgets import QApplication
         from pet.config import Config
-        from pet.agent_link import AgentLinkManager
+        from pet.modules.agent_link.agent_link import AgentLinkManager
 
         QApplication.instance() or QApplication([])
         scheduled: list[str] = []
@@ -347,7 +347,7 @@ class TestScheduling:
     def test_apply_config_skips_check_when_dsh_disabled(self, tmp_path, monkeypatch):
         from PySide6.QtWidgets import QApplication
         from pet.config import Config
-        from pet.agent_link import AgentLinkManager
+        from pet.modules.agent_link.agent_link import AgentLinkManager
 
         QApplication.instance() or QApplication([])
         scheduled: list[str] = []

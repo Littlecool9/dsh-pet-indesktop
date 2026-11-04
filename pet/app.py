@@ -752,11 +752,8 @@ class AppShell:
         from .multi_window_shared import SharedSubsystems
 
         self._shared = SharedSubsystems(self)  # 4.4b：常开化（T6）
-        # 订阅 DSH 统一状态（单读方合并后由共享 Agent 联动管理器转发；收敛逻辑
-        # 是 pet/dsh_state.py 的纯函数，读方是 DshMonitor 自己）：
-        # thinking/attention 注入与 offline 交互收口在管理器内部完成，这里只
-        # 驱动灵动岛的 agent 活跃指示。
-        self._shared.agent_link.dsh_state_changed.connect(self._on_dsh_state_changed)
+        # DSH 统一状态由 agent_link 模块转发为宿主事件（_start_modules 订阅）：
+        # 核心只拿服务/事件，从不 import 具体模块；模块缺失时该订阅没有发布者。
         _LIVE_SHELLS.add(self)
 
     def _mark_slot0_profile_unusable(self, migration) -> None:
@@ -945,21 +942,17 @@ class AppShell:
                 refresh()
 
     def _sync_shared_optional_services(self) -> None:
-        """按配置重应用进程级共享子系统（联动读方 / 主动识屏）。
+        """按配置重应用进程级共享子系统（主动识屏）。
 
-        内容与 legacy 窗内 ``sync_optional_services``（window_optional_services.py
-        :353）逐条对齐——同一份共享实例、同一套门判定，只是调用点从窗挪到应用级：
-        overlay 拓扑下 ``instances[].win`` 恒为 None，那条链没有执行者。
-
-        只在 overlay 分支调用一次；legacy 由窗链负责，绝不重复（apply_config
-        本身幂等，重复调用不会重启监视器，但共享管理器按「窗口/壳」扇出，
-        这里仍以"一次"为准）。
+        overlay 拓扑下 ``instances[].win`` 恒为 None，legacy 窗链没有执行者；
+        agent_link 读方作为功能模块由 ``_apply_module_config`` 统一下发。
         """
         shared = getattr(self, "_shared", None)
         if shared is None:
             return
         shared.proactive.apply_config()
-        shared.agent_link.apply_config()
+        # agent_link 已是功能模块：它的 apply_config 由 _apply_module_config
+        # 统一下发，这里不能再来一次（同一份配置链只应用一次）。
 
     def open_settings_process(self, instance=None, page: str | None = None) -> bool:
         """拉起独立设置进程；True = 已交给独立进程（不得再开进程内对话框）。
@@ -1282,6 +1275,8 @@ class AppShell:
         registry = ModuleRegistry.from_packages(MODULES, tolerant=True)
         self._module_host = host
         self._module_registry = registry
+        # agent_link 模块经事件总线发布收敛态；模块缺失时没有发布者。
+        host.subscribe("agent_link.event", self._on_agent_link_event)
         registry.start_all(host, self.config)
 
     def _apply_module_config(self) -> None:
@@ -1476,6 +1471,14 @@ class AppShell:
         island = getattr(self, "island", None)
         if island is not None and shiboken6.isValid(island):
             island.set_dsh_state(to_state)
+
+    def _on_agent_link_event(self, payload) -> None:
+        """agent_link 模块的宿主事件（核心不 import 模块）。"""
+        if not isinstance(payload, dict):
+            return
+        if payload.get("kind") == "dsh_state":
+            self._on_dsh_state_changed(
+                str(payload.get("from") or ""), str(payload.get("to") or ""))
 
     # ------------------------------------------------------------ 退出收口
     def _on_about_to_quit(self) -> None:
@@ -1704,8 +1707,13 @@ class AppShell:
         shared = self._shared
         if shared is None:
             return
+        from .module_host import module_service
+
+        manager = module_service(self, "agent_link")
+        if manager is None:
+            return
         try:
-            shared.proxy.set_link_next_provider(shared.agent_link._next_busy_anim)
+            shared.proxy.set_link_next_provider(manager._next_busy_anim)
         except (AttributeError, RuntimeError):
             logging.exception("把窗口接入共享 Agent 联动链失败")
 

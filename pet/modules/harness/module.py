@@ -2,7 +2,7 @@
 """「DeepSeek Harness」模块运行时：自启调度、生命周期收口与菜单动作。
 
 - 自启：宿主壳就绪后 4s 调度一次，门 = ``enable_chat`` + ``harness_autostart`` +
-  ``agent_link.dsh``（后者仍由核心配置提供，agent_link 本阶段不迁移）。
+  ``agent_link.dsh``（模块之间只共享配置契约，不 import 对方）。
 - 收口：DSH 联动被关掉时**在后台线程**停掉本进程自拉起的 dsh web；退出时由
   ``ModuleRegistry.stop_all`` 调用 :meth:`stop` 做最后一次收口。
 - 关机/注销路径（``_session_end_done``）不派生任何进程，与 issue #111 纪律一致。
@@ -144,8 +144,8 @@ class HarnessModule:
     def _dsh_tracker_wanted(self, config=None) -> bool:
         """DSH 联动门：与核心 ``AppShell._dsh_tracker_wanted`` 同口径。
 
-        agent_link 本阶段未迁移，因此这里按配置键名 ``agent_link.dsh`` 自行读取，
-        不 import 它的内部（模块与核心之间只共享配置契约）。
+        这里按配置键名 ``agent_link.dsh`` 自行读取，不 import 它的内部
+        （模块与核心之间只共享配置契约）。
         """
         if config is None:
             config = self._config

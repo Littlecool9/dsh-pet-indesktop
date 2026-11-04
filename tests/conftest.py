@@ -119,7 +119,7 @@ def _no_real_dsh_profile_write(monkeypatch):
     自检逻辑本身仍可测（用例自行注入 spawn，或直接调 refresh_stale_bridge_links）。
     """
     try:
-        from pet.agent_link import DshMonitor
+        from pet.modules.agent_link.agent_link import DshMonitor
     except Exception:
         return
     monkeypatch.setattr(
@@ -196,7 +196,7 @@ def _close_qt_top_level_widgets():
     # collision IPC：4.4b 随多进程多宠退役层删除——collision_ipc 会话不再存在，
     # 对应的 `_stop_live_sessions_for_tests` 收口一并移除。
     try:
-        from pet.agent_link import AgentLinkManager, BaseAgentMonitor
+        from pet.modules.agent_link.agent_link import AgentLinkManager, BaseAgentMonitor
         AgentLinkManager._shutdown_live_for_tests()
         BaseAgentMonitor._shutdown_live_for_tests()
     except Exception:

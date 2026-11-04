@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication
 
-from pet.agent_link import AgentEvent, AgentLinkManager, BaseAgentMonitor, CursorMonitor
+from pet.modules.agent_link.agent_link import AgentEvent, AgentLinkManager, BaseAgentMonitor, CursorMonitor
 from pet.config import Config
 
 
@@ -374,23 +374,25 @@ class TestCloseEventStopsMonitors:
     def test_window_close_stops_agent_monitors(self, tmp_path, app):
         """进程级退出停掉全部 Agent 监视器 worker。
 
-        overlay 拓扑没有逐窗 closeEvent 收口：共享 manager 由
-        ``AppShell._on_about_to_quit`` → ``SharedSubsystems.stop_all`` 收口。
+        overlay 拓扑没有逐窗 closeEvent 收口：共享 manager 由 agent_link 模块
+        持有，进程级收口经 ``AppShell._stop_modules`` → 模块 ``stop``。
         """
         from pet.app import AppShell
 
         shell = AppShell(app, Config(base=tmp_path))
         try:
+            shell._start_modules()
             mgr = shell._shared.agent_link
             mon = mgr.monitors["dsh"]
             mon._POLL_INTERVAL_S = 0.05
             mon.start()
             assert mon._worker.is_alive()
-            shell._shared.stop_all()
+            shell._stop_modules()
             app.processEvents()
             assert not mon._running
             assert not mon._worker.is_alive()
         finally:
+            shell._stop_modules()
             shell._shared.stop_all()
 
 
@@ -450,7 +452,7 @@ class TestOutboxPolicy:
 class TestOpenCodeDbRotation:
     def test_db_replacement_rebackfills(self, tmp_path):
         """OpenCode 库被替换/重建：身份变化自动重新 backfill，不回放旧库事件、不漏新库事件。"""
-        from pet.agent_link import OpenCodeMonitor
+        from pet.modules.agent_link.agent_link import OpenCodeMonitor
 
         db1 = tmp_path / "opencode.db"
         _make_opencode_db(db1, [("session.created", {"sessionID": "s1"})])

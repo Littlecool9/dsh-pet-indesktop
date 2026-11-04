@@ -31,7 +31,7 @@ import pet.dynamic_island as island_mod
 import pet.island_layout as island_layout_mod
 from pet import quiet_mode
 from pet.dynamic_island import DynamicIsland
-from pet.dsh_state import DshState
+from pet.modules.agent_link.dsh_state import DshState
 
 app = QApplication.instance() or QApplication([])
 

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import QApplication
 import pet.app as app_mod
 import pet.slot_manager as slot_manager_mod
 from pet import catalog
-from pet.agent_link import AgentLinkManager
+from pet.modules.agent_link.agent_link import AgentLinkManager
 from pet.app import AppShell, PetInstance
 from pet.config import Config
 from pet.multi_window_shared import MultiWindowProxy, SharedProactiveWatcher

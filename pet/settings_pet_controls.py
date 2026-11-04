@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
 
 from . import autostart as autostart_mod
 from . import catalog
-from .agent_link import AgentLinkManager
 from .config import (
     DEFAULT_CONTEXT_MENU_APPEARANCE,
     DEFAULT_SELF_TALK_BUBBLE_STYLE,
@@ -36,6 +35,14 @@ from .config import (
 from .context_menus.icons import vector_widget_icon
 from .persona_phrases import PUBLIC_DIALOGUE_EVENTS, phrase_keys
 from .persona_template import build_persona_template
+
+# 设置页只读显示名（核心不 import agent_link 模块；与模块菜单文案同源语义）。
+AGENT_DISPLAY_NAMES = {
+    "dsh": "DSH",
+    "claude": "Claude Code",
+    "cursor": "Cursor",
+    "opencode": "OpenCode",
+}
 from .settings_widgets import (
     AUDIO_NAME_FILTER,
     BrowserDoubleSpinBox,
@@ -375,7 +382,7 @@ def build_pet_controls(host) -> None:
     # 逐 Agent 覆盖层（delta）编辑缓冲：scope（""=global / agent_key）→ {事件: 文本}
     host.dialogue_scope_select = ModernSelect(host, width=190)
     host.dialogue_scope_select.addItem("默认（全局文案）", "")
-    for agent_key, agent_name in AgentLinkManager.AGENT_NAMES.items():
+    for agent_key, agent_name in AGENT_DISPLAY_NAMES.items():
         host.dialogue_scope_select.addItem(f"{agent_name} 专属文案", agent_key)
     # 自定义 Agent 也支持专属层（跟随 agent_link.custom_agents）
     for item in (agent_link_cfg.get("custom_agents") or []):

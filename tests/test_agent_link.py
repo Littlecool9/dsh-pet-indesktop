@@ -23,10 +23,10 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-import pet.agent_link as agent_link
+import pet.modules.agent_link.agent_link as agent_link
 from pet import click_sound, dsh_probe
-from pet.dsh_state import DshState, SCOPE_REJECT_LOG_EVERY
-from pet.agent_link import (
+from pet.modules.agent_link.dsh_state import DshState, SCOPE_REJECT_LOG_EVERY
+from pet.modules.agent_link.agent_link import (
     AgentLinkManager,
     AgentEvent,
     BaseAgentMonitor,
@@ -40,7 +40,7 @@ from pet.agent_link import (
     opencode_event_state,
 )
 from pet.config import Config
-from pet.config import _clean_agent_link_data, _clean_custom_agents
+from pet.modules.agent_link.config import clean_agent_link_data, clean_custom_agents
 from pet.persona_phrases import PUBLIC_DIALOGUE_EVENTS, phrase_keys
 
 
@@ -694,7 +694,7 @@ class TestAgentLinkManager:
             "exploration_watchdog_enabled": True,
             "exploration_watchdog_warning_threshold": 9,
         }
-        cleaned = _clean_agent_link_data(cfg.data["agent_link"])
+        cleaned = clean_agent_link_data(cfg.data["agent_link"])
         for dead in ("report_gates", "notify_done", "report_probability",
                      "stuck_detect", "stuck_worried_threshold",
                      "pattern_detect", "pattern_w6_control",
@@ -1056,7 +1056,7 @@ class TestAgentMenuRebound:
 # ============================================================================
 class TestRealFormatMappers:
     def test_cursor_role_based(self):
-        from pet.agent_link import cursor_line_state
+        from pet.modules.agent_link.agent_link import cursor_line_state
         assert cursor_line_state({"role": "user", "message": {"content": [{"type": "text", "text": "hi"}]}}) == "thinking"
         assert cursor_line_state({"role": "assistant", "message": {"content": [{"type": "tool_use", "name": "Shell"}]}}) == "working"
         assert cursor_line_state({"role": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}}) == "idle"
@@ -1064,7 +1064,7 @@ class TestRealFormatMappers:
 
 
     def test_opencode_event_types(self):
-        from pet.agent_link import opencode_event_state
+        from pet.modules.agent_link.agent_link import opencode_event_state
         import json as j
         assert opencode_event_state("message.updated.1", j.dumps({"info": {"role": "user"}})) == "thinking"
         assert opencode_event_state("message.updated.1", j.dumps({"info": {"role": "assistant"}})) == ""
@@ -1080,7 +1080,7 @@ class TestOpenCodeSqliteTail:
         """OpenCode 监视器：自建 sqlite event 表，验证 backfill 防护 + 增量轮询。"""
         import sqlite3
         from PySide6.QtWidgets import QApplication
-        from pet.agent_link import OpenCodeMonitor
+        from pet.modules.agent_link.agent_link import OpenCodeMonitor
 
         app = QApplication.instance() or QApplication([])
 
@@ -1115,7 +1115,7 @@ class TestOpenCodeSqliteTail:
         """OpenCode 重建数据库后不沿用旧 rowid，也不重放新库历史行。"""
         import os
         import sqlite3
-        from pet.agent_link import OpenCodeMonitor
+        from pet.modules.agent_link.agent_link import OpenCodeMonitor
 
         db_path = tmp_path / "opencode.db"
 
@@ -1189,7 +1189,7 @@ class TestCooldownUnits:
 class TestMultiInstanceGlobalState:
     def test_disable_skips_uninstall_when_other_instance_enabled(self, tmp_path, monkeypatch):
         """其他实例仍开启某 Agent 联动时，本实例关闭不得卸载全局 hooks/插件。"""
-        from pet.agent_link import AgentLinkManager, ClaudeCodeMonitor
+        from pet.modules.agent_link.agent_link import AgentLinkManager, ClaudeCodeMonitor
 
         cfg = Config(base=tmp_path)
         mgr = AgentLinkManager(None, cfg)
@@ -2380,7 +2380,7 @@ class TestOpenCodeSubagentFilter:
         """子代理（parent_id 非空）会话的 step-start/step-finish/工具事件全部忽略。"""
         import sqlite3
         from PySide6.QtWidgets import QApplication
-        from pet.agent_link import OpenCodeMonitor
+        from pet.modules.agent_link.agent_link import OpenCodeMonitor
 
         app = QApplication.instance() or QApplication([])
         db_path = self._make_db(tmp_path)
@@ -2419,7 +2419,7 @@ class TestOpenCodeSubagentFilter:
         """老库没有 session 表：不过滤（保守不丢事件）。"""
         import sqlite3
         from PySide6.QtWidgets import QApplication
-        from pet.agent_link import OpenCodeMonitor
+        from pet.modules.agent_link.agent_link import OpenCodeMonitor
 
         app = QApplication.instance() or QApplication([])
         db_path = tmp_path / "opencode.db"
@@ -2479,17 +2479,17 @@ class TestOpenCodeSubagentFilter:
 # ============================================================================
 class TestCustomAgentConfigCleaning:
     def test_valid_entry_kept_and_normalized(self):
-        cleaned = _clean_custom_agents([
+        cleaned = clean_custom_agents([
             {"key": "Gemini", "name": "  Gemini CLI  ", "path": " ~/.gemini/ev.jsonl "},
         ])
         assert cleaned == [{"key": "gemini", "name": "Gemini CLI", "path": "~/.gemini/ev.jsonl"}]
 
     def test_name_defaults_to_key(self):
-        cleaned = _clean_custom_agents([{"key": "myagent", "path": "~/x.jsonl"}])
+        cleaned = clean_custom_agents([{"key": "myagent", "path": "~/x.jsonl"}])
         assert cleaned == [{"key": "myagent", "name": "myagent", "path": "~/x.jsonl"}]
 
     def test_invalid_entries_dropped(self):
-        cleaned = _clean_custom_agents([
+        cleaned = clean_custom_agents([
             "not-a-dict",                                # 非对象
             {"key": "Bad Key", "path": "~/x.jsonl"},     # key 含空格/大写
             {"key": "claude", "path": "~/x.jsonl"},      # 与内置键冲突
@@ -2499,7 +2499,7 @@ class TestCustomAgentConfigCleaning:
         assert cleaned == []
 
     def test_duplicate_keys_deduped(self):
-        cleaned = _clean_custom_agents([
+        cleaned = clean_custom_agents([
             {"key": "gemini", "path": "~/a.jsonl"},
             {"key": "gemini", "path": "~/b.jsonl"},
         ])
@@ -2508,14 +2508,14 @@ class TestCustomAgentConfigCleaning:
 
     def test_max_entries_truncated(self):
         raw = [{"key": f"agent{i}", "path": f"~/{i}.jsonl"} for i in range(20)]
-        assert len(_clean_custom_agents(raw)) == 8
+        assert len(clean_custom_agents(raw)) == 8
 
     def test_non_list_returns_empty(self):
-        assert _clean_custom_agents(None) == []
-        assert _clean_custom_agents({"key": "gemini"}) == []
+        assert clean_custom_agents(None) == []
+        assert clean_custom_agents({"key": "gemini"}) == []
 
     def test_clean_agent_link_data_cleans_and_keeps_custom_key_booleans(self):
-        cleaned = _clean_agent_link_data({
+        cleaned = clean_agent_link_data({
             "custom_agents": [{"key": "gemini", "name": "Gemini CLI", "path": "~/ev.jsonl"}],
             "gemini": True,        # 自定义键的开关布尔（set_enabled 写入路径）
             "notify_done": False,  # 减法退役的旧布尔开关：读入即丢弃，不写回
@@ -2649,7 +2649,7 @@ class TestCustomAgentMenu:
     def test_menu_lists_custom_agent_and_toggle_routes(self, tmp_path):
         """右键菜单动态渲染自定义 Agent（收进「自定义联动 Agent」三级子菜单），勾选走通用 _toggle_agent_link。"""
         from PySide6.QtWidgets import QMenu
-        from pet.context_menus.shared import add_agent_link_menu
+        from pet.modules.agent_link.menu import add_agent_link_menu
 
         app = QApplication.instance() or QApplication([])
         cfg = Config(base=tmp_path)
@@ -5071,7 +5071,7 @@ class TestDshDisableResetsPresentationState:
             self, tmp_path, monkeypatch):
         import threading
 
-        from pet.agent_link import AgentLinkManager, DshMonitor
+        from pet.modules.agent_link.agent_link import AgentLinkManager, DshMonitor
 
         app = QApplication.instance() or QApplication([])
         bubbles = []
@@ -5125,7 +5125,7 @@ class TestDshLateQueuedSignalsAreIsolated:
     def test_queued_stale_signal_after_disable_is_dropped(self, tmp_path, monkeypatch):
         from PySide6.QtCore import QTimer
 
-        from pet.agent_link import AgentLinkManager, DshMonitor
+        from pet.modules.agent_link.agent_link import AgentLinkManager, DshMonitor
 
         app = QApplication.instance() or QApplication([])
         cfg = Config(base=tmp_path)
@@ -5163,7 +5163,7 @@ class TestDshLateQueuedSignalsAreIsolated:
 
     def test_offline_from_a_running_monitor_still_passes(self, tmp_path, monkeypatch):
         """闸门不误伤：监视器在跑时的真 offline（DSH 断线）照常收敛。"""
-        from pet.agent_link import AgentLinkManager
+        from pet.modules.agent_link.agent_link import AgentLinkManager
 
         app = QApplication.instance() or QApplication([])
         cfg = Config(base=tmp_path)

@@ -8,21 +8,80 @@
 该路径不启动 QApplication/事件循环，只做必要的清理，便于「无 Qt 依赖路径」
 （仍可 import Qt 模块，但不建窗口）下执行。
 
-多实例占用判断由 agent_link 模块统一提供（语义并集：当前变体目录 + <base>
-下全部变体任一认为在用即保留），本模块只负责消费。
+功能自己的清理（Claude hooks / DSH 桥接插件）由模块清单的
+``extra["uninstall_cleanup"]`` 字符串入口提供；模块没登记 = 功能关闭，这里自然跳过。
+多实例占用判断（语义并集：当前变体目录 + <base> 下全部变体任一认为在用即保留）
+仍由本模块提供，模块侧只消费。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
-
-from .agent_link import ClaudeCodeMonitor, DshMonitor, other_instances_use_agent
+from pathlib import Path
 
 # 结果留痕文件名（写在配置目录里）：冻结入口是 windowed exe，没有控制台，
 # 只靠 stdout 的话卸载清理的结果在用户机器上等于消失。
 RESULT_LOG_NAME = "uninstall-cleanup.log"
+
+
+def other_instances_use_agent(config, agent_key: str) -> bool:
+    """另一个本地安装点（变体/独立实例）是否也开着该全局 Agent 联动。
+
+    "其他实例" = 别的变体目录的配置，或本变体目录里按 ``--instance <id>`` 隔离出来的
+    旧式独立实例配置。**不含本变体自己的 ``config-slot-N.json``**：那是固定身份的每宠
+    档案（``pet_profiles`` §五，全局键不落档案），历史「整表落种」复制进去的
+    ``agent_link`` 只是一份旧快照——按它判定会让卸载被本变体自己残留的档案挡住，
+    hooks/桥接插件清不掉。别的变体目录、旧共享目录、旧式非 slot 实例照旧保护
+    （hooks/桥接插件是跨变体共享的全局状态）。
+    """
+    config_dir = Path(config.dir)
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    try:
+        candidates.append(config_dir / "config.json")
+        candidates.extend(config_dir.glob("config-*.json"))
+        candidates.extend(config_dir.parent.glob("dsh-pet-standalone*/config*.json"))
+    except OSError:
+        pass
+    from .pet_profiles import _SLOT_PROFILE_RE
+
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        if config.path and path == config.path:
+            continue
+        if path.parent == config_dir and _SLOT_PROFILE_RE.match(path.name):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and bool((data.get("agent_link") or {}).get(agent_key, False)):
+            return True
+    return False
+
+
+def _module_cleanup_entries() -> list:
+    """各已登记模块声明的卸载清理入口（仅框架读取；坏包/坏入口只记日志）。"""
+    from .modules import MODULES
+    from .modules.base import load_entry
+    from .modules.registry import read_manifest
+
+    entries = []
+    for package in MODULES:
+        try:
+            manifest = read_manifest(package)
+            entry = manifest.extra.get("uninstall_cleanup")
+            if entry:
+                entries.append(load_entry(entry))
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "读取模块 %s 的卸载清理入口失败，已跳过", package)
+    return entries
 
 
 def run_uninstall_cleanup(config=None) -> dict:
@@ -30,8 +89,7 @@ def run_uninstall_cleanup(config=None) -> dict:
 
     步骤：
     1. 删除当前变体开机自启项（autostart.disable）；
-    2. 若无其他实例使用 Claude 联动，移除 Claude hooks（ClaudeCodeMonitor.uninstall_hooks）；
-    3. 若无其他实例使用 DSH 联动，卸载 DSH 桥接插件（DshMonitor.uninstall_bridge）。
+    2. 各已登记模块声明的清理（Agent 联动：移除 Claude hooks / 卸载 DSH 桥接插件）。
     """
     from . import autostart
 
@@ -40,17 +98,14 @@ def run_uninstall_cleanup(config=None) -> dict:
         config = Config()
 
     results = {"autostart": bool(autostart.disable())}
-
-    # 其他实例仍在使用对应联动则保留（hooks/桥接插件是全局状态）
-    for agent_key, result_key, uninstaller in (
-        ("claude", "claude_hooks", ClaudeCodeMonitor.uninstall_hooks),
-        ("dsh", "dsh_bridge", DshMonitor.uninstall_bridge),
-    ):
-        if other_instances_use_agent(config, agent_key):
-            results[result_key] = "skipped"
-        else:
-            results[result_key] = bool(uninstaller())
-
+    for cleanup in _module_cleanup_entries():
+        try:
+            result = cleanup(config)
+        except Exception:
+            logging.getLogger(__name__).exception("模块卸载清理失败")
+            continue
+        if isinstance(result, dict):
+            results.update(result)
     return results
 
 

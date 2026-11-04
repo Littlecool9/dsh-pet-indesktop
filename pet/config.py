@@ -9,7 +9,6 @@ import json
 import logging
 import math
 import os
-import re
 import shutil
 import time
 from pathlib import Path
@@ -176,28 +175,6 @@ def _default_proactive_screen_data() -> dict:
     }
 
 
-def _default_agent_link_data() -> dict:
-    return {
-        "dsh": False,
-        "claude": False,
-        "cursor": False,
-        "opencode": False,
-        # 自定义联动 Agent（协议见 docs/AGENT_LINK_PROTOCOL.md §4）：只读监听
-        # 用户指定的事件文件，不写外部配置、无需授权弹窗，默认空
-        "custom_agents": [],
-        # 音效配置
-        "sound_enabled": False,
-        "sound_start_path": "builtin:agent-start",
-        "sound_done_path": "builtin:agent-done",
-        "sound_error_path": "builtin:agent-error",
-        "sound_volume": 0.65,
-        "sound_cooldown_seconds": 2.0,
-        "sound_start_enabled": True,
-        "sound_done_enabled": True,
-        "sound_error_enabled": True,
-    }
-
-
 def _default_click_sound_pack() -> dict:
     return {"kind": "builtin", "id": "default", "path": ""}
 
@@ -220,104 +197,11 @@ def _clean_click_sound_pack(value: Any) -> dict:
     }
 
 
-# 内置联动 Agent 键：custom_agents 的 key 不得与之重复
-_AGENT_LINK_BUILTIN_KEYS = ("dsh", "claude", "cursor", "opencode")
-# 自定义联动 Agent 条目上限（防配置文件被塞爆）
-_CUSTOM_AGENT_MAX = 8
-
-# DSH 联动线减法（2026-10）退役的 agent_link 子键：事件汇报概率门
-# （report_gates 及旧布尔/百分比前身）、卡住检测、行为模式检测、探索看门狗。
-# 读入即丢弃，不再写回。
-_AGENT_LINK_REMOVED_KEYS = (
-    "report_gates",
-    "notify_state", "notify_activity", "notify_approval", "notify_done",
-    "notify_exec_failed", "report_probability",
-    "stuck_detect", "stuck_worried_threshold", "stuck_intervene_threshold",
-    "stuck_window_seconds", "stuck_cooldown_seconds", "stuck_reminder_text",
-    "pattern_detect", "pattern_w6_control", "pattern_w10_warn",
-    "pattern_w10_control", "pattern_macro_w6_explore", "pattern_macro_w6_action",
-    "pattern_macro_w10_explore", "pattern_macro_w10_action",
-    "pattern_min_steps_between", "pattern_cooldown_seconds",
-    "exploration_watchdog_enabled", "exploration_watchdog_warning_threshold",
-    "exploration_watchdog_control_threshold", "exploration_watchdog_cooldown_steps",
-    "exploration_watchdog_early_grace_minutes", "exploration_watchdog_long_run_minutes",
-    "exploration_watchdog_long_think_seconds",
-)
-
-
-def _clean_custom_agents(raw: Any) -> list[dict]:
-    """清洗自定义联动 Agent 列表（agent_link.custom_agents）。
-
-    条目 {key, name, path}：key 为小写标识（不得与内置键/其他条目重复），
-    name 为显示名（缺省用 key），path 为事件文件路径（支持 ~，允许暂不存在）。
-    非法条目直接丢弃，超出上限截断。"""
-    if not isinstance(raw, list):
-        return []
-    result: list[dict] = []
-    seen: set[str] = set()
-    for item in raw:
-        if len(result) >= _CUSTOM_AGENT_MAX:
-            break
-        if not isinstance(item, dict):
-            continue
-        key = str(item.get("key") or "").strip().lower()
-        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", key):
-            continue
-        if key in _AGENT_LINK_BUILTIN_KEYS or key in seen:
-            continue
-        path = str(item.get("path") or "").strip()[:500]
-        if not path:
-            continue
-        name = str(item.get("name") or "").strip()[:50] or key
-        seen.add(key)
-        result.append({"key": key, "name": name, "path": path})
-    return result
-
-
-def _clean_agent_link_data(raw: Any) -> dict:
-    defaults = _default_agent_link_data()
-    if not isinstance(raw, dict):
-        return dict(defaults)
-    result = dict(defaults)
-    # 保留传入的额外合法键（例如 thinking_text, thinking_texts 等）
-    result.update(raw)
-    result["custom_agents"] = _clean_custom_agents(raw.get("custom_agents"))
-    for key in (
-        "dsh",
-        "claude",
-        "cursor",
-        "opencode",
-        "sound_enabled",
-        "sound_start_enabled",
-        "sound_done_enabled",
-        "sound_error_enabled",
-    ):
-        if key in raw:
-            result[key] = bool(raw[key])
-    for key in ("sound_start_path", "sound_done_path", "sound_error_path"):
-        if key in raw:
-            val = str(raw[key] or "").strip()[:500]
-            result[key] = val or defaults[key]
-    if "sound_volume" in raw:
-        result["sound_volume"] = _float_or_default(raw.get("sound_volume"), defaults["sound_volume"], 0.0, 1.0)
-    if "sound_cooldown_seconds" in raw:
-        result["sound_cooldown_seconds"] = _float_or_default(raw.get("sound_cooldown_seconds"), defaults["sound_cooldown_seconds"], 0.0, 30.0)
-    # 减法后退役的键（概率门 / 卡住检测 / 行为模式 / 探索看门狗，含它们的旧
-    # 布尔/百分比前身）：读入即丢弃，保存时不再写回，配置里不留死键。
-    for dead_key in _AGENT_LINK_REMOVED_KEYS:
-        result.pop(dead_key, None)
-    return result
-
-
 def _merge_proactive_screen_data(raw: Any) -> dict:
     result = _default_proactive_screen_data()
     if isinstance(raw, dict):
         result.update(raw)
     return result
-
-
-def _merge_agent_link_data(raw: Any) -> dict:
-    return _clean_agent_link_data(raw)
 
 
 def _default_chat_data():
@@ -895,7 +779,6 @@ class Config:
             # （``_clean_island_metrics`` 是准入口径）。默认空 = 只要主信息。
             "island_metrics": [],
             "proactive_screen": _default_proactive_screen_data(),
-            "agent_link": _default_agent_link_data(),
             "chat_ui_style": "modern",  # modern / classic（仅聊天窗口保留双实现）
             "chat_follow_pet": False,  # 聊天窗口是否跟随桌宠移动
             "system_notifications_enabled": True,  # 对话完成/失败/需要授权时弹桌面系统通知
@@ -1098,11 +981,12 @@ class Config:
             self.data[key] = value
         if "proactive_screen" in raw:
             self.data["proactive_screen"] = _merge_proactive_screen_data(raw["proactive_screen"])
-        if "agent_link" in raw:
-            self.data["agent_link"] = _merge_agent_link_data(raw["agent_link"])
         self._migrate_click_sound_config(raw)
         self._migrate_decode_broker_config(raw)
         self._migrate_menu_template_config(raw)
+        # 模块配置（含 agent_link 块）：reload 后立即按各自 schema 清洗，
+        # 与 ``_normalize_pet_settings`` 同一入口，避免外部写盘绕过归一化。
+        module_config.normalize_reload_keys(self.data)
         self.data["version"] = 4
         self._migrate_plaintext_keys_to_keyring()
         self._save_baseline = copy.deepcopy(self.data)
@@ -1428,7 +1312,6 @@ class Config:
         )
         # 边缘探头：与其它布尔键同规，防手改字符串布尔误开。
         self.data["edge_probe_enabled"] = _bool_or_default(self.data.get("edge_probe_enabled"), False)
-        self.data["agent_link"] = _clean_agent_link_data(self.data.get("agent_link"))
         # 消费统计开关：布尔走 _bool_or_default，字符串 "yes"/"false" 不得被
         # bool() 误判。
         self.data["agent_cost_enabled"] = _bool_or_default(self.data.get("agent_cost_enabled"), False)
@@ -1496,7 +1379,6 @@ class Config:
             "click_sound_enabled",
             "click_sound_pack",
             "click_sound_volume",
-            "agent_link",
             "media_prewarm",
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
@@ -1661,10 +1543,6 @@ class Config:
                                 "chat_api_url", "chat_model", "click_sound_path",
                                 "decode_broker_enabled"):
                     payload.pop(retired, None)
-                agent_link = payload.get("agent_link")
-                if isinstance(agent_link, dict):
-                    for retired in _AGENT_LINK_REMOVED_KEYS:
-                        agent_link.pop(retired, None)
                 previous = self.data
                 self.data = payload
                 try:

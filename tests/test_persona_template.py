@@ -48,7 +48,7 @@ def test_all_advertised_fields_reach_presentation_layer():
     delivered = {}
     expansion_keys = set()
     dynamic = []
-    for rel in ("agent_link.py", "app.py", "modules/balance/module.py"):
+    for rel in ("modules/agent_link/agent_link.py", "app.py", "modules/balance/module.py"):
         tree = ast.parse((root / "pet" / rel).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -171,7 +171,7 @@ def test_all_advertised_fields_reach_presentation_layer():
 
     # ── 上下文字段层：桥接插件确实写出这些字段（或 Pet 侧注入）──
     bridge_src = (root / "integrations" / "dsh-pet-bridge" / "index.js").read_text(encoding="utf-8")
-    agent_link_src = (root / "pet" / "agent_link.py").read_text(encoding="utf-8")
+    agent_link_src = (root / "pet" / "modules" / "agent_link" / "agent_link.py").read_text(encoding="utf-8")
     pet_side_fields = {"agent_key"}
     for group, fields in UPSTREAM_FIELDS.items():
         for field in fields:

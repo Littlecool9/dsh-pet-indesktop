@@ -32,7 +32,7 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pet import dsh_probe  # noqa: E402
-from pet.agent_link import AgentLinkManager  # noqa: E402
+from pet.modules.agent_link.agent_link import AgentLinkManager  # noqa: E402
 from pet.config import Config  # noqa: E402
 
 app = QApplication.instance() or QApplication([])

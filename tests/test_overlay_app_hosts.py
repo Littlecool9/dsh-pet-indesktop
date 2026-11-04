@@ -79,6 +79,9 @@ def _make_overlay_app(tmp_path, *, chat_ui_style: str | None = None):
     inst = _HostInstance(shell, config)
     shell.instance = inst
     shell._instances = [inst]
+    # agent_link 共享 manager 现在由模块提供；先启动模块再注入壳（与 AppShell.start
+    # 的顺序一致：壳在模块之前构造、模块 start 时把 manager 接到壳上）。
+    shell._start_modules()
     overlay = OverlayShell(
         app, inst, screen=cap.FakeScreen((0, 0, 1920, 1080), (0, 0, 1920, 1040)),
         sprite_factory=lambda lib, pos, scale: PetSprite(lib, pos=pos, scale=scale),
