@@ -187,9 +187,9 @@ def test_write_slot_setting_preserves_other_keys_and_is_atomic(tmp_path):
 
 def test_write_slot_setting_missing_file_creates_it(tmp_path):
     """身份文件不存在也照写（旧版子宠进程的 Config 会自行落种）。"""
-    assert ovs.write_slot_setting(tmp_path, 3, "drag_physics", True) is True
+    assert ovs.write_slot_setting(tmp_path, 3, "playback_speed", 1.5) is True
     raw = json.loads((tmp_path / "config-slot-3.json").read_text(encoding="utf-8"))
-    assert raw["drag_physics"] is True
+    assert raw["playback_speed"] == 1.5
     assert raw["version"] == 4
 
 

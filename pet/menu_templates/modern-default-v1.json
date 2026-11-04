@@ -18,7 +18,6 @@
       "visible": true,
       "section": "pet",
       "children": [
-        {"type": "action", "id": "drag_physics", "visible": true},
         {"type": "action", "id": "no_move", "visible": true},
         {"type": "action", "id": "on_top", "visible": true},
         {"type": "action", "id": "autostart", "visible": true},

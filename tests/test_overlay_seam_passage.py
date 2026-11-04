@@ -65,22 +65,6 @@ def _global(shell, sprite):
     return QPointF(host.overlay.geometry().topLeft()) + QPointF(sprite.pos)
 
 
-def _global_target(shell, sprite):
-    """弹簧目标的**全局等价位置**（换帧后局部值必须变，全局值必须不变）。"""
-    target = getattr(sprite, "_drag_spring_target", None)
-    if target is None:
-        return None
-    host = shell.host_for_sprite(sprite)
-    return QPointF(host.overlay.geometry().topLeft()) + QPointF(target)
-
-
-def _global_trail(shell, sprite):
-    """拖拽轨迹样本的**全局等价** (x, y) 列表（换帧后全局值必须不变）。"""
-    host = shell.host_for_sprite(sprite)
-    origin = QPointF(host.overlay.geometry().topLeft())
-    return [(origin.x() + row[1], origin.y() + row[2]) for row in sprite.drag_trail]
-
-
 def _two_screens(height=1080, avail_height=1040):
     a = FakeScreen((0, 0, 1920, height), (0, 0, 1920, avail_height), name="DISPLAY1")
     b = FakeScreen((1920, 0, 1920, height), (1920, 0, 1920, avail_height), name="DISPLAY2")
@@ -98,50 +82,31 @@ def _grab(shell, sprite, at=None):
 
 
 # ---------------------------------------------------------------- 1. 无 tick 不提前移交
-def test_cursor_jump_without_tick_neither_moves_the_pet(
+def test_cursor_jump_moves_once_and_tick_adds_nothing(
         tmp_path, monkeypatch):
-    """光标一步跨到另一块屏、但**一个 tick 都没跑**：弹簧档位置不动。
+    """光标一步跨到另一块屏：普通拖拽在事件里落到光标处，随后的 tick 不再挪动。
 
-    弹簧档的实际位移只在 advance 里发生——没有 tick 就没有位移。这条同时挡住
-    "跨屏那一帧身体瞬移"的复发（旧实现正是在这一帧换了宿主）。
+    （拖动已无弹簧/惯性，事件写入的就是最终位置；这条挡住"tick 里再补一次
+    位移/整块屏跳变"的回潮。）
     """
     a, b = _two_screens()
     _install(monkeypatch, [a, b])
-    shell = _shell(tmp_path, a, {"drag_physics": True})
+    shell = _shell(tmp_path, a)
     try:
         main = shell.sprite
         main.set_pos(QPointF(300.0, 600.0))
         overlay, origin, cursor = _grab(shell, main)
         overlay.mouseMoveEvent(_move(cursor - origin, cursor))   # 过阈值：真拖拽
-        _tick(shell)                                             # 弹簧开始跟
-        before_global = _global(shell, main)
+        _tick(shell)
 
         cursor = QPointF(origin.x() + 2600.0, cursor.y())        # 一步跨到副屏深处
         overlay.mouseMoveEvent(_move(cursor - origin, cursor))
+        after_event = _global(shell, main)
 
-        assert _global(shell, main) == before_global, (
-            "弹簧档的实际位置只在 advance 里变；事件本身不得移动它")
-        assert main._drag_spring_target is not None, "前提：弹簧目标已更新（这才是事件的作用）"
-
-        # 弹簧要好几拍才把身体推进邻屏：每一拍的位移都不许超过"到目标的剩余距离"
-        spring_before = _global_target(shell, main)
-        velocity_before = QPointF(main.velocity)
-        crossed = None
-        for tick in range(1, 120):
-            prev_global = _global(shell, main)
-            lag = abs(QPointF(main._drag_spring_target).x() - main.pos.x())
-            _tick(shell)
-            step = abs(_global(shell, main).x() - prev_global.x())
-            assert step <= lag + 4.0, (
-                f"第 {tick} 拍位移 {step} 明显超过剩余滞后 {lag}（瞬移，不是弹簧）")
-            if shell._screen_of_sprite(main) is b:
-                crossed = tick
-                break
-        assert crossed is not None and crossed > 1, (
-            "弹簧档按自己的节奏推进（不是光标一过缝就瞬移）")
-        assert _global_target(shell, main) == spring_before, (
-            "弹簧目标的**全局**位置不许被改写")
-        assert QPointF(main.velocity) == velocity_before, "速度不许被改写"
+        _tick(shell)
+        assert _global(shell, main) == after_event, (
+            "普通拖拽的位置在鼠标事件里已落定；tick 不得再补位移")
+        assert QPointF(main.velocity) == QPointF(0, 0), "拖拽不产生速度"
     finally:
         hosts_mod._cleanup(shell)
 
@@ -156,9 +121,9 @@ def test_seam_trajectory_matches_a_seamless_screen(tmp_path, monkeypatch):
     samples_seam = []
     samples_ref = []
 
-    def run(screens, out, tmp, physics):
+    def run(screens, out, tmp):
         _install(monkeypatch, screens)
-        shell = _shell(tmp, screens[0], {"drag_physics": physics})
+        shell = _shell(tmp, screens[0])
         try:
             main = shell.sprite
             main.set_pos(QPointF(300.0, 600.0))
@@ -177,8 +142,8 @@ def test_seam_trajectory_matches_a_seamless_screen(tmp_path, monkeypatch):
 
     a, b = _two_screens()
     big = FakeScreen((0, 0, 3840, 1080), (0, 0, 3840, 1040), name="BIG")
-    seam_shell = run([a, b], samples_seam, tmp_path / "seam", physics=False)
-    ref_shell = run([big], samples_ref, tmp_path / "ref", physics=False)
+    seam_shell = run([a, b], samples_seam, tmp_path / "seam")
+    ref_shell = run([big], samples_ref, tmp_path / "ref")
     try:
         assert len(samples_seam) == len(samples_ref) == 90
         assert samples_seam == pytest.approx(samples_ref, abs=0.001), (
@@ -189,10 +154,10 @@ def test_seam_trajectory_matches_a_seamless_screen(tmp_path, monkeypatch):
 
 
 def test_crossing_the_seam_never_teleports(tmp_path, monkeypatch):
-    """跨过屏边界那一拍：全局位置零跳变（没有"移交"这回事）。"""
+    """跨过屏边界那一拍：全局位置零跳变（跟随光标，没有"移交"这回事）。"""
     a, b = _two_screens()
     _install(monkeypatch, [a, b])
-    shell = _shell(tmp_path, a, {"drag_physics": True})
+    shell = _shell(tmp_path, a)
     try:
         main = shell.sprite
         main.set_pos(QPointF(300.0, 600.0))
@@ -202,28 +167,13 @@ def test_crossing_the_seam_never_teleports(tmp_path, monkeypatch):
 
         cursor = QPointF(origin.x() + 2400.0, cursor.y())
         overlay.mouseMoveEvent(_move(cursor - origin, cursor))
+        assert shell._screen_of_sprite(main) is b, (
+            "普通拖拽里鼠标事件就是位置真值，身体应立即跟着过缝")
+        after_event = _global(shell, main)
 
-        spring_before = _global_target(shell, main)
-        velocity_before = QPointF(main.velocity)
-        trail_before = _global_trail(shell, main)
-        first_in_b = False
-        prev = _global(shell, main)
-        for _ in range(200):
-            lag = abs(QPointF(main._drag_spring_target).x() - main.pos.x())
-            _tick(shell)
-            now = _global(shell, main)
-            step = abs(now.x() - prev.x())
-            assert step <= lag + 4.0, (
-                f"跨屏那拍位移 {step} 超过剩余滞后 {lag}（那是瞬移）")
-            prev = now
-            if shell._screen_of_sprite(main) is b:
-                first_in_b = True
-                break
-        assert first_in_b, "弹簧跑满 200 拍身体仍未进副屏"
-        assert _global_target(shell, main) == spring_before, (
-            "弹簧目标的全局位置不许被改写")
-        assert QPointF(main.velocity) == velocity_before, "速度不许被改写"
-        assert len(_global_trail(shell, main)) >= len(trail_before), "轨迹样本照旧累积"
+        _tick(shell)
+        assert _global(shell, main) == after_event, "tick 不得再改拖拽位置"
+        assert QPointF(main.velocity) == QPointF(0, 0), "拖拽不产生速度"
     finally:
         hosts_mod._cleanup(shell)
 

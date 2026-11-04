@@ -778,8 +778,6 @@ def _migrate_pet_profile_values(data: dict, raw: dict) -> None:
 
 
 def _normalize_pet_profile_values(data: dict) -> None:
-    from . import physics as physics_mod
-
     data["scale"] = _float_or_default(data.get("scale"), catalog.DEFAULT_SCALE, 0.1, 4.0)
     data["playback_speed"] = _float_or_default(data.get("playback_speed"), 1.0, 0.1, 8.0)
     minimum = _float_or_default(data.get("self_talk_min_interval"), DEFAULT_SELF_TALK_MIN_INTERVAL, 5.0, 3600.0)
@@ -799,8 +797,6 @@ def _normalize_pet_profile_values(data: dict) -> None:
     data["click_sound_enabled"] = bool(data.get("click_sound_enabled", True))
     data["click_sound_pack"] = _clean_click_sound_pack(data.get("click_sound_pack"))
     data["click_sound_volume"] = _float_or_default(data.get("click_sound_volume"), 0.70, 0.0, 1.0)
-    data["throw_strength"] = physics_mod.normalize_throw_strength(str(data.get("throw_strength") or "standard"))
-    data["drop_gravity"] = _bool_or_default(data.get("drop_gravity"), False)
     recycle = _float_or_default(data.get("ffmpeg_recycle_minutes"), 10, 0, 120)
     data["ffmpeg_recycle_minutes"] = 0 if recycle <= 0 else int(max(2.0, recycle))
 
@@ -878,8 +874,6 @@ class Config:
             "dialogue_last_scope": "",  # 台词编辑上次打开的层（""=全局；设置页专属文案入口记忆）
             "mouse_through": False,
             "cursor_hidden_passthrough": True,
-            "drag_physics": False,
-            "drop_gravity": False,  # 静止放手下落：低速松手零初速受重力落地（#219，默认关=旧行为）
             "lock_position": False,  # 锁定位置：桌宠不可拖动（点击仍有效）
             "shift_drag": False,  # 按住 SHIFT+左键才能拖动
             "pet_opacity": 100,  # 桌宠窗口不透明度 10-100
@@ -902,7 +896,6 @@ class Config:
             "click_sound_enabled": True,  # 点击 Q 弹音效
             "click_sound_pack": _default_click_sound_pack(),
             "click_sound_volume": 0.70,
-            "throw_strength": "standard",  # gentle / standard / strong / crazy
             "click_show_balance": False,  # 点击显示 DeepSeek 余额
             "balance_refresh_minutes": 0,  # DeepSeek 余额自动刷新间隔（分钟，0=关闭）
             "balance_tier_labels_mode": "default",  # 峰谷提示文案：default / liangwen / custom
@@ -1104,8 +1097,6 @@ class Config:
             "self_talk_bubble_style",
             "mouse_through",
             "cursor_hidden_passthrough",
-            "drag_physics",
-            "drop_gravity",
             "dialogue_mode",
             "dialogue_phrases",
             "dialogue_last_scope",
@@ -1123,7 +1114,6 @@ class Config:
             "click_sound_enabled",
             "click_sound_pack",
             "click_sound_volume",
-            "throw_strength",
             "click_show_balance",
             "balance_refresh_minutes",
             "autostart_wanted",
@@ -1595,8 +1585,6 @@ class Config:
             "click_sound_enabled",
             "click_sound_pack",
             "click_sound_volume",
-            "throw_strength",
-            "drop_gravity",
             "agent_link",
             "media_prewarm",
             "first_frame_cache_max_mb",

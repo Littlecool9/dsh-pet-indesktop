@@ -9,7 +9,7 @@ sprite 坐标是 **窗口局部坐标**（= 全局 - 窗口原点，见
 可用工作区平移到窗口局部坐标后的那些矩形——错位拼接的屏间空洞不是可站立区，
 所以：
 
-- ``bounds`` 是并集包围矩形，喂行为/抛掷物理/边缘探头这些"单矩形"控制器；
+- ``bounds`` 是并集包围矩形，喂行为/边缘探头这些"单矩形"控制器；
 - ``activity`` 是矩形集合，喂 ``PetSprite.set_clamp_rects``（逐点落在并集内才
   合法，空洞里没有合法位置）；两者必须一起换，只换前者会让第一次几何变化把多
   矩形语义吃掉（``set_bounds`` 会就地按单矩形钳一次）；
@@ -25,7 +25,6 @@ from __future__ import annotations
 from PySide6.QtCore import QRect, QRectF
 
 from .sprite_behavior import BehaviorController
-from .sprite_physics import ThrowPhysicsController
 
 
 class ScreenHost:
@@ -38,9 +37,8 @@ class ScreenHost:
         self.bounds = QRect(bounds)
         # ((screen, QRect) ...)：活动区矩形集合 + 它属于哪块屏，几何同步按屏对齐
         self.activity: tuple = ()
-        # 仿真：行为（漫游/落位边界）→ 抛掷物理（窗口边界）
+        # 仿真：行为（漫游/落位边界）→ 附加控制器
         self.behavior = BehaviorController(self.bounds)
-        self.physics = ThrowPhysicsController(self.bounds)
         # 附加仿真控制器（tick 尾段，顺序即列表序）
         self.extras: list = []
         self.probe = None
@@ -54,10 +52,9 @@ class ScreenHost:
         return list(self.overlay.sprites)
 
     def tick(self, dt: float) -> None:
-        """一轮仿真：行为 → 物理 → 附加控制器（顺序协议同 M-2）。"""
+        """一轮仿真：行为 → 附加控制器（顺序协议同 M-2）。"""
         sprites = list(self.overlay.sprites)
         self.behavior.tick(sprites, dt)
-        self.physics.tick(sprites, dt)
         for ctrl in list(self.extras):
             ctrl.tick(sprites, dt)
 
@@ -70,7 +67,6 @@ class ScreenHost:
         """
         self.bounds = QRect(bounds)
         self.behavior.bounds = QRect(bounds)
-        self.physics.set_bounds(bounds)
         for sprite in self.overlay.sprites:
             sprite.set_bounds(QRect(bounds))
             self.apply_activity(sprite)

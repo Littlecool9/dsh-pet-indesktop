@@ -229,23 +229,8 @@ def build_pet_controls(host) -> None:
     if sys.platform == "win32":
         host.cursor_hidden_passthrough_check = ToggleSwitch(host)
         host.cursor_hidden_passthrough_check.setChecked(bool(host.config.get("cursor_hidden_passthrough", True)))
-    host.drag_physics_check = ToggleSwitch(host)
-    host.drag_physics_check.setChecked(bool(host.config.get("drag_physics", False)))
-    # 静止放手下落（#219）：低速松手零初速受重力落地。独立于「拖动物理」——
-    # 拖动物理关时低速松手同样是「原地放下」，用户要的下落不该被那个开关挡住。
-    host.drop_gravity_check = ToggleSwitch(host)
-    host.drop_gravity_check.setChecked(bool(host.config.get("drop_gravity", False)))
     # 「单进程多开」开关不再创建（拓扑收口 Phase A：设置页隐藏；
     # 游离 ToggleSwitch 会被孤儿开关测试拦截）。
-
-    # 甩出力度四档：gentle (轻柔) / standard (标准) / strong (强力) / crazy (疯狂)
-    host.throw_strength_select = ModernSelect(host, width=132)
-    host.throw_strength_select.addItem("轻柔", "gentle")
-    host.throw_strength_select.addItem("标准", "standard")
-    host.throw_strength_select.addItem("强力", "strong")
-    host.throw_strength_select.addItem("疯狂", "crazy")
-    current_strength = str(host.config.get("throw_strength", "standard") or "standard")
-    host.throw_strength_select.setCurrentData(current_strength if current_strength in {"gentle", "standard", "strong", "crazy"} else "standard")
 
     host.lock_position_check = ToggleSwitch(host)
     host.lock_position_check.setChecked(bool(host.config.get("lock_position", False)))

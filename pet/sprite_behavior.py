@@ -9,9 +9,9 @@ before_sprites_advance(dt) 阶段运行（位置积分仍由 sprite.advance 统�
             self.behavior.tick(self.sprites, dt)
 
 只在 sprite.interaction_state == "normal" 时驱动掷骰链（写 velocity/facing/
-bind_clip）；drag/thrown 期间位置归鼠标路由与物理控制器，本控制器只接管
-画面——拖拽绑 drag 悬空动画（F1，角色包无 drag 素材回退 idle 池），抛掷
-绑定飞行动画（F4）；落地静止切回 "normal" 后本控制器从当前姿态继续。
+bind_clip）；drag 期间位置归鼠标路由，本控制器只接管画面——拖拽绑 drag
+悬空动画（F1，角色包无 drag 素材回退 idle 池）；松手切回 "normal" 后本控制器
+从当前姿态继续。
 
 与旧窗口路径（pet/window.py，仅语义参考、禁止 import）的对应关系：
 - 掷骰节奏沿用 catalog 概率：30% 待机 / 10% 转向 / 20% 移动；40% 随机
@@ -32,7 +32,7 @@ bind_clip）；drag/thrown 期间位置归鼠标路由与物理控制器，本�
   （window.py:3438 _on_click 语义；音效等外围效果不在本层）；
 - 动画间隔（M5d，config ``animation_gap_seconds``）：动作/移动播完后强制插入
   一段待机/转向氛围步并计时，计时内待机步播完继续播氛围步，到点才回掷骰链
-  （window.py:2547-2594 语义）；点击/拖拽/抛掷接管立即取消 gap。
+  （window.py:2547-2594 语义）；点击/拖拽接管立即取消 gap。
 
 完成判定用墙钟（tick 累加 dt ≥ clip 时长），不连 clip.finished 做状态
 推进：clip 是 library 缓存的共享资源，bind_clip 已负责启停；墙钟与解码
@@ -61,7 +61,7 @@ ACTS 也**绝不接 finished 续圈**（P1）：finished 是真实时间口径�
 tick 的 dt 累加口径，TickDriver 的 dt 上限与 GUI 卡顿会让后者落后，单圈
 clip 播完时 `duration - elapsed` 仍 > 0——续圈会把整个动作从第 0 帧重播。
 故 `on_clip_finished` 对 ACTS 只登记「末帧已显示一个帧间隔」的证据（不要求
-等待窗口已开），续圈语义原样保留给 MOVE/DRAG/THROWN 的多圈场景——MOVE 侧多一道
+等待窗口已开），续圈语义原样保留给 MOVE/DRAG 的多圈场景——MOVE 侧多一道
 `move_loops_done` 记账：计划里的**末圈**同样绝不重播（见 `_move_tail_done`）。
 
 IDLE 的到点是**第二个例外**（与圈末重绑的实机诊断同源）：待机是无限循环的
@@ -93,13 +93,6 @@ CLICK / TURN 是同源的**第四、五个例外**（共用 `_tail_done`）：�
 facing 翻转随之推迟到真正收口那一刻——旧架构这两条链本来就在真末帧收口
 （window.py:2652-2667 点击段、`_on_anim_ended` 的 turns 分支）。
 
-两处「画面归它、位置不归它」的接线也在本模块：① 起飞预热（`_warm_landing_idles`）——进入
-THROWN 时后台预热全部 idle 首帧并打飞行期 `_ffr_landing_pinned`，落地/飞行被
-拖拽打断时按清单精确摘除（旧机 `_warm_landing_idles` / `_unpin_landing_idles`），
-同一飞行窗口内重复进入只提交一次（`warm_landing_submitted`）；② 飞行边沿
-（`_sync_flight_edge`）——istate 进出 THROWN 的那一 tick 各回调一次可选的
-`on_flight_changed(sprite, flying)`（默认 None = 现状），消费方据此在飞行期
-禁气泡：行为层只报边沿，气泡语义归壳（`overlay_shell._bubble_blocked`）。
 """
 
 from __future__ import annotations
@@ -112,7 +105,7 @@ from weakref import WeakKeyDictionary
 from PySide6.QtCore import QPointF, QRect
 
 from . import catalog, movement
-from .pet_sprite import INTERACTION_DRAG, INTERACTION_NORMAL, INTERACTION_THROWN
+from .pet_sprite import INTERACTION_NORMAL
 from .predictive_prewarm import PredictivePrewarm
 
 logger = logging.getLogger(__name__)
@@ -133,18 +126,13 @@ STATE_CLICK = "click"
 STATE_ACTS = "acts"
 #: 拖拽接管态（F1）：画面 = drag 悬空动画，位置归鼠标；不属于掷骰链
 STATE_DRAG = "drag"
-#: 抛掷飞行接管态（F4）：画面 = drag（悬空）动画循环 + 物理按速度加速播放；
-#: 位置归 sprite_physics；落地回 normal 后由 tick 收口回待机
-STATE_THROWN = "thrown"
+#: 本控制器「画面归它、位置不归它」的状态（F1）：sprite 已回 normal
+#: 却停在这个态 = 收尾接线缺失（看门狗/shell 分支没走到），必须自愈回待机
+_CAPTURED_STATES = (STATE_DRAG,)
 
-#: 本控制器「画面归它、位置不归它」的状态（F1/F4）：sprite 已回 normal
-#: 却停在这些态 = 收尾接线缺失（看门狗/shell 分支没走到），必须自愈回待机
-_CAPTURED_STATES = (STATE_DRAG, STATE_THROWN)
-
-#: 圈末 finished 需要原地续播（re-arm）的状态（F2/F4）：这些状态的时长可以
-#: 跨多圈（多圈移动 / 循环拖拽 / 飞行悬空循环），中间圈结束必须重播，
-#: 否则第 2 圈起冻结
-_REARM_STATES = (STATE_MOVE, STATE_DRAG, STATE_ACTS, STATE_THROWN)
+#: 圈末 finished 需要原地续播（re-arm）的状态（F2）：这些状态的时长可以
+#: 跨多圈（多圈移动 / 循环拖拽），中间圈结束必须重播，否则第 2 圈起冻结
+_REARM_STATES = (STATE_MOVE, STATE_DRAG, STATE_ACTS)
 
 #: ACTS 末帧收口（F8）：墙钟到点（elapsed ≥ duration）不代表末帧已交付。
 #: 实机缺帧窗口（三条臂，241/481 帧素材）：帧序列臂 239-240 两帧、webm 臂
@@ -192,8 +180,7 @@ class _SpriteState:
                  "idle_clip_finished", "move_tail_grace", "move_final_seen",
                  "move_clip_finished", "move_loops_done", "click_tail_grace",
                  "click_final_seen", "click_clip_finished", "turn_tail_grace",
-                 "turn_final_seen", "turn_clip_finished", "landing_pinned",
-                 "was_flying", "warm_landing_submitted")
+                 "turn_final_seen", "turn_clip_finished")
 
     def __init__(self) -> None:
         self.state = STATE_IDLE
@@ -256,18 +243,6 @@ class _SpriteState:
         self.turn_tail_grace: float | None = None
         self.turn_final_seen = False
         self.turn_clip_finished = False
-        # 飞行期落地首帧 pin（旧 window.py:4356-4420 语义）：非空 = 本 sprite 的
-        # idle 首帧正受「飞行期绝不逐出」保护，落地 / 飞行被拖拽打断时按这份
-        # 清单精确摘除（读清单而不是重查 idle 池：飞行中换角色后池已变，重查
-        # 会摘错对象、把上一只库的 pin 永久留在全局首帧预算里）
-        self.landing_pinned: list = []
-        # 飞行边沿状态（B1）：上一次 tick 见到的"在飞"判定，用于在 istate 进出
-        # THROWN 的那一 tick 各回调一次注入方（见 _sync_flight_edge）
-        self.was_flying = False
-        # 本次飞行窗口（起飞 → 落地/被拖拽打断）是否已向 _WARM_EXECUTOR 提交过
-        # 落地首帧预热（B2）：同一窗口内重复 _enter_thrown 不再重复 submit。
-        # 与 landing_pinned 同生共死（在 _unpin_landing_idles 一并复位）
-        self.warm_landing_submitted = False
 
 
 class BehaviorController:
@@ -305,11 +280,6 @@ class BehaviorController:
         self._predict_lead_s = 0.35
         # 预测预热总开关（config predict_prewarm_lead_ms>0 映射；测试可关）
         self.predict_enabled = True
-        # 飞行边沿回调（B1，可选）：``callable(sprite, flying) -> None``，只在
-        # istate 进出 ``INTERACTION_THROWN`` 的那一 tick 各调一次（首次接管、
-        # 空中被抓住、落地、飞行中被移除都算边沿）。行为层只报边沿，气泡语义
-        # 归消费方（overlay 壳据此禁飞的那只的气泡）；未接线 = 现状。
-        self.on_flight_changed = None
         self._states: dict = {}
         # V-9：按库对象弱引用缓存——旧实现以 id(lib) 为键，库销毁后地址
         # 被新库复用会命中陈旧分类池（换角色/多宠生灭时拿到错素材名），
@@ -342,10 +312,10 @@ class BehaviorController:
 
     # ---------------------------------------------------------------- 对外 API
     def tick(self, sprites, dt: float) -> None:
-        """推进一轮：normal 走掷骰链，drag/thrown 只做画面接管。
+        """推进一轮：normal 走掷骰链，drag 只做画面接管。
 
-        非 normal 的 sprite 不推进状态机（位置归鼠标/物理），但画面必须
-        绑对动画（F1 拖拽悬空 / F4 飞行循环），故仍进入本循环。
+        非 normal 的 sprite 不推进状态机（位置归鼠标），但画面必须绑对动画
+        （F1 拖拽悬空），故仍进入本循环。
         """
         for sprite in sprites:
             self._ensure_hooks(sprite)
@@ -358,16 +328,13 @@ class BehaviorController:
             if (istate == INTERACTION_NORMAL and shared_focus_session().focusing
                     and (st.state == STATE_MOVE or st.pending_move is not None)):
                 self._enter_idle(sprite, st, self._categories(sprite.library))
-            # 飞行边沿（B1）：走路就是这么走的——在既有的 istate 读取处顺带
-            # 判一次边沿，零额外查询、不新增 timer/线程（见 _sync_flight_edge）
-            self._sync_flight_edge(sprite, st, istate == INTERACTION_THROWN)
             if istate != INTERACTION_NORMAL:
                 st.suspended = True
                 self._tick_captured(sprite, st)
                 continue
             if st.suspended:
-                # 接管结束后的收口（F5，window.py:4174-4177 _enter_physics_mode
-                # →_cancel_move 的 sprite 版）：接管期间位置已被鼠标/物理改写，
+                # 接管结束后的收口（F5，window.py:4174-4177 的拖拽收尾同款）：
+                # 接管期间位置已被鼠标改写，
                 # 接管前的移动/转向计划一律作废——绝不 set_pos(旧目标) snap，
                 # 否则松手后一到 duration 就瞬移回原路线终点
                 st.suspended = False
@@ -396,12 +363,8 @@ class BehaviorController:
     def on_drag_released(self, sprite) -> None:
         """真拖拽松手（非点击候选）：切回待机池。
 
-        松手被判为甩出（interaction_state == "thrown"）时不得收尾——飞行段
-        归 sprite_physics，落地回 normal 后由 tick 自愈回待机
-        （window.py:3260-3264 只处理原地放下分支，同语义）。
+        松手回到 normal 后切回待机池；不推进掷骰链、不改写位置。
         """
-        if getattr(sprite, "interaction_state", INTERACTION_NORMAL) == INTERACTION_THROWN:
-            return
         st = self._states.get(sprite)
         if st is None:
             return
@@ -571,28 +534,14 @@ class BehaviorController:
     def forget(self, sprite) -> None:
         """sprite 从 overlay 移除时清理其状态（可选，防状态表只增不减）。
 
-        同时摘掉飞行期 pin：pin 是打在 clip 上的（全局首帧预算按它免逐出），
-        sprite 若在飞行中被移除而清单随状态表一起丢弃，那些首帧会永久挂在
-        预算里（库销毁前无人再摘）。
-
-        飞行中被移除（托盘退出/换角色）还要补一次"落地"边沿：消费方（壳的
-        飞行集合）靠边沿维护簿记，漏掉这一次就会永久留着这只已注销的 sprite
-        （强引用 + 它的气泡门禁状态永远是"在飞"）。
-
         圈末回调的挂接权一并交还：``_ensure_hooks`` 以 owner 判"是否已挂"，把
         这只 sprite 交给**另一个**世界（跨屏移交宿主）时若仍记着本控制器，
         新世界永不接管圈末续播（多圈移动/长拖拽在圈末冻结）。
         """
-        st = self._states.pop(sprite, None)
+        self._states.pop(sprite, None)
         if getattr(sprite, "_clip_finished_owner", None) is self:
             sprite._clip_finished_cb = None
             sprite._clip_finished_owner = None
-        if st is None:
-            return
-        self._unpin_landing_idles(st)
-        if st.was_flying:
-            st.was_flying = False
-            self._notify_flight_changed(sprite, False)
 
     def _ensure_hooks(self, sprite) -> None:
         """把 clip 圈末回调挂到 sprite（F2），每个 sprite 只挂一次。
@@ -605,50 +554,17 @@ class BehaviorController:
         sprite._clip_finished_cb = self.on_clip_finished
         sprite._clip_finished_owner = self
 
-    # ---------------------------------------------------------------- 飞行边沿（B1）
-    def _sync_flight_edge(self, sprite, st: _SpriteState, flying: bool) -> None:
-        """飞行边沿检测：istate 进/出 THROWN 各回调一次注入方。
-
-        边沿源是**唯一权威**的 ``interaction_state``（飞行由 sprite_physics
-        写入、落地也由它复位），故本方法每 tick 只做一次布尔比较——不新增
-        timer/线程、不轮询位置、不碰物理。回调只在边沿发生，稳态零开销。
-        """
-        flying = bool(flying)
-        if flying == st.was_flying:
-            return
-        st.was_flying = flying
-        self._notify_flight_changed(sprite, flying)
-
-    def _notify_flight_changed(self, sprite, flying: bool) -> None:
-        """调用注入的飞行边沿回调；未接线 = no-op，回调异常绝不掀掉 tick。
-
-        消费失败只降级为「气泡门禁没跟上」（表现 = 飞行期多冒一次泡），
-        绝不能因此打断位置积分/状态机。
-        """
-        callback = self.on_flight_changed
-        if callback is None:
-            return
-        try:
-            callback(sprite, bool(flying))
-        except Exception:
-            logger.exception("飞行边沿回调失败 sprite=%r flying=%s", sprite, flying)
-
     # ---------------------------------------------------------------- 接管态画面
     def _tick_captured(self, sprite, st: _SpriteState) -> None:
-        """非 normal（drag/thrown）阶段的画面接管（F1/F4）。
+        """非 normal（drag）阶段的画面接管（F1）。
 
-        位置由鼠标路由与物理控制器负责，本控制器只保证「当前该播什么」：
-        拖拽 = 悬空 clip（window.py:3175-3176 进拖拽切 drag），抛掷 = 飞行
-        循环 clip（window.py:2487-2499）。绝不推进掷骰链、绝不改写
-        velocity——旧断言「非 normal 从不被接管」在此扩为「只接受 drag
+        位置由鼠标路由负责，本控制器只保证「当前该播什么」：拖拽 = 悬空
+        clip（window.py:3175-3176 进拖拽切 drag）。绝不推进掷骰链、绝不
+        改写 velocity——旧断言「非 normal 从不被接管」在此扩为「只接受 drag
         绑定，不接受掷骰驱动」。
         """
-        istate = getattr(sprite, "interaction_state", INTERACTION_NORMAL)
-        if istate == INTERACTION_DRAG:
-            if st.state != STATE_DRAG:
-                self._enter_drag(sprite, st)
-        elif istate == INTERACTION_THROWN and st.state != STATE_THROWN:
-            self._enter_thrown(sprite, st)
+        if st.state != STATE_DRAG:
+            self._enter_drag(sprite, st)
 
     # ---------------------------------------------------------------- 状态机
     def _tick_sprite(self, sprite, st: _SpriteState, dt: float) -> None:
@@ -1086,106 +1002,15 @@ class BehaviorController:
             setattr(st, f"{kind}_final_seen", True)
         return grace <= 0.0
 
-    # ---------------------------------------------------------------- 落地首帧（起飞预热 + 飞行期 pin）
-    def _warm_landing_idles(self, sprite, st: _SpriteState, cats: dict) -> None:
-        """起飞边沿：后台预热全部 idle 首帧并打飞行期 pin（window.py:4356-4404）。
-
-        落地的切换目标是 idle 池（``_enter_idle``），而预测式预热覆盖不到这里
-        ——弹射是事件触发（拖拽打断早已作废预测代次），且交互让路闸门在飞行期
-        会挡住 ``warm_predicted``；故直接调 clip 级 ``warm_first_frame``（幂等、
-        可被取消，见 webm_clip 文档），绕过的是**交互让路**闸门——库级总开关 /
-        隐藏暂停闸门照旧要过（见 ``_warm_allowed``），否则设置页"关闭后停止
-        后台动画预热"的承诺会被这条路径打破。
-
-        **后台执行**：预热内部要拉起 ffmpeg（~50ms/条），旧机曾在 GUI 线程同步
-        预热，碰撞风暴下每次撞飞同步拉起一次（~100ms/只），多鱼互撞时连续
-        200ms+ 级卡顿。这里复用预测预热的共享 worker（模块级 ``_WARM_EXECUTOR``，
-        不新开常驻线程），GUI 只付一次 submit。
-
-        pin 打的是 ``_ffr_landing_pinned``（独立标志，绝不与 library 常驻的
-        ``_ffr_pinned`` 混用：idle 池可与高频交互常驻集重叠，混用会让落地摘
-        pin 顺手摘掉常驻保护）。清单落进 ``st.landing_pinned``，摘除按清单精确
-        匹配（见 ``_unpin_landing_idles``）。
-
-        **同一次飞行只提交一次**（B2）：``_WARM_EXECUTOR`` 是 max_workers=1 的
-        单 worker（模块级共享，与预测式预热共用），重复 submit 只会让后一批
-        ffmpeg 排在前一批后面——预热内容一字不变，白白把落地首帧的可用时间
-        推后几百毫秒。开关是 ``st.warm_landing_submitted``：起飞置位，落地 /
-        被拖拽打断（``_unpin_landing_idles``）复位，故下一次飞行照旧预热。
-        """
-        if not self._warm_allowed(getattr(sprite, "library", None)):
-            # 库级闸门关闭（设置页关预热 / 隐藏挂起）：本段整体不占位——pin 与
-            # 去重标记都不置，开闸后的下一次起飞照旧整批提交（不会被一次空跑
-            # 吃掉标记，与"无 idle 素材"分支同款纪律）。
-            return
-        if st.warm_landing_submitted:
-            return  # 本次飞行已提交过：pin 仍在位（清单没被摘），无需重打
-        clips = self._landing_idle_clips(sprite, cats)
-        if not clips:
-            return
-        st.warm_landing_submitted = True
-        st.landing_pinned = clips
-        for clip in clips:          # GUI 线程打标记，warm 在后台完成
-            clip._ffr_landing_pinned = True
-        _WARM_EXECUTOR.submit(self._warm_clips, clips)
-
-    @staticmethod
-    def _warm_clips(clips) -> None:
-        """后台预热条目（worker 线程）：clip 缺 ``warm_first_frame`` 即跳过。
-
-        预热失败静默（落地切换退化为按需同步解码，语义同旧路径）。
-        """
-        for clip in clips:
-            try:
-                warm = getattr(clip, "warm_first_frame", None)
-                if callable(warm):
-                    warm()
-            except Exception:
-                pass
-
-    @staticmethod
-    def _landing_idle_clips(sprite, cats: dict) -> list:
-        """本 sprite 的 idle 池 clip 清单（旧机 ``[lib.movie(n) for n in idles]``）。
-
-        clip 解析留在 GUI 线程（``MovieLibrary.movie`` 不保证线程安全），后台
-        只持有引用跑解码。取不到（库/名缺失）静默跳过。
-        """
-        movie = getattr(getattr(sprite, "library", None), "movie", None)
-        if not callable(movie):
-            return []
-        clips = []
-        for name in cats["idles"] or ():
-            try:
-                clips.append(movie(name))
-            except Exception:
-                pass
-        return clips
-
-    @staticmethod
-    def _unpin_landing_idles(st: _SpriteState) -> None:
-        """摘掉起飞时给的飞行期 pin（landing / 飞行被拖拽打断）。
-
-        只摘 ``_ffr_landing_pinned``，library 常驻 ``_ffr_pinned`` 绝不动；
-        非飞行期调用是 no-op（清单空）。按起飞时记下的 clip 清单摘（不重查
-        idle 池：飞行中换角色后池已变）。
-
-        同时复位起飞预热去重标记（B2）：本方法是飞行窗口（起飞 → 落地/被
-        拖拽打断）唯一的收口点，两个字段同生共死——下一次飞行照旧预热。
-        """
-        for clip in st.landing_pinned:
-            clip._ffr_landing_pinned = False
-        st.landing_pinned = []
-        st.warm_landing_submitted = False
-
     @staticmethod
     def _warm_allowed(lib) -> bool:
         """库级预热闸门（总开关 + 隐藏暂停）：鸭式库无 ``warm_allowed()`` 按放行。
 
-        行为层有两条**直提** ``_WARM_EXECUTOR`` 的路径（预测预热、起飞落地预热），
-        它们不经过库的 ``warm_predicted`` / ``_warm_objects``，也就绕过了那里
-        的闸门；判据统一问库（``MovieLibrary.warm_allowed``）。库不暴露该接口
-        （测试假库 / 轻量替身）、或判定本身抛错时按放行——预热失败从来不致命
-        （最坏退化成播放时按需同步解码），绝不能因为一次判定失败改变既有行为。
+        预测预热直接提 ``_WARM_EXECUTOR``，不经过库的 ``warm_predicted`` /
+        ``_warm_objects``，也就绕过了那里的闸门；判据统一问库
+        （``MovieLibrary.warm_allowed``）。库不暴露该接口（测试假库 / 轻量替身）、
+        或判定本身抛错时按放行——预热失败从来不致命（最坏退化成播放时按需
+        同步解码），绝不能因为一次判定失败改变既有行为。
         """
         allowed = getattr(lib, "warm_allowed", None)
         if not callable(allowed):
@@ -1374,10 +1199,6 @@ class BehaviorController:
 
     def _enter_idle(self, sprite, st: _SpriteState, cats: dict,
                     forced_name: str | None = None) -> None:
-        # 离开接管态（含飞行落地收口）→ 摘掉飞行期首帧 pin：pin 只覆盖
-        # 「起飞 → 落地」窗口（window.py:4289 _stop_physics 同点）。放在最前，
-        # 与落地切待机同一 tick 内完成（无产出点，不会被穿插的逐出利用）
-        self._unpin_landing_idles(st)
         st.state = STATE_IDLE
         st.pending_move = None
         self._clear_move_plan(st)
@@ -1407,12 +1228,10 @@ class BehaviorController:
         """进入拖拽接管态（F1）：绑 drag 悬空 clip（缺素材回退 idle 池）。
 
         velocity 不动（拖拽位置归鼠标；``on_press`` 已归零）。探针/掷骰链
-        的一切排定计划在此作废。飞行被空中抓住（thrown → drag）时同时摘掉
-        飞行期首帧 pin（window.py:4318 同点语义）。
+        的一切排定计划在此作废。
         """
         cats = self._categories(sprite.library)
         name = cats["drag"][0] if cats["drag"] else self._pick(cats["idles"])
-        self._unpin_landing_idles(st)
         st.state = STATE_DRAG
         st.pending_move = None
         self._cancel_gap(st)  # 拖拽接管打断 gap（window.py:4178 同款取消点）
@@ -1422,34 +1241,6 @@ class BehaviorController:
         st.duration = self._plan_duration(sprite, name) if name else 0.0
         if name is not None:
             self._bind_with_gen(sprite, st, name)
-
-    def _enter_thrown(self, sprite, st: _SpriteState) -> None:
-        """进入抛掷飞行接管态（F4）：绑 drag（缺素材回退 idle 池）并循环。
-
-        旧实现 window.py:2487-2499：飞行途中当前动作播完固定切「悬空」动画
-        并循环（首帧必热的 drag clip，视觉契合被击飞），落地停稳才切回待机
-        ——收口由 tick 的接管态自愈完成，本方法不碰速度/位置。播放速率由
-        sprite_physics 每 tick 按速度叠加（physics.flight_anim_speed，
-        window.py:4328-4340）。
-
-        起飞边沿同时预热 idle 首帧并打飞行期 pin（window.py:4314
-        ``_warm_landing_idles``）：落地的切换目标就是 idle 池，冷首帧会在
-        GUI 线程同步拉 ffmpeg（实测 ~100ms），pin 则挡住 8MB 首帧预算在
-        预热浪涌里把刚暖好的落地首帧挤掉。
-        """
-        cats = self._categories(sprite.library)
-        name = cats["drag"][0] if cats["drag"] else self._pick(cats["idles"])
-        st.state = STATE_THROWN
-        st.pending_move = None
-        self._cancel_gap(st)  # 抛掷接管同款取消点（window.py:4178）
-        self._clear_move_plan(st)
-        st.elapsed = 0.0
-        st.anim = name
-        st.duration = self._plan_duration(sprite, name) if name else 0.0
-        if name is not None:
-            # 起播被拒也静默：飞行段的位置积分不能因动画失败而中断
-            self._bind_with_gen(sprite, st, name)
-        self._warm_landing_idles(sprite, st, cats)
 
     def _enter_acts(self, sprite, st: _SpriteState, cats: dict,
                     forced_name: str | None = None) -> None:
@@ -1639,7 +1430,7 @@ class BehaviorController:
 
     # ---------------------------------------------------------------- 边界
     def _clamp_into_bounds(self, sprite) -> None:
-        """拖拽/抛掷切回 normal 后落点在界外的兜底。
+        """拖拽切回 normal 后落点在界外的兜底。
 
         口径与 set_pos 一致（V-2）：身体框完整落界内、画布透明边允许
         越界——不再用整 canvas 矩形钳制（那会把按身体框贴边的 sprite
@@ -1714,7 +1505,7 @@ class BehaviorController:
         ``clip.duration()`` 除以的是 **clip 当前** 的 ``playback_speed``，而那个
         字段只在 ``PetSprite.bind_clip`` 里才被同步成 ``sprite.playback_speed``
         ——计划读取点全部发生在 bind **之前**，缓存 clip 里残留的是上一次绑定
-        的速率（飞行倍率也会留在那里，见 ``reset_playback_speed`` 的注释）。
+        的速率（上一次绑定留下的速率）。
         直接读库口径会让状态机按错误时长推进：慢动作被提前切走、快动作播完
         长停末帧，移动计划的位移与墙钟失配（脚滑）。这里换算回"按 sprite 速率
         播放"的真实时长：

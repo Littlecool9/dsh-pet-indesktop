@@ -27,7 +27,7 @@
 ``OverlayShell.exit_pet(sprite)``；主子同样保档案、留空、可恢复，不提升不quit。
 
 批 B2：作用对象口径对齐旧版一窗一宠（菜单以 ``pet=self`` 建造，每条都作用
-本窗那一只）——读（勾选态/素材清单）与写（动画/速率/大小/拖动物理/回角落/
+本窗那一只）——读（勾选态/素材清单）与写（动画/速率/大小/回角落/
 隐藏/看屏幕）一律取 ``self.sprite``，不再混用 ``self._shell.sprite``。
 批 B7b：逐只设置的持久化与读取都按该 sprite 自己的配置走——``cfg`` 是它的
 配置视图（子宠 = ``config-slot-N.json``，缺键取同源默认），``_persist_sprite_setting``
@@ -150,10 +150,6 @@ class SpriteMenuFacade:
     @property
     def no_move(self) -> bool:
         return bool(getattr(self._behavior(), "no_move", False))
-
-    @property
-    def drag_physics(self) -> bool:
-        return bool(getattr(self.sprite, "drag_physics", True))
 
     @property
     def playback_speed(self) -> float:
@@ -448,12 +444,6 @@ class SpriteMenuFacade:
             hook = getattr(self._shell, "on_sprite_scale_changed", None)
             if callable(hook):
                 hook(self.sprite)
-        return True
-
-    def set_drag_physics(self, on: bool) -> bool:
-        if not self._persist_sprite_setting("drag_physics", bool(on)):
-            return False
-        self.sprite.drag_physics = bool(on)
         return True
 
     def set_no_move(self, on: bool) -> None:

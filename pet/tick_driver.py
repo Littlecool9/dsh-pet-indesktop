@@ -10,7 +10,7 @@
 
 本模块把一次 tick 拆成两段（分工边界即 M-2 的拆法）：
 
-1. **仿真段** ``tick_sim(dt)``：行为 → 碰撞 → 抛掷物理（tick 顺序协议不变），
+1. **仿真段** ``tick_sim(dt)``：行为 → 附加控制器（tick 顺序协议不变），
    sprites 聚合自**全部**已挂载 overlay（T2 的成员快照完整性）；带宿主
    （``overlay.host``，多屏装配）时按宿主分组跑各自那份控制器——见下；
 2. **推进+重绘段** ``advance_overlays(dt)``：逐个 overlay 调
@@ -18,7 +18,7 @@
    V-3/V-4 帧直驱脏矩形语义不变）。
 
 **按宿主仿真**：合成窗的仿真宿主是 ``screen_host.ScreenHost``（overlay + 窗口
-边界 + 活动区矩形集合 + 行为/碰撞/物理控制器）。仿真段按宿主分组：**同一 tick、
+边界 + 活动区矩形集合 + 行为/附加控制器）。仿真段按宿主分组：**同一 tick、
 同一 QTimer**，每个宿主只跑自己的世界。没有宿主的 overlay（裸
 ``OverlayWindow`` / demo 装配）逐位沿用单世界语义。
 
@@ -157,11 +157,10 @@ class TickDriver(QObject):
                  clock=time.monotonic) -> None:
         super().__init__(parent)
         self._overlays: list = []
-        # 单世界装配（T1/T2：裸 overlay / demo）的一组控制器；None = 未挂
+        # 单世界装配（T1/T2：裸 overlay / demo）的行为控制器；None = 未挂
         #（兼容分支走 overlay 钩子）。多屏产品装配不挂这里——每块屏的控制器
         # 归它的宿主（``hosts`` / ``ScreenHost``），见 ``tick_sim``。
         self.behavior = None
-        self.physics = None
         # 附加仿真控制器（如边缘探头）：tick_sim 尾段、主控制器之后运行
         # ——姿态类控制器是最终写入口，不能被后续控制器覆盖
         self._extras: list = []
@@ -189,15 +188,13 @@ class TickDriver(QObject):
         self._timer.timeout.connect(self.on_tick)
 
     # ---------------------------------------------------------------- 装配
-    def set_controllers(self, behavior=None, physics=None) -> None:
-        """挂上**单世界**装配的控制器（T1；多屏产品装配用宿主，见 ``tick_sim``）。
+    def set_controllers(self, behavior=None) -> None:
+        """挂上**单世界**装配的行为控制器（T1；多屏产品装配用宿主，见 ``tick_sim``）。
 
-        只覆盖显式传入的项（``None`` = 保持原值），便于测试只替换其中几个。
+        ``None`` = 保持原值，便于测试只替换这一项。
         """
         if behavior is not None:
             self.behavior = behavior
-        if physics is not None:
-            self.physics = physics
 
     @property
     def overlays(self) -> list:
@@ -206,7 +203,7 @@ class TickDriver(QObject):
 
     def add_extra_controller(self, controller) -> None:
         """挂载附加仿真控制器（如边缘探头世界）：``tick_sim`` 尾段、
-        三主控制器之后运行（姿态最终写入口）。幂等。"""
+        行为控制器之后运行（姿态最终写入口）。幂等。"""
         if controller not in self._extras:
             self._extras.append(controller)
 
@@ -596,7 +593,7 @@ class TickDriver(QObject):
         self._sync_tier()  # M-1：tick 末评估降档（升档在事件/回调侧同步完成）
 
     def tick_sim(self, dt: float) -> None:
-        """仿真段：行为 → 碰撞 → 抛掷物理（tick 顺序协议固定，T2）。
+        """仿真段：行为 → 附加控制器（tick 顺序协议固定，T2）。
 
         带宿主（多屏装配）时**按宿主分组**：同一 tick 内每块屏只跑自己那份
         控制器与自己的成员，不同屏的局部坐标绝不进同一个世界。宿主之外的
@@ -617,25 +614,23 @@ class TickDriver(QObject):
             for ctrl in self._extras:
                 ctrl.tick(self._all_sprites(), dt)
             return
-        if self.behavior is None and self.physics is None:
+        if self.behavior is None:
             for overlay in list(self._overlays):
                 overlay.before_sprites_advance(dt)
             return
         sprites = self._all_sprites()
         if self.behavior is not None:
             self.behavior.tick(sprites, dt)
-        if self.physics is not None:
-            self.physics.tick(sprites, dt)
         for ctrl in self._extras:
             ctrl.tick(sprites, dt)
 
     def set_post_advance(self, cb) -> None:
         """挂上"全部 overlay advance 之后"的一次性钩子（跨屏路由用；None 摘除）。
 
-        跨屏路由必须放在这里：拖动物理（弹簧档）的**实际位移发生在 sprite.advance**
-        里，事件时刻读到的位置还没动——按事件时刻路由会在身体真正过缝之前提前移交
-        （旧实现的大跳来源）。放在 advance 之后，每 tick 读到的就是这一拍各 sprite
-        的最终位置，且**每 tick 每 sprite 只判一次**。
+        跨屏路由必须放在这里：拖拽换算出的**实际位移发生在 sprite.advance 之前
+        的鼠标事件里**，但本拍后续行为积分/钳制仍会改位置——按事件时刻路由会在
+        身体真正过缝之前提前移交。放在 advance 之后，每 tick 读到的就是这一拍
+        各 sprite 的最终位置，且**每 tick 每 sprite 只判一次**。
         """
         self._post_advance = cb
 

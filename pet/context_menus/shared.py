@@ -847,14 +847,6 @@ def build_size_menu(menu: QMenu, pet, *, icons: bool = True) -> QMenu:
     return submenu
 
 
-def add_drag_physics(menu: QMenu, pet, *, icons: bool = True):
-    action = add_action(menu, "拖动物理", "physics" if icons else None)
-    action.setCheckable(True)
-    action.setChecked(pet.drag_physics)
-    action.toggled.connect(lambda enabled, pet=pet: pet.set_drag_physics(enabled))
-    return action
-
-
 def add_return_corner(menu: QMenu, pet, *, icons: bool = True):
     return add_action(menu, "回到右下角", "corner" if icons else None, pet.go_default_corner)
 

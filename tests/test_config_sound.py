@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""音效配置与迁移测试、真实 dt 与长帧物理积分测试。"""
+"""音效配置与迁移测试。"""
 import json
 from pathlib import Path
 
@@ -25,7 +25,6 @@ def test_legacy_click_sound_path_migration(tmp_path: Path):
         "path": custom_path,
     }
     assert cfg.get("click_sound_volume") == 0.70
-    assert cfg.get("throw_strength") == "standard"
 
 
 def test_legacy_click_sound_path_empty_migrates_to_builtin(tmp_path: Path):
@@ -70,7 +69,7 @@ def test_explicit_click_sound_pack_precedence(tmp_path: Path):
     }
 
 
-def test_invalid_sound_and_physics_config_normalization(tmp_path: Path):
+def test_invalid_sound_config_normalization(tmp_path: Path):
     """异常或脏配置的归一化处理。"""
     root = tmp_path / "appdata"
     cfg_dir = root / "dsh-pet-standalone"
@@ -80,7 +79,6 @@ def test_invalid_sound_and_physics_config_normalization(tmp_path: Path):
             "version": 4,
             "click_sound_volume": "invalid",
             "click_sound_pack": "bad_type",
-            "throw_strength": "super_crazy",
         }),
         encoding="utf-8",
     )
@@ -88,4 +86,3 @@ def test_invalid_sound_and_physics_config_normalization(tmp_path: Path):
     cfg = Config(root)
     assert cfg.get("click_sound_volume") == 0.70
     assert cfg.get("click_sound_pack") == {"kind": "builtin", "id": "default", "path": ""}
-    assert cfg.get("throw_strength") == "standard"

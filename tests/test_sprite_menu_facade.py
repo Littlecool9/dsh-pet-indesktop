@@ -3,7 +3,7 @@
 
 覆盖：菜单建造器产出全量菜单（旧 context_menus 建造器原样复用）、
 facade 各窗口能力项落点、play_once/play_move_once、no_move 移动桶并入
-动作池、playback_speed bind 应用、drag_physics 松手不抛掷、switch_character
+动作池、playback_speed bind 应用、松手原地落点、switch_character
 换库收口、「退出这只」的确认闸（主宠破坏性动作）。
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 import tests.test_overlay_window_capabilities as cap
-from pet.pet_sprite import INTERACTION_THROWN, PetSprite
+from pet.pet_sprite import INTERACTION_NORMAL, PetSprite
 from pet.sprite_menu_facade import SpriteMenuFacade, build_sprite_full_menu
 
 app = QApplication.instance() or QApplication([])
@@ -157,8 +157,6 @@ def test_facade_window_capabilities(tmp_path):
         facade.set_no_move(True)
         assert shell.behavior.no_move is True
         assert shell._config.get("no_move") is True
-        facade.set_drag_physics(False)
-        assert shell.sprite.drag_physics is False
         facade.set_on_top(False)
         assert not (shell.overlay.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
         facade.set_mouse_through(True)
@@ -224,21 +222,16 @@ def test_playback_speed_applied_on_bind(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_drag_physics_off_lands_in_place(tmp_path):
+def test_release_lands_in_place(tmp_path):
     shell, _ = _make_shell(tmp_path)
     try:
         sprite = shell.sprite
-        sprite.drag_physics = False
+        release_at = QPointF(800, 500)
         sprite._dragging = True
-        sprite._drag_offset = None
-        now = [1000.0]
-        sprite._clock = lambda: now[0]
-        # 高速甩出轨迹（0.1s 位移 500px——drag_physics 开时必抛）
-        sprite._drag_trail = [(1000.0 + i * 0.02, float(i * 100), 0.0)
-                              for i in range(6)]
-        now[0] = 1000.12
-        sprite.on_release(QPointF(500, 0))
-        assert sprite.interaction_state != INTERACTION_THROWN
+        sprite._drag_offset = QPointF(0, 0)
+        sprite.on_release(release_at)
+        assert sprite.pos == release_at
+        assert sprite.interaction_state == INTERACTION_NORMAL
         assert sprite.velocity.isNull()
     finally:
         shell._delete_runtime_marker()
@@ -843,7 +836,7 @@ def test_failed_child_write_does_not_apply_or_reflow(tmp_path):
         child.bind_clip("idle1")
         clip = child._clip
         speeds = list(clip.speeds)
-        original = (child.scale, child.playback_speed, child.drag_physics)
+        original = (child.scale, child.playback_speed)
         reflows, feedback = [], []
         shell.on_sprite_scale_changed = lambda sprite: reflows.append(sprite)
         shell.show_bubble = lambda text, **kw: feedback.append(text) or True
@@ -851,10 +844,9 @@ def test_failed_child_write_does_not_apply_or_reflow(tmp_path):
         facade = SpriteMenuFacade(shell, child)
         assert facade.change_scale(1.7) is False
         assert facade.set_playback_speed(2.0) is False
-        assert facade.set_drag_physics(not original[2]) is False
-        assert (child.scale, child.playback_speed, child.drag_physics) == original
+        assert (child.scale, child.playback_speed) == original
         assert clip.speeds == speeds and reflows == []
-        assert len(feedback) == 3 and all("失败" in text for text in feedback)
+        assert len(feedback) == 2 and all("失败" in text for text in feedback)
     finally:
         toggle._teardown(shell)
 
@@ -1003,9 +995,9 @@ def test_service_presenter_respects_the_per_sprite_bubble_gate(tmp_path, monkeyp
 
     ``_SpriteServicePresenter`` 的 ``show_bubble`` override 只查了
     ``presentation_available``，随后对子宠直调 ``_show_bubble_text_for``——把父类
-    ``_SpritePetHost.show_bubble`` 开头那句 ``_bubble_blocked()`` 省掉了：飞行中的
-    那一只、以及设置页打开期间的抑制位，都会照样冒泡（2026-10-10 终审 F04，方法级实证
-    blocked=True / shown=True）。门禁是 **per-sprite** 的：飞的不是这一只时，别的宠照常。
+    ``_SpritePetHost.show_bubble`` 开头那句 ``_bubble_blocked()`` 省掉了：设置页
+    打开期间的抑制位会照样冒泡（2026-10-10 终审 F04，方法级实证 blocked=True /
+    shown=True）。
     """
     from tests.helpers import overlay_shell as toggle
 
@@ -1020,18 +1012,12 @@ def test_service_presenter_respects_the_per_sprite_bubble_gate(tmp_path, monkeyp
             shell, "_show_bubble_text_for",
             lambda sprite, text, duration_ms=0, **kw: (calls.append(sprite), True)[1])
 
-        # 反例 1：这一只正在飞行（真实飞行边沿回调）
-        shell._on_sprite_flight_changed(first, True)
-        assert SpriteMenuFacade(shell, first)._service_host().show_bubble(
-            "余额：12.34", 3000) is False, "飞行期不许冒泡"
-        assert calls == [], "被门禁挡住时不许再走呈现面"
-
-        # 正例：门禁是 per-sprite 的，飞的不是这一只 → 照常呈现
+        # 正例：未抑制时照常呈现
         assert SpriteMenuFacade(shell, second)._service_host().show_bubble(
             "余额：12.34", 3000) is True
-        assert calls == [second], "一只在飞不该把整个壳的结果都按住"
+        assert calls == [second]
 
-        # 反例 2：设置页抑制期（含主宠那一侧）
+        # 反例：设置页抑制期（含主宠那一侧）
         calls.clear()
         shell.set_bubble_suppressed(True)
         try:

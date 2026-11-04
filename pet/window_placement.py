@@ -4,7 +4,7 @@ The functions in this module keep the runtime-marker policy independent from the
 Qt window implementation.  PetWindow retains thin compatibility methods that
 pass itself as the host, so existing callers and test patches continue to work.
 
-多显示器活动区域也在这里：``desktop_area()`` 取一次拖拽/抛掷的桌面快照
+多显示器活动区域也在这里：``desktop_area()`` 取一次拖拽的桌面快照
 （``DesktopArea``），``band_bounds()`` 按宠物当前所在的屏幕带收窄它，
 ``move_window_towards`` / ``throw_bounds`` 在有快照时用它、没有快照时逐位退回
 本屏语义（单屏用户与漫游/落位/边缘探头不受影响）。见

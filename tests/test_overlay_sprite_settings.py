@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """config → sprite/behavior 同步点回归（DS 全量审查 M6/M7/M9/M10）。
 
-M6：drag_physics/throw_strength/no_move/playback_speed 此前启动不读 config、
-refresh 不覆盖、sprite 默认值与 config 默认相反（drag_physics=True vs False、
-throw_speed_cap=6000 vs standard=4800）——开箱行为不一致 + 重启即丢。
+M6：no_move/playback_speed 此前启动不读 config、refresh 不覆盖——开箱行为
+不一致 + 重启即丢。
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
 from pet.overlay_shell import OverlayShell
 from pet.pet_sprite import PetSprite
-from pet.physics import THROW_STRENGTH_CAPS
 
 app = QApplication.instance() or QApplication([])
 
@@ -33,17 +31,13 @@ def _make_shell(tmp_path, values=None):
 
 
 def test_config_syncs_to_sprite_at_build(tmp_path):
-    """启动即按 config 应用：默认值不再相反，四键全部生效。"""
+    """启动即按 config 应用：两键全部生效。"""
     shell, _config = _make_shell(tmp_path, {
-        "drag_physics": False,
-        "throw_strength": "gentle",
         "no_move": True,
         "playback_speed": 1.5,
     })
     try:
         sprite = shell.sprite
-        assert sprite.drag_physics is False            # 旧默认 True，与 config 相反（M6）
-        assert sprite.throw_speed_cap == THROW_STRENGTH_CAPS["gentle"]
         assert sprite.playback_speed == 1.5
         assert shell.behavior.no_move is True
         shell._delete_runtime_marker()
@@ -53,14 +47,10 @@ def test_config_syncs_to_sprite_at_build(tmp_path):
 
 def test_refresh_settings_resyncs_sprite(tmp_path):
     """设置页改完经 refresh_settings 即生效（不重启）。"""
-    shell, config = _make_shell(tmp_path, {"drag_physics": False})
+    shell, config = _make_shell(tmp_path, {})
     try:
-        config.set("drag_physics", True)
-        config.set("throw_strength", "crazy")
         config.set("playback_speed", 0.5)
         shell.refresh_settings()
-        assert shell.sprite.drag_physics is True
-        assert shell.sprite.throw_speed_cap == THROW_STRENGTH_CAPS["crazy"]
         assert shell.sprite.playback_speed == 0.5
         shell._delete_runtime_marker()
     finally:
@@ -69,13 +59,11 @@ def test_refresh_settings_resyncs_sprite(tmp_path):
 
 def test_spawned_sprite_gets_config_sync(tmp_path):
     """spawn 的子肥鱼同样按 config 应用（不是只吃构造默认）。"""
-    shell, _config = _make_shell(tmp_path, {"drag_physics": False,
-                                            "throw_strength": "strong"})
+    shell, _config = _make_shell(tmp_path, {"playback_speed": 0.75})
     try:
         shell._spawn_slot(7)
         spawned = shell._spawned[-1]
-        assert spawned.drag_physics is False
-        assert spawned.throw_speed_cap == THROW_STRENGTH_CAPS["strong"]
+        assert spawned.playback_speed == 0.75
         lib = shell._spawned_libs.pop(spawned)
         shutdown = getattr(lib, "shutdown", None)
         if callable(shutdown):

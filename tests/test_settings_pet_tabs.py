@@ -31,7 +31,7 @@ EXPECTED_TABS = (("display", "显示"), ("motion", "动作"))
 #: 标签 1 的主视线组序。
 TAB1_PRIMARY = ("显示",)
 #: 标签 2 的组序。
-TAB2_SECTIONS = ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼")
+TAB2_SECTIONS = ("动画与移动", "拖动", "边缘探头", "生小肥鱼")
 
 TAB1_ROWS = (
     "scale", "bubble_text_scale", "pet_opacity",
@@ -39,7 +39,6 @@ TAB1_ROWS = (
 TAB1_ADVANCED_ROWS = ()
 TAB2_ROWS = (
     "playback_speed", "animation_gap", "no_move",
-    "drag_physics", "drop_gravity", "throw_strength",
     "lock_position", "shift_drag", "edge_probe",
     "spawn_inherit_size", "spawn_scale", "clear_spawned_pets",
 )
@@ -252,13 +251,13 @@ def test_pet_settings_save_round_trip_is_unchanged(dialog, tmp_path):
     """保存 round trip 不变：分页只改呈现，配置键/默认值/保存链一字未动。"""
     from pet.config import Config
 
-    _row(dialog, "drag_physics").control.setChecked(True)
+    _row(dialog, "lock_position").control.setChecked(True)
 
     dialog._save()
     _qapp().processEvents()
 
-    # 每宠键（拖拽）真值在 slot0 档案。
+    # 每宠键（锁定位置）真值在 slot0 档案。
     from pet.settings_slot_config import route_settings_config
 
     saved = route_settings_config(Config(base=tmp_path, instance_id="slot-0"))
-    assert saved.get("drag_physics") is True
+    assert saved.get("lock_position") is True
