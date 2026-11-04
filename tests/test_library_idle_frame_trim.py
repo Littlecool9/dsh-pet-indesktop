@@ -90,7 +90,7 @@ def _make_lib(tmp_path, monkeypatch):
 
 
 def _clips(lib):
-    return list(lib.movies().values())
+    return list(lib._movies.values())
 
 
 # --------------------------------------------------------------- 回收生效

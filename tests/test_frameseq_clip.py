@@ -257,7 +257,7 @@ def test_library_prefers_frameseq_clip(tmp_path):
         assert isinstance(clip, FrameSeqClip)
         assert clip.frameCount() == 4
     finally:
-        for m in lib.movies().values():
+        for m in lib._movies.values():
             close = getattr(m, "close", None)
             if callable(close):
                 close()
@@ -282,7 +282,7 @@ def test_library_ignores_unstamped_legacy_frames_dir(tmp_path):
         assert isinstance(lib.movie("x"), WebMClip)   # 回退，不冻结
         assert legacy.is_dir()                        # 旧产物不删也不补戳
     finally:
-        for m in lib.movies().values():
+        for m in lib._movies.values():
             cleanup = getattr(m, "cleanup", None)
             if callable(cleanup):
                 cleanup()
