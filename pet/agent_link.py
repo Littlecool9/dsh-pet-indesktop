@@ -1142,6 +1142,15 @@ _BRIDGE_INSTANCE_FIELD = "inst"
 #: 写者过滤；缺失（直调/非摄入路径）时下游按"不知道归属"保守处理。
 _BRIDGE_OWNER_KEY = "_scope"
 
+#: SurfCore 的 QQ 聊天会话 preset 前缀（``qq-chat`` / ``qq-chat-v2``）。这些会话
+#: 不是用户真实在用的 Agent：DSH 桥与桌宠两侧都不该让它们驱动忙/闲或提醒。
+_QQ_CHAT_PRESET_PREFIX = "qq-chat"
+
+
+def is_qq_chat_preset(value: Any) -> bool:
+    """桥接 preset 名是否属于 SurfCore QQ 聊天（前缀 ``qq-chat``）。"""
+    return str(value or "").strip().startswith(_QQ_CHAT_PRESET_PREFIX)
+
 
 def record_owner(record: dict, cursor: tuple | None = None) -> str | None:
     """这条桥接记录属于哪个写者（多 DSH 实例分区）；给不出归属时返回 None。
@@ -2024,6 +2033,15 @@ class BaseAgentMonitor(QObject):
         否则第一个写者一回待机就把用户还在等的那个气泡撤掉）。
         """
 
+    def _record_ignored(self, data: dict, cursor: tuple | None) -> bool:
+        """钩子：该记录是否应在任何消费通道之前整条丢弃（默认不丢）。
+
+        ``DshMonitor`` 用它实现 SurfCore QQ 会话过滤：被忽略会话的 turn/tool/
+        error/done 记录必须挡在状态收敛、气泡与音效之前，而不是在某个消费点
+        各自过滤（否则 raw_record / activity / 语义层各漏一次）。
+        """
+        return False
+
     def _poll(self, gen: int | None = None) -> None:
         emit_gen = self._emit_gen if gen is None else gen
         for line, cursor in self._tailer.read_new_lines_with_cursors():
@@ -2044,6 +2062,11 @@ class BaseAgentMonitor(QObject):
                 # 且在去重判定之前——重复投递也要能报出"这条是谁写的"（见
                 # ``_on_duplicate_record``）。
                 owner = self._stamp_record_owner(data, cursor)
+                # QQ 会话过滤：整条挡在任何消费通道（raw_record / 语义层 / 状态机 /
+                # 交互 / 音效）之前；session/meta 本身仍放行（管理器只缓存元数据，
+                # 且这正是忽略判定的来源）。
+                if self._record_ignored(data, cursor):
+                    continue
                 # 去重闸在展平之后、任何分派之前：身份字段可能来自嵌套 data
                 # （旧版/自定义桥），展平后与消费端看到的是同一份记录。
                 if self._is_duplicate_delivery(data, cursor):
@@ -2204,6 +2227,9 @@ class DshMonitor(BaseAgentMonitor):
     _DEAD_WRITER_PROBE_EVERY_N_POLLS = 40
     #: 单轮最多探活几个写者（与陈旧文件清理同口径：不砸盘、不每拍全量体检）。
     _DEAD_WRITER_PROBE_LIMIT = 8
+    #: 被忽略的 QQ 会话 ID 表容量（FIFO）。正常一局只会有一两个 QQ 会话，512 足够
+    #: 覆盖长期运行；淘汰只影响"这个会话以后又被写回来"的极端情形。
+    _IGNORED_SESSION_MAX = 512
 
     def __init__(self, agent_key: str, config_dir: Path, parent=None) -> None:
         super().__init__(agent_key, config_dir, parent)
@@ -2227,6 +2253,10 @@ class DshMonitor(BaseAgentMonitor):
         self._turn_tracker = TurnCompletionTracker()
         # 写者 → 最近一次写盘文件（确认写者死亡时反查 pid；有界 FIFO）
         self._owner_files: OrderedDict[str, str] = OrderedDict()
+        # 被识别为 SurfCore QQ 聊天（preset qq-chat*）的会话：该会话后续的
+        # turn/tool/error/done 一律不进状态收敛/气泡/音效。有界（会话 ID 是外部
+        # 输入，长跑进程不能只增不减）。
+        self._ignored_sessions: OrderedDict[str, None] = OrderedDict()
         # None = 未探测过；False 时收敛器不消费事件（离线态优先）
         self._online: bool | None = None
         self._probe_tick = 0
@@ -2242,6 +2272,7 @@ class DshMonitor(BaseAgentMonitor):
         # 新代次 = 新的写者表；收尾会话表随代次清空（全局计数不回收，见其文档）。
         self._turn_tracker.reset()
         self._owner_files.clear()
+        self._ignored_sessions.clear()
         self._online = None
         self._probe_tick = 0
         self._dead_probe_tick = 0
@@ -2398,6 +2429,57 @@ class DshMonitor(BaseAgentMonitor):
             # 镜像表没了，上一代次的轮转位置也就没有意义（游标只对当前候选集有效）
             self._dead_probe_cursor = 0
         self._emit_converged(self._converger.set_online(online))
+
+    # ------------------------------------------------------------ QQ 会话过滤
+    def _record_ignored(self, data: dict, cursor: tuple | None = None) -> bool:
+        """SurfCore QQ 聊天会话的记录是否应整条丢弃（在摄入分派之前）。
+
+        判定源是 **session/meta 的 agentPreset**（桥接已按 DSH 的
+        ``header.agentPreset ?? summary.agentPreset`` 写入）：``qq-chat`` /
+        ``qq-chat-v2`` 等前缀一律不是用户真实 Agent。旧桥或事件记录自带 preset
+        时也认，避免升级窗口内漏过滤。
+
+        首次识别一个会话时调用 :meth:`_ignore_session`：把它当成"回合已结束"收口
+        （清忙/等待、撤该会话的常驻交互），**绝不报成功**。meta 本身放行——
+        它只进管理器元数据缓存，不驱动状态/气泡。
+        """
+        session_id = str(data.get("sessionId") or data.get("session_id") or "")
+        if not session_id:
+            return False
+        is_meta = str(data.get("type") or "") == "session/meta"
+        if is_qq_chat_preset(data.get("agentPreset") or data.get("agent_preset")):
+            if session_id not in self._ignored_sessions:
+                self._ignore_session(session_id, data)
+            return not is_meta
+        if session_id in self._ignored_sessions:
+            return not is_meta
+        return False
+
+    def _ignore_session(self, session_id: str, data: dict) -> None:
+        """把一个已识别为 QQ 聊天的会话从驱动状态中撤出。
+
+        与"会话回合结束"同一口径：合成一条 ``turn/end`` + ``reasonKind=aborted``
+        只走本写者分片（不报成功、不排定完成确认），并让生命周期消费方按会话撤掉
+        常驻审批/问题气泡。绝不整片清空写者状态——同一 DSH 里的真实 Agent 不受影响。
+        """
+        self._ignored_sessions[session_id] = None
+        while len(self._ignored_sessions) > self._IGNORED_SESSION_MAX:
+            self._ignored_sessions.popitem(last=False)
+        owner = str(data.get(_BRIDGE_OWNER_KEY) or "")
+        ended = {
+            "event": "turn/end",
+            "reasonKind": "aborted",
+            "sessionId": session_id,
+            "agentPreset": str(data.get("agentPreset") or ""),
+        }
+        if owner:
+            ended[_BRIDGE_OWNER_KEY] = owner
+        # raw_record 的生命周期消费者按 sessionId 撤该会话的常驻交互。
+        self._emit(self.raw_record, (self.agent_key, ended))
+        # 收敛器：等同真实 ended 回合（只动本写者分片，绝不产出 success）。
+        self._emit_converged(self._converger.handle_record(ended, owner=owner))
+        log.info("忽略 SurfCore QQ 会话: %s (preset=%s)",
+                 session_id[:12], str(data.get("agentPreset") or "") or "?")
 
     def _on_parsed_record(self, data: dict, cursor: tuple | None = None) -> None:
         if self._online is False:
@@ -5822,6 +5904,8 @@ class AgentLinkManager(QObject):
             "sessionName": str(record.get("sessionName") or ""),
             "projectName": str(record.get("projectName") or ""),
             "agentName": str(record.get("agentName") or ""),
+            # preset 只用于诊断/展示元数据；QQ 会话的过滤在 DshMonitor 摄入边界完成。
+            "agentPreset": str(record.get("agentPreset") or ""),
         })
         log.debug("session_meta cached: %s → %s", session_id[:12], self._session_meta_cache[session_id])
 

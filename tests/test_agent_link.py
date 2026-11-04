@@ -4858,6 +4858,133 @@ class TestDshTurnEndSuccessCompletion:
 
 
 # ============================================================================
+class TestQqChatSessionsIgnored:
+    """SurfCore QQ 聊天会话（agentPreset ``qq-chat*``）不得驱动桌宠（D7）。
+
+    真链路：真 ``DshMonitor._poll`` + 真收敛器 + 真 ``AgentLinkManager``；窗口/
+    音效是桩。桥接新版本会直接不写 QQ 会话事件，但 Python 侧仍要自己认
+    session/meta 的 agentPreset——覆盖旧桥、升级窗口，以及「先当普通会话跑起来、
+    随后 summary 才把它标成 qq-chat」的迟到识别。
+    """
+
+    _SOUND_PATHS = TestDshTurnEndSuccessCompletion._SOUND_PATHS
+    _make_mgr = TestDshTurnEndSuccessCompletion._make_mgr
+
+    @staticmethod
+    def _write(bridge_dir, *records):
+        with (bridge_dir / "dsh.jsonl").open("a", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def _wait_until(app, predicate, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            app.processEvents()
+            if predicate():
+                return True
+            time.sleep(0.01)
+        app.processEvents()
+        return bool(predicate())
+
+    def _mgr(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(harness_launcher, "is_running", lambda port: True)
+        monkeypatch.setattr(harness_launcher, "desktop_process_running", lambda: True)
+        return self._make_mgr(tmp_path, monkeypatch)
+
+    def test_qq_chat_v2_records_do_not_change_state_or_play_feedback(self, tmp_path, monkeypatch):
+        mgr, bubbles, sounds, _clock, app = self._mgr(tmp_path, monkeypatch)
+        mon = mgr.monitors["dsh"]
+        states, tools = [], []
+        mon.state_event.connect(lambda ev: states.append(ev.state))
+        mon.activity_event.connect(lambda ev: tools.append(ev.tool))
+        try:
+            mon._probe_online()
+            self._write(
+                mon.events_dir,
+                {"type": "session/meta", "sessionId": "s-qq", "agentPreset": "qq-chat-v2",
+                 "sessionName": "QQ 群聊"},
+                {"event": "turn/start", "sessionId": "s-qq"},
+                {"event": "tool/call", "sessionId": "s-qq", "tool": "bash", "callId": "q1"},
+                {"event": "turn/end", "sessionId": "s-qq", "reasonKind": "completed"},
+            )
+            mon._poll()
+            app.processEvents()
+
+            assert mon._converger.current_state is DshState.IDLE, \
+                f"QQ 会话不得驱动收敛状态: {mon._converger.current_state}"
+            assert mgr._last_raw.get("dsh") not in mgr._BUSY_STATES, mgr._last_raw
+            assert tools == [], f"QQ 会话的 tool/call 不得进入活动通道: {tools}"
+            assert "working" not in states, states
+            assert "dsh" not in mgr._done_pending
+            assert not self._wait_until(app, lambda: bool(bubbles or sounds), timeout=0.4), \
+                f"QQ 会话不得弹泡/播音效: bubbles={bubbles} sounds={sounds}"
+        finally:
+            mgr.shutdown()
+
+    def test_late_qq_tag_clears_busy_state_like_an_ended_session(self, tmp_path, monkeypatch):
+        mgr, bubbles, sounds, _clock, app = self._mgr(tmp_path, monkeypatch)
+        mon = mgr.monitors["dsh"]
+        try:
+            mon._probe_online()
+            # 先无 preset 到达：按今天的普通会话行为进入忙态。
+            self._write(
+                mon.events_dir,
+                {"event": "turn/start", "sessionId": "s-late"},
+                {"event": "tool/call", "sessionId": "s-late", "tool": "bash", "callId": "c1"},
+            )
+            mon._poll()
+            app.processEvents()
+            assert mgr._last_raw.get("dsh") in mgr._BUSY_STATES, mgr._last_raw
+            bubbles.clear()
+            sounds.clear()
+
+            # 迟到的 session/meta 才揭示 qq-chat：必须按 ended 会话口径收口。
+            self._write(mon.events_dir,
+                        {"type": "session/meta", "sessionId": "s-late", "agentPreset": "qq-chat"})
+            mon._poll()
+            app.processEvents()
+
+            assert mgr._last_raw.get("dsh") == "idle", \
+                f"识别为 QQ 后必须回待机: {mgr._last_raw}"
+            assert "dsh" not in mgr._done_pending, "QQ 会话不是完成：不得排定完成确认"
+            assert not self._wait_until(
+                app, lambda: any("已完成本轮任务" in b for b in bubbles), timeout=1.2), bubbles
+            assert "done.wav" not in sounds, sounds
+
+            # 之后该会话的记录仍然被丢弃（不再把状态推回忙）。
+            self._write(mon.events_dir,
+                        {"event": "tool/call", "sessionId": "s-late", "tool": "bash", "callId": "c2"},
+                        {"event": "turn/start", "sessionId": "s-late"})
+            mon._poll()
+            app.processEvents()
+            assert mgr._last_raw.get("dsh") == "idle", f"QQ 记录漏进了呈现管线: {mgr._last_raw}"
+        finally:
+            mgr.shutdown()
+
+    def test_normal_agent_session_still_completes(self, tmp_path, monkeypatch):
+        mgr, bubbles, sounds, _clock, app = self._mgr(tmp_path, monkeypatch)
+        mon = mgr.monitors["dsh"]
+        try:
+            mon._probe_online()
+            self._write(
+                mon.events_dir,
+                {"type": "session/meta", "sessionId": "s-real", "agentPreset": "standard"},
+                {"event": "turn/start", "sessionId": "s-real"},
+                {"event": "tool/call", "sessionId": "s-real", "tool": "bash", "callId": "r1"},
+                {"event": "turn/end", "sessionId": "s-real", "reasonKind": "completed"},
+            )
+            mon._poll()
+            app.processEvents()
+
+            assert mgr._last_raw.get("dsh") == "success", mgr._last_raw
+            assert self._wait_until(app, lambda: "done.wav" in sounds), sounds
+            assert any("已完成本轮任务" in b for b in bubbles), bubbles
+        finally:
+            mgr.shutdown()
+
+
+# ============================================================================
 class TestUnifiedEventEnvelopeSchema:
     """_poll 统一事件路径必须按**信封**的 schema 解析，而不是展平后的嵌套值。
 

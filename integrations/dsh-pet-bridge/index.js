@@ -31,7 +31,11 @@ const inject = [];
 //   （子代理/多会话），全局单值去重会让先完成的 agent 把还在干活的顶成 idle。
 const agentStates = new Map(); // agent 对象 → "working" | "idle"
 const liveAgents = new Map(); // agent/session id → agent object
-const sessionMetaCache = new Map(); // sessionId → { sessionName, projectName, agentName }
+const sessionMetaCache = new Map(); // sessionId → { sessionName, projectName, agentName, agentPreset }
+// SurfCore 的 QQ 聊天会话（DSH agentPreset 以 qq-chat 开头）不是真实 Agent：
+// 它们不参与忙/闲聚合，也不逐条转发会话事件。preset 可能在创建时的 session/agent
+// 上就有，也可能要等 session.list 的 summary 才拿得到——两条路径都进这个集合。
+const ignoredSessions = new Set();
 let metadataRefreshPromise = null;
 let metadataRefreshTimer = null;
 let lastState = null;
@@ -264,6 +268,64 @@ function sessionIdOfAgent(agent, session) {
   return String(agent?.session?.id || agent?.id || session?.id || "");
 }
 
+// DSH 把会话挂的 agent preset 放在不同层的字段里（不同版本/不同 RPC 投影）。
+// 顺序即权威顺序：session.list 的 summary 最新，其次运行时 session（header 优先），
+// 最后才看 agent 自身的镜像字段。只取名字，不取 preset 内容。
+function presetOf(agent, session, summary = null) {
+  const values = [
+    summary?.agentPreset,
+    session?.header?.agentPreset,
+    session?.agentPreset,
+    agent?.agentPreset,
+    agent?.preset,
+    agent?.config?.preset,
+  ];
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function isQqChatPreset(preset) {
+  return String(preset ?? "").startsWith("qq-chat");
+}
+
+function agentSessionIds(agent) {
+  const ids = new Set();
+  for (const value of [agent?.session?.id, agent?.id]) {
+    const id = String(value ?? "");
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function isIgnoredAgent(agent) {
+  for (const id of agentSessionIds(agent)) {
+    if (ignoredSessions.has(id)) return true;
+  }
+  return false;
+}
+
+// 会话一旦被判定为 QQ chat：记入忽略集合、从忙/闲聚合中移除并立即重算。
+function markIgnoredSession(sessionId, agent = null) {
+  const sid = String(sessionId || "");
+  if (!sid) return false;
+  const first = !ignoredSessions.has(sid);
+  ignoredSessions.add(sid);
+  const candidates = new Set();
+  if (agent) candidates.add(agent);
+  for (const [id, item] of liveAgents) {
+    if (String(id) === sid || sessionIdOfAgent(item, null) === sid) candidates.add(item);
+  }
+  let removed = false;
+  for (const item of candidates) {
+    if (agentStates.delete(item)) removed = true;
+  }
+  if (first || removed) aggregateWrite();
+  return first;
+}
+
 function projectionTitle(session) {
   const values = session?.projections?.values;
   const title = values && typeof values === "object" ? values.title : "";
@@ -286,12 +348,13 @@ function extractSessionMeta(agent, session, summary = null, workspace = null) {
     basenameOf(session?.cwd) || "",
   ).trim();
   const agentName = String(agent?.name || agent?.displayName || "DSH").trim() || "DSH";
+  const agentPreset = presetOf(agent, session, summary);
 
   const parts = ["DSH"];
   if (projectName) parts.push(projectName);
   if (sessionName) parts.push(sessionName);
   const displayLabel = parts.join(" · ");
-  return { sessionId, sessionName, projectName, agentName, displayLabel };
+  return { sessionId, sessionName, projectName, agentName, displayLabel, agentPreset };
 }
 
 // apiProxy 缺失（当前 dsh 发布版无此服务）时的真实标题兜底：
@@ -306,8 +369,14 @@ function readProjcacheSummary(sessionId) {
       const data = JSON.parse(fs.readFileSync(file, "utf8"));
       const title = data?.record?.rows?.title?.val;
       const cwd = data?.record?.identity?.cwd;
-      if (!title && !cwd) continue;
-      return { sessionId: name, cwd: cwd || "", projections: { values: { title: title || "" } } };
+      const agentPreset = data?.record?.identity?.agentPreset || data?.record?.rows?.agentPreset?.val || "";
+      if (!title && !cwd && !agentPreset) continue;
+      return {
+        sessionId: name,
+        cwd: cwd || "",
+        agentPreset: agentPreset || "",
+        projections: { values: { title: title || "" } },
+      };
     } catch { /* 缓存不存在或损坏：跳过 */ }
   }
   return null;
@@ -371,18 +440,27 @@ function writeSessionMeta(agent, session, summary = null, workspace = null) {
   if (!meta) return;
 
   const sid = meta.sessionId;
-  // 去重：仅当 sessionName 或 projectName 变化时才重发
+  // 先按 preset 做聚合裁决：QQ chat 会话即使之前被当成普通 agent 计入了忙态，
+  // 这里也要立刻移出聚合（summary 路径通常比后续事件更晚到）。
+  if (isQqChatPreset(meta.agentPreset)) markIgnoredSession(sid, agent);
+  // 去重：sessionName / projectName / agentPreset 任一变化都要重发——preset 是
+  // 下游识别 QQ 会话的唯一线索，不能因为标题没变就吞掉。
   const cached = sessionMetaCache.get(sid);
-  if (cached && cached.displayLabel === meta.displayLabel) return;
+  if (cached
+      && cached.displayLabel === meta.displayLabel
+      && cached.agentPreset === meta.agentPreset) return;
 
   sessionMetaCache.set(sid, meta);
-  writeRecord({
+  const record = {
     type: "session/meta",
     sessionId: sid,
     projectName: meta.projectName || "",
     sessionName: meta.sessionName || "",
     agentName: meta.agentName || "DSH",
-  });
+  };
+  // 只写预设名（无内容）；缺失时保持旧记录形状，不写空字段。
+  if (meta.agentPreset) record.agentPreset = meta.agentPreset;
+  writeRecord(record);
 
 }
 
@@ -752,11 +830,12 @@ export function apply(ctx) {
     // 实测 dsh 创建 agent 后 4ms 内必发 running，此时若先写一条幻影 idle，
     // 会占住桌宠端 2 秒换帧节流位，把紧跟的真实 working 整个吞掉。
     agent.ctx.effect(() => {
-      agentStates.set(agent, "idle");
+      if (!isIgnoredAgent(agent)) agentStates.set(agent, "idle");
       const stop = agent.ctx.on("agent/status", ({ status }) => {
         // running/idle 是连接生命周期的成功/切换信号，不能让上一轮
         // request-error 重试计数泄漏到下一轮。
         resetRetryConnection(String(agent.session?.id || agent.id || ""));
+        if (isIgnoredAgent(agent)) return;
         agentStates.set(agent, status === "running" ? "working" : "idle");
         aggregateWrite();
       });
@@ -764,6 +843,7 @@ export function apply(ctx) {
       // （agent-loop 用 dispatch.waterfall 发出），不走 session/event——
       // 必须挂在 agent.ctx 上才能收到。供桌宠侧识别网络/鉴权/限流类故障。
       const stopErr = agent.ctx.on("agent/request-error", ({ failure }) => {
+        if (isIgnoredAgent(agent)) return;
         const errCode = String((failure && failure.code) || "");
         const errMsg = String((failure && failure.message) || "");
         writeRecord({
@@ -803,14 +883,17 @@ export function apply(ctx) {
   ctx.on("cordis/request-run", (request) => {
     if (!request || request.requiresApproval !== true) return;
     const requestId = String(request.requestId || "");
-    cordisRequestSessions.set(requestId, String(request.agentId || ""));
-    writeRecord({ event: "cordis/request-run", source: "dsh", agentId: String(request.agentId || ""), sessionId: String(request.agentId || ""), kind: "cordis", payload: request, requestId });
+    const agentId = String(request.agentId || "");
+    if (ignoredSessions.has(agentId)) return;
+    cordisRequestSessions.set(requestId, agentId);
+    writeRecord({ event: "cordis/request-run", source: "dsh", agentId, sessionId: agentId, kind: "cordis", payload: request, requestId });
   });
   ctx.on("cordis/request-run-resolved", (resolved) => {
     if (!resolved) return;
     const requestId = String(resolved.requestId || "");
     const sessionId = cordisRequestSessions.get(requestId) || "";
     cordisRequestSessions.delete(requestId);
+    if (ignoredSessions.has(sessionId)) return;
     writeRecord({ event: "cordis/request-run-resolved", source: "dsh", kind: "cordis", requestId, agentId: sessionId, sessionId, outcome: String(resolved.outcome || "") });
   });
 
@@ -823,6 +906,17 @@ export function apply(ctx) {
       if (!event) return;
       const type = event.type;
       const sessionId = sessionIdOf(_session, event);
+      // QQ chat 会话（SurfCore）不是真实 Agent：事件阶段就能从 session/agent 上
+      // 读到 preset 时立即登记并只补一条 session/meta（让桌宠侧记住这个会话），
+      // 之后该会话的任何事件都不再落盘。已知被忽略的会话同样直接切断。
+      const agentForSession = liveAgents.get(sessionId) || null;
+      if (isQqChatPreset(presetOf(agentForSession, _session))) {
+        if (sessionId && sessionId !== "session:unknown" && !sessionId.startsWith("turn:")) {
+          writeSessionMeta(agentForSession, _session);
+        }
+        return;
+      }
+      if (ignoredSessions.has(sessionId)) return;
       const agentName = agentLabelFor(sessionId);
       // 只有连续的 llm/retry 才属于同一轮连接异常；切换到任意其他
       // session/event（包括成功结果、工具调用和新的 turn）都开始新一轮统计。
@@ -1122,4 +1216,19 @@ export const __instanceTest = {
   sourceTurnOf,
   queued: () => writeQueue.slice(),
   resetQueue: () => { writeQueue.length = 0; },
+};
+// QQ chat 会话过滤（SurfCore preset qq-chat*）的纯函数/状态出口。
+export const __qqChatTest = {
+  presetOf,
+  isQqChatPreset,
+  ignoredSessions,
+  agentStates,
+  markIgnoredSession,
+  writeSessionMeta,
+  reset: () => {
+    ignoredSessions.clear();
+    agentStates.clear();
+    sessionMetaCache.clear();
+    lastState = null;
+  },
 };
