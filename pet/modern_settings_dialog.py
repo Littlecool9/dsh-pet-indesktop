@@ -663,7 +663,6 @@ class ModernSettingsDialog(QDialog):
                     SettingRow("drag_physics", "拖动物理", "启用拖拽惯性、重力和边缘反弹。", self.drag_physics_check),
                     SettingRow("drop_gravity", "静止放手下落", "松开鼠标时如果宠物几乎没移动，它不再停在半空，而是自然落下、落地静止；贴地松手不会弹起。与「拖动物理」无关：关掉拖动物理后甩出惯性依然不生效。", self.drop_gravity_check),
                     SettingRow("throw_strength", "甩出力度", "控制桌宠被甩出或弹射发射时的最大速度限制。", self.throw_strength_select),
-                    SettingRow("slingshot_enabled", "弹弓弹射", "拖拽桌宠时点击右键进入蓄力瞄准，松开左键弹射飞出（Esc或右键取消）。", self.slingshot_check),
                     SettingRow("lock_position", "锁定位置", "桌宠固定不动，无法拖动（点击互动仍有效）。", self.lock_position_check),
                     SettingRow("shift_drag", "SHIFT+左键拖动", "开启后必须按住 SHIFT 再左键才能拖动桌宠。", self.shift_drag_check),
                 ],
@@ -964,7 +963,6 @@ class ModernSettingsDialog(QDialog):
             self.pro_enabled_check.toggled.connect(self._update_proactive_controls)
             self.pro_idle_check.toggled.connect(self._update_proactive_idle_controls)
         self.spawn_inherit_size_check.toggled.connect(self._update_spawn_size_controls)
-        self.golden_spin_click_check.toggled.connect(self._update_golden_spin_controls)
         self._update_self_talk_controls(self.self_talk_check.isChecked())
         self._update_translucency_controls(self.menu_translucent_check.isChecked())
         self._update_island_controls(self.island_enabled_check.isChecked())
@@ -975,7 +973,6 @@ class ModernSettingsDialog(QDialog):
         self._update_spawn_size_controls(self.spawn_inherit_size_check.isChecked())
         # 初始同步须在全部 SettingRow 构建完成后执行，否则 findChild 找不到行
         self._update_click_sound_controls(self.click_sound_check.isChecked())
-        self._update_golden_spin_controls(self.golden_spin_click_check.isChecked())
         self._update_agent_sound_controls(self.agent_sound_check.isChecked())
         self._update_agent_sound_subcontrols()
 
@@ -1446,15 +1443,6 @@ class ModernSettingsDialog(QDialog):
                 if isinstance(card, SettingsCard):
                     card.refresh_separators()
 
-    def _update_golden_spin_controls(self, enabled: bool) -> None:
-        """“点击触发黄金回旋”总开关控制“跳过动画”子开关可见性。"""
-        row = self.findChild(SettingRow, "settingRow_golden_spin_direct")
-        if row is not None:
-            row.setVisible(bool(enabled))
-            card = row.parentWidget()
-            if isinstance(card, SettingsCard):
-                card.refresh_separators()
-
     def _update_agent_sound_controls(self, enabled: bool) -> None:
         """Agent 音效总开关联动控制整组子项可见性/可用性。"""
         for row_key in ("agent_sound_start", "agent_sound_done", "agent_sound_error", "agent_sound_volume", "agent_sound_cooldown"):
@@ -1724,7 +1712,7 @@ class ModernSettingsDialog(QDialog):
             page_content(
                 [
                     ("动画与移动", claim("playback_speed", "animation_gap", "no_move")),
-                    ("拖拽与弹射", claim("drag_physics", "drop_gravity", "throw_strength", "slingshot_enabled", "lock_position", "shift_drag")),
+                    ("拖拽与弹射", claim("drag_physics", "drop_gravity", "throw_strength", "lock_position", "shift_drag")),
                     ("边缘探头", claim("edge_probe")),
                     ("生小肥鱼", claim("spawn_inherit_size", "spawn_scale", "clear_spawned_pets")),
                     ("多开碰撞", collision_primary),
@@ -2103,7 +2091,6 @@ class ModernSettingsDialog(QDialog):
         self.config.set("drag_physics", self.drag_physics_check.isChecked())
         self.config.set("drop_gravity", self.drop_gravity_check.isChecked())
         self.config.set("throw_strength", str(self.throw_strength_select.currentData() or "standard"))
-        self.config.set("slingshot_enabled", self.slingshot_check.isChecked())
         self.config.set("collision_enabled", self.collision_enabled_check.isChecked())
         self.config.set("collision_restitution", self.collision_restitution_spin.value())
         self.config.set("collision_friction", self.collision_friction_spin.value())
@@ -2162,8 +2149,6 @@ class ModernSettingsDialog(QDialog):
             self.config.set("click_show_balance", self.click_balance_check.isChecked())
         if getattr(self, "agent_cost_check", None) is not None:
             self.config.set("agent_cost_enabled", self.agent_cost_check.isChecked())
-        self.config.set("golden_spin_on_click", self.golden_spin_click_check.isChecked())
-        self.config.set("golden_spin_direct", self.golden_spin_direct_check.isChecked())
         self.config.set("edge_probe_enabled", self.edge_probe_check.isChecked())
         if self.balance_refresh_spin is not None:
             self.config.set("balance_refresh_minutes", int(self.balance_refresh_spin.value()))

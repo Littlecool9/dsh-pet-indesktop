@@ -56,7 +56,6 @@ def test_modern_settings_dialog_round_trip(qapp, tmp_path: Path):
     # 1. 初始状态断言
     dialog = ModernSettingsDialog(cfg, include_ai=False)
     try:
-        assert dialog.slingshot_check.isChecked() is True
         assert dialog.throw_strength_select.currentData() == "standard"
         assert dialog.click_sound_check.isChecked() is True
         assert dialog.click_sound_volume_spin.value() == 70
@@ -69,7 +68,6 @@ def test_modern_settings_dialog_round_trip(qapp, tmp_path: Path):
             "slot_manager.seed_slot_config_from_main，生产 0 调用点），设置页不得再暴露它")
 
         # 2. 模拟用户修改各个设置项
-        dialog.slingshot_check.setChecked(False)
         dialog.throw_strength_select.setCurrentData("crazy")
         dialog.click_sound_volume_spin.setValue(85)
         dialog.click_sound_picker.set_pack({"kind": "builtin", "id": "duck", "path": ""})
@@ -92,7 +90,6 @@ def test_modern_settings_dialog_round_trip(qapp, tmp_path: Path):
 
     # 4. 新建 Config 实例重载验证持久化 round-trip
     reloaded_cfg = route_settings_config(Config(cfg_root, instance_id="slot-0"))
-    assert reloaded_cfg.get("slingshot_enabled") is False
     assert reloaded_cfg.get("throw_strength") == "crazy"
     assert reloaded_cfg.get("click_sound_volume") == 0.85
     assert reloaded_cfg.get("click_sound_pack") == {"kind": "builtin", "id": "duck", "path": ""}

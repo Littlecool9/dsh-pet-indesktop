@@ -931,7 +931,6 @@ class Config:
             "click_sound_enabled": True,  # 点击 Q 弹音效
             "click_sound_pack": _default_click_sound_pack(),
             "click_sound_volume": 0.70,
-            "slingshot_enabled": True,  # 弹弓弹射
             "throw_strength": "standard",  # gentle / standard / strong / crazy
             "click_show_balance": False,  # 点击显示 DeepSeek 余额
             "balance_refresh_minutes": 0,  # DeepSeek 余额自动刷新间隔（分钟，0=关闭）
@@ -940,8 +939,6 @@ class Config:
             "balance_tier_label_idle": "",  # 自定义“空闲”文本（custom 模式）
             "balance_tier_color_enabled": True,  # 峰谷提示颜色：高峰红/低谷绿
             "agent_cost_enabled": False,  # Agent 本轮结束时显示消费金额（用余额差值估算）
-            "golden_spin_on_click": False,  # 点击回应动画结束后自动接一段黄金回旋
-            "golden_spin_direct": False,  # 点击触发黄金回旋时跳过点击动画，直接回旋并逐圈加速
             "edge_probe_enabled": False,  # 拖到屏幕左右边缘后自动进入探头姿态
             "autostart_wanted": False,  # 用户曾开启过开机自启（用于启动自检：被安全软件清理时提醒）
             "harness_autostart": False,  # 随桌宠启动自动拉起（auto/service/web 目标=只起服务不开浏览器；桌面端目标=打开界面）
@@ -1156,7 +1153,6 @@ class Config:
             "click_sound_enabled",
             "click_sound_pack",
             "click_sound_volume",
-            "slingshot_enabled",
             "throw_strength",
             "click_show_balance",
             "balance_refresh_minutes",
@@ -1166,8 +1162,6 @@ class Config:
             "allow_cross_screen",
             "pnpm_bin",
             "agent_cost_enabled",
-            "golden_spin_on_click",
-            "golden_spin_direct",
             "edge_probe_enabled",
             "balance_tier_labels_mode",
             "balance_tier_label_peak",
@@ -1552,7 +1546,6 @@ class Config:
         self.data["modern_chat_card_opacity"] = int(_float_or_default(
             self.data.get("modern_chat_card_opacity"), 84.0, 10.0, 100.0))
 
-        self.data["slingshot_enabled"] = bool(self.data.get("slingshot_enabled", True))
         # 上游 #60 系统通知开关：同规防字符串布尔误开（bool("false") is True）。
         self.data["system_notifications_enabled"] = _bool_or_default(self.data.get("system_notifications_enabled"), True)
         # 待办提醒：开关同规防字符串布尔误开；提前量钳到 [0, 60] 分钟（0=不提前）。
@@ -1566,9 +1559,7 @@ class Config:
         self.data["quiet_also_on_fullscreen"] = _bool_or_default(
             self.data.get("quiet_also_on_fullscreen"), DEFAULT_QUIET_ALSO_ON_FULLSCREEN
         )
-        # 黄金回旋 / 边缘探头：与其它布尔键同规，防手改字符串布尔误开。
-        self.data["golden_spin_on_click"] = _bool_or_default(self.data.get("golden_spin_on_click"), False)
-        self.data["golden_spin_direct"] = _bool_or_default(self.data.get("golden_spin_direct"), False)
+        # 边缘探头：与其它布尔键同规，防手改字符串布尔误开。
         self.data["edge_probe_enabled"] = _bool_or_default(self.data.get("edge_probe_enabled"), False)
         self.data["agent_link"] = _clean_agent_link_data(self.data.get("agent_link"))
         # 消费统计开关：布尔走 _bool_or_default，字符串 "yes"/"false" 不得被
@@ -1644,7 +1635,6 @@ class Config:
             "click_sound_volume",
             "collision_sound_enabled",
             "collision_sound_volume",
-            "slingshot_enabled",
             "throw_strength",
             "drop_gravity",
             "agent_link",

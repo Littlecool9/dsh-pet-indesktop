@@ -332,7 +332,6 @@ def test_missing_user_layout_resolves_versioned_default():
         "spawn_pet",
         "clear_spawned_pets",
         "agent_cost",
-        "golden_spin",
         "edge_probe",
         "quick_launch",
         "balance",
@@ -578,7 +577,6 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
         "生小肥鱼",
         "退出子肥鱼",
         "显示本轮消费",
-        "黄金回旋",
         "边缘探头",
     ]
     tools = next(action.menu() for action in menu.actions() if action.text() == "工具与帮助")

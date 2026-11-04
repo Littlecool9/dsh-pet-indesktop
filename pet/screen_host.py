@@ -43,10 +43,9 @@ class ScreenHost:
         self.behavior = BehaviorController(self.bounds)
         self.collision = SpriteCollisionWorld()
         self.physics = ThrowPhysicsController(self.bounds)
-        # 附加仿真控制器（tick 尾段，顺序即列表序：边缘探头先、抛掷彩蛋后）
+        # 附加仿真控制器（tick 尾段，顺序即列表序）
         self.extras: list = []
         self.probe = None
-        self.throw_egg = None
         # overlay 反查宿主：驱动器的分组仿真与鼠标路由都从这里取
         overlay.host = self
         overlay.behavior = self.behavior  # contextMenuEvent 查表点
@@ -78,7 +77,7 @@ class ScreenHost:
         for sprite in self.overlay.sprites:
             sprite.set_bounds(QRect(bounds))
             self.apply_activity(sprite)
-        for ctrl in (self.probe, self.throw_egg):
+        for ctrl in (self.probe,):
             if ctrl is not None:
                 ctrl.set_bounds(QRect(bounds))
 

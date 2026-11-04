@@ -460,9 +460,6 @@ class IslandCollisionBody(QObject):
             clamped = physics_mod.soft_clamp_speed(speed, cap)
             win._phys_vel[:] = [win._phys_vel[0] * clamped / speed,
                                 win._phys_vel[1] * clamped / speed]
-        egg = getattr(win, "_throw_egg", None)
-        if egg is not None and getattr(egg, "active", False):
-            egg.on_pet_contact(math.hypot(*win._phys_vel))
         dv_mag = math.hypot(dvx, dvy)
         self._apply_feedback(win, key, now, dv_mag, -dvx / dv_mag, -dvy / dv_mag)
         edge_probe = getattr(win, "_edge_probe", None)

@@ -247,10 +247,6 @@ def build_pet_controls(host) -> None:
     current_strength = str(host.config.get("throw_strength", "standard") or "standard")
     host.throw_strength_select.setCurrentData(current_strength if current_strength in {"gentle", "standard", "strong", "crazy"} else "standard")
 
-    # 弹弓弹射开关
-    host.slingshot_check = ToggleSwitch(host)
-    host.slingshot_check.setChecked(bool(host.config.get("slingshot_enabled", True)))
-
     # 多开碰撞设置
     host.collision_enabled_check = ToggleSwitch(host)
     host.collision_enabled_check.setChecked(bool(host.config.get("collision_enabled", True)))
@@ -327,10 +323,6 @@ def build_pet_controls(host) -> None:
         host.click_balance_check.setChecked(bool(host.config.get("click_show_balance", False)))
     host.agent_cost_check = ToggleSwitch(host)
     host.agent_cost_check.setChecked(bool(host.config.get("agent_cost_enabled", False)))
-    host.golden_spin_click_check = ToggleSwitch(host)
-    host.golden_spin_click_check.setChecked(bool(host.config.get("golden_spin_on_click", False)))
-    host.golden_spin_direct_check = ToggleSwitch(host)
-    host.golden_spin_direct_check.setChecked(bool(host.config.get("golden_spin_direct", False)))
     host.edge_probe_check = ToggleSwitch(host)
     host.edge_probe_check.setChecked(bool(host.config.get("edge_probe_enabled", False)))
     host.balance_refresh_spin = None

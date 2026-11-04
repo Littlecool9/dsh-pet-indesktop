@@ -369,7 +369,7 @@ def test_drag_relaxes_the_clamp_domain_then_release_restores_the_activity_set(
         hosts_mod._cleanup(shell)
 
 
-# ---------------------------------------------------------------- 5. 松手 / 弹弓跨缝
+# ---------------------------------------------------------------- 5. 松手跨缝
 def _drag_to_straddle(shell, sprite, *, extra=0.0):
     """拖到"身体正跨在缝上"的位置（左缘在 A、右缘在 B），返回 (overlay, origin, cursor)。
 
@@ -447,49 +447,6 @@ def test_release_inside_one_screen_does_not_move(tmp_path, monkeypatch):
         _tick(shell)
         assert _global(shell, main) == before, "松手不许带来任何位移"
         assert shell._screen_of_sprite(main) is a
-    finally:
-        hosts_mod._cleanup(shell)
-
-
-def test_slingshot_over_the_seam_keeps_the_open_domain(tmp_path, monkeypatch):
-    """跨缝时进瞄准 / 发射 / 取消：域保持开着，位移只来自弹弓自己的物理。"""
-    from tests.test_overlay_hosts_multiscreen import _right_press
-
-    a, b = _two_screens()
-    _install(monkeypatch, [a, b])
-    shell = _shell(tmp_path, a, {"drag_physics": True})
-    try:
-        main = shell.sprite
-        main.set_pos(QPointF(600.0, 500.0))
-        assert shell.move_sprite_to_screen(main, b, global_pos=QPointF(2000.0, 500.0)) is True
-        overlay_b = shell.host_for_sprite(main).overlay
-        origin_b = QPointF(overlay_b.geometry().topLeft())
-        _hittable(main)
-        hit = QPointF(main.rect().center())
-        overlay_b.mousePressEvent(_press(hit, origin_b + hit))
-        _tick(shell)
-        cursor = origin_b + hit + QPointF(30.0, 0.0)
-        overlay_b.mouseMoveEvent(_move(cursor - origin_b, cursor))
-        _tick(shell)
-        assert getattr(main, "_clamp_rects", None) is not None, "拖拽中域是开的"
-
-        # 进瞄准：位置定锚不动、域保持开着
-        anchor = _global(shell, main)
-        overlay_b.mousePressEvent(_right_press(cursor - origin_b, cursor))
-        assert shell._slingshot.aiming is True
-        assert _global(shell, main) == anchor, "进瞄准不许移动这只"
-        assert getattr(main, "_clamp_rects", None) is not None, "瞄准期间域不许被收"
-
-        # 再点右键取消（就地恢复拖拽）：位置不跳，域仍开着
-        overlay_b.mousePressEvent(_right_press(cursor - origin_b, cursor))
-        assert shell._slingshot.aiming is False
-        assert _global(shell, main) == anchor, "取消瞄准不许移动这只"
-        assert getattr(main, "_clamp_rects", None) is not None
-
-        # 松手：位置不跳，域按"身体是否已合法"决定去留
-        before = _global(shell, main)
-        overlay_b.mouseReleaseEvent(_release(cursor - origin_b, cursor))
-        assert _global(shell, main) == before, "松手不许移动这只"
     finally:
         hosts_mod._cleanup(shell)
 

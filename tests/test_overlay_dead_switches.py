@@ -3,8 +3,7 @@
 
 背景：``shift_drag`` / ``lock_position`` / ``pet_opacity`` 三个持久化设置在旧
 架构（``pet/window.py``）生效，但 overlay 侧零引用——设置页改了没反应、
-重启即丢。M5d/e 见 test_sprite_animation_gap.py /
-test_overlay_golden_spin_click.py。
+重启即丢。M5d/e 见 test_sprite_animation_gap.py。
 
 每条对应一条「旧语义 → overlay 落点」：
 - a) ``shift_drag``：未按 SHIFT 的按下不进拖拽 grab（window.py:3172-3181）；

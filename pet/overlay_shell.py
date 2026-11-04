@@ -83,7 +83,7 @@ from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import (
-    QEvent, QObject, QPoint, QPointF, QRect, QRectF, QTimer, Qt, Signal)
+    QObject, QPoint, QPointF, QRect, QRectF, QTimer, Qt, Signal)
 from PySide6.QtGui import QBitmap, QGuiApplication, QIcon, QImage, QPixmap, QRegion
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
@@ -235,37 +235,6 @@ class _SpriteChatAnchor:
         self._shell.open_full_chat()
 
 
-class _GoldenSpinSpriteHost:
-    """``GoldenSpinController`` 的 sprite 宿主：``update()`` = 把当前角度写进 sprite。
-
-    旧路径由 ``PetWindow.paintEvent`` 读 ``current_angle_deg()`` 应用旋转
-    （window_effects.begin/end_rotation）；sprite 世界的绘制入口是
-    ``PetSprite.set_throw_rotation``，故控制器每次 ``win.update()`` 都等价地
-    写一次角度（0 = 回正）。目标 sprite 由 ``shell._golden_spin_target`` 指定
-    ——多宠时点击哪只转哪只（旧架构一窗一宠，天然只有一只）。
-
-    **控制器全壳共享、目标独占**（R06）：角度只写给 ``_golden_spin_target``
-    指向的那一只，换目标由 ``shell._ensure_golden_spin`` 先把旧目标回正并脱离
-    （见 ``_settle_golden_spin_target``）——``_golden_spin_target`` 为 None 时
-    本方法整拍空转，这正是结清过程中"不再往旧目标写角"的闸门。
-    """
-
-    __slots__ = ("_shell",)
-
-    def __init__(self, shell) -> None:
-        self._shell = shell
-
-    def update(self) -> None:
-        shell = self._shell
-        spin = getattr(shell, "_golden_spin", None)
-        sprite = getattr(shell, "_golden_spin_target", None)
-        if spin is None or sprite is None:
-            return
-        apply = getattr(sprite, "set_throw_rotation", None)
-        if callable(apply):
-            apply(float(spin.current_angle_deg()))
-
-
 class _LinkAnimChain:
     """联动动作链接续（``window.py _on_anim_ended`` → ``_link_next_provider`` 等价物）。
 
@@ -285,9 +254,6 @@ class _LinkAnimChain:
         was_busy, self._was_busy = self._was_busy, busy
         if busy or not was_busy:
             return
-        # 一次性状态（动作/点击/移动）刚播完：黄金回旋 armed 模式在此接续
-        # （旧机 _on_anim_ended → _effects_on_click_anim_finished，window.py:2533-2537）
-        shell._on_click_anim_finished()
         # 待播优先，否则向 provider 要下一个
         # （顺序同 legacy _on_anim_ended：先消费待播，再问联动链）
         if shell._pending_link_anim:
@@ -777,11 +743,6 @@ class ShellOverlayWindow(OverlayWindow):
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt 命名)
-        if self.slingshot.aiming:
-            # 弹弓瞄准中的左键松手 = 发射（基类已消费），不进单击/拖拽判别
-            self._press_pos = None
-            super().mouseReleaseEvent(event)
-            return
         grab = self._mouse_grab
         committed = self._drag_committed  # super() 的 _finish_grab 会清旗标，先快照
         click_only = self._press_click_only  # 锁定位/SHIFT 门（同样先快照）
@@ -799,11 +760,6 @@ class ShellOverlayWindow(OverlayWindow):
             # 边缘探头消费点击（PEEKING 拉直/STRAIGHTENED 重置倒计时）时，
             # 抑制点击反应与点击音效——拉直本身就是反馈
             if probe is not None and probe.on_sprite_clicked(grab):
-                return
-            # M5e：点击触发黄金回旋（window.py:3356-3357 的同位置路由）。
-            # 返回 True = 本次点击被效果层消费（直连模式），不再播点击反应/音效
-            route_spin = getattr(self, "_click_route_spin", None)
-            if callable(route_spin) and route_spin(grab):
                 return
             clicked = behavior.on_sprite_clicked(grab)
             squash = getattr(grab, "squash", None)
@@ -974,9 +930,9 @@ class OverlayShell(QObject):
     拓扑分支处注入（等价 PetWindow 的构造参数）。注入失败=None 时全部呈现面
     静默空转，绝不阻断启动。
 
-    4.3 收口（菜单 parity 配套）：本壳同时承担 PetWindow 的两处**服务宿主**——
-    「看看屏幕」worker（``look_at_screen`` + ``look_done`` 信号）与 sprite 版
-    「黄金回旋」。overlay 拓扑下 PetWindow 不再存在，这两项功能没有别的落点。
+    4.3 收口（菜单 parity 配套）：本壳同时承担 PetWindow 的「看看屏幕」服务
+    宿主（``look_at_screen`` + ``look_done`` 信号）。overlay 拓扑下 PetWindow
+    不再存在，这项功能没有别的落点。
     """
 
     # 「看看屏幕」worker → GUI 线程（wire 口径同 PetWindow.look_done）
@@ -1060,14 +1016,6 @@ class OverlayShell(QObject):
         # 分发；`look_at_screen` 每次调用都会重记。
         self._look_sprite = None
         self.look_done.connect(self._on_look_done)
-        # 黄金回旋：直接复用 golden_spin.GoldenSpinController（纯状态机：圈数
-        # 累计/逐圈加速/缓动），宿主适配器把角度写进 sprite 的整帧旋转通道。
-        # 懒建（默认关时不建对象、不 import golden_spin）。
-        self._golden_spin = None
-        # 弹弓会话（壳内唯一一份）：所有宿主窗共用，见 _wire_host_overlay
-        self._slingshot = None
-        self._golden_spin_host = _GoldenSpinSpriteHost(self)
-        self._golden_spin_target = None
         # 4.3 后半：共享子系统注入（等价 PetWindow 的构造参数；None = 惰性空转）
         self.agent_link_manager = agent_link_manager
         self.proactive_watcher = proactive_watcher
@@ -1166,11 +1114,6 @@ class OverlayShell(QObject):
     def _probe(self):
         host = self._main_host
         return host.probe if host is not None else None
-
-    @property
-    def _throw_egg(self):
-        host = self._main_host
-        return host.throw_egg if host is not None else None
 
     def hosts(self) -> list:
         """当前全部宿主（只读副本；单窗下恒为一个元素）。"""
@@ -1401,12 +1344,7 @@ class OverlayShell(QObject):
         # edge_probe_enabled（默认 False）世界内每次进入判定前热读，设置页即切即生效
         from .sprite_edge_probe import create_edge_probe_world
         host.probe = create_edge_probe_world(self._config, self._probe_bounds(host))
-        # throw_egg 彩蛋：探头被撞飞头部跟随速度（extras 尾段，读物理结算后的
-        # 速度——落地兜底依赖 physics 已切回 normal，顺序天然满足）
-        from .sprite_throw_egg import create_throw_egg_world
-        host.throw_egg = create_throw_egg_world(
-            QRect(host.bounds), probe=host.probe)
-        host.extras = [host.probe, host.throw_egg]
+        host.extras = [host.probe]
         self._wire_host_overlay(host, host.overlay)
         self._connect_host_screen(host)
 
@@ -1416,17 +1354,6 @@ class OverlayShell(QObject):
         overlay.click_feedback = self._click_feedback
         # 点击气泡族（余额/点击自言自语）+ 点击音效：与 click_feedback 同位置注入
         overlay._on_sprite_click = self._on_sprite_click
-        # M5e：点击触发黄金回旋路由（与 _on_sprite_click 同位置注入）
-        overlay._click_route_spin = self._route_click_golden_spin
-        # 4.1c 弹弓：controller 壳内一份，这里只接 config
-        # （slingshot_enabled 热读，设置页即改即生效）。单窗下会话与绘制天然
-        # 同源（同一张窗、同一套局部坐标）。
-        if self._slingshot is None:
-            from .sprite_slingshot import SlingshotController
-
-            self._slingshot = SlingshotController()
-        overlay.slingshot = self._slingshot
-        overlay.slingshot.config = self._config
         # 4.1c 全量右键菜单（facade 适配旧 context_menus 建造器）
         from .sprite_menu_facade import build_sprite_full_menu
         overlay._full_menu_builder = (
@@ -1443,7 +1370,7 @@ class OverlayShell(QObject):
         # 与真到达窗口的鼠标输入，同一入口、同一语义
         overlay._shown_cb = self._converge_auto_cursor_hidden
         overlay._user_input_cb = self._converge_auto_cursor_hidden
-        # sprite-removed 三条注销监听（退出任意一只宠都要注销行为/探头/彩蛋状态）
+        # sprite-removed 两条注销监听（退出任意一只宠都要注销行为/探头状态）
         self._wire_sprite_removed_hooks(overlay, host)
 
     def _click_feedback(self) -> None:
@@ -1456,18 +1383,16 @@ class OverlayShell(QObject):
         self._sound.on_click()
 
     def _wire_sprite_removed_hooks(self, overlay, host=None) -> None:
-        """挂 sprite-removed 三条注销监听（``_build`` 与宿主换屏共用）。
+        """挂 sprite-removed 两条注销监听（``_build`` 与宿主换屏共用）。
 
-        ``overlay.remove_sprite`` 按这三条注销外部簿记：行为状态表
-        （``behavior.forget``）、边缘探头 armed/预进入状态（``probe.forget``）、
-        抛掷彩蛋角度（``throw_egg.forget``）。迁移重建 overlay 时漏挂，则
-        屏热插拔/主屏切换之后再退出任意一只宠都不再注销——每退一只泄漏一份
-        强引用（含 pixmap/命中图）与探头状态。
+        ``overlay.remove_sprite`` 按这两条注销外部簿记：行为状态表
+        （``behavior.forget``）与边缘探头 armed/预进入状态（``probe.forget``）。
+        迁移重建 overlay 时漏挂，则屏热插拔/主屏切换之后再退出任意一只宠都不再
+        注销——每退一只泄漏一份强引用（含 pixmap/命中图）与探头状态。
         """
         host = self._main_host if host is None else host
         overlay.add_sprite_removed_listener(host.behavior.forget)
         overlay.add_sprite_removed_listener(host.probe.forget)
-        overlay.add_sprite_removed_listener(host.throw_egg.forget)
 
     def _create_main_library(self):
         """per-pet MovieLibrary（T3）；角色素材缺失回退默认角色（口径同
@@ -3177,162 +3102,6 @@ class OverlayShell(QObject):
         """「截图 → 框选识屏」：采集 → 覆盖层动作条选动作（提取/翻译/问答/复制）。"""
         return lambda: self._screen_capture().run()
 
-    # ---- 黄金回旋（复用 golden_spin.GoldenSpinController + sprite 宿主）----
-    def _golden_spin_capable(self, sprite) -> bool:
-        """sprite 是否支持整帧旋转通道（假 sprite/替身没有则整族静默降级）。"""
-        return callable(getattr(sprite, "set_throw_rotation", None))
-
-    def _ensure_golden_spin(self, sprite):
-        """懒建控制器（幂等）+ 选定角度目标；**换目标即结清旧的**。
-
-        模型：控制器**全壳共享**（一条角度状态机服务所有宠，与旧架构"一窗一宠"
-        下每窗一台等价），目标**独占**（同一时刻只有一只宠在转）。角度存在各
-        sprite 自己身上，每拍只写给当前目标，故换目标不结清旧的，那只就会永远
-        停在切换那一刻的倾斜角上（归零只发生在控制器对**当前**目标走完最后一圈）。
-        菜单直连与点击直连都经本方法换目标，结清只有这一处。
-        """
-        if not self._golden_spin_capable(sprite):
-            return None
-        spin = self._golden_spin
-        if spin is None:
-            from .golden_spin import GoldenSpinController
-
-            spin = GoldenSpinController(self._golden_spin_host)
-            self._golden_spin = spin
-        if self._golden_spin_target is not sprite:
-            self._settle_golden_spin_target(spin)
-        self._golden_spin_target = sprite
-        return spin
-
-    def _settle_golden_spin_target(self, spin) -> None:
-        """结清当前角度目标：回正旧目标 + 让共享会话回到空闲（换目标前调用）。
-
-        「回正」与控制器走完最后一圈的归零**同一口径**——都经 sprite 的
-        ``set_throw_rotation`` 写 0（0 = 自然角），不走别的通道。顺序固定：先摘
-        目标（此后宿主 ``update`` 找不到目标、不再写角），再 ``cancel`` 收掉共享
-        会话（停表 + 控制器归零 + 清 pending），最后直接回正旧 sprite——"谁写 0"
-        只有一个落点，不依赖 update 的时机。会话结清后 ``start()``/``spin_direct()``
-        对新目标从自然角重新起转（active 拒绝只对**同一目标**的重复触发生效）。
-        """
-        old = self._golden_spin_target
-        self._golden_spin_target = None
-        if old is None:
-            return
-        if spin is not None:
-            spin.cancel()
-        reset = getattr(old, "set_throw_rotation", None)
-        if callable(reset):
-            reset(0.0)
-
-    def _settle_golden_spin_if_target(self, sprite) -> None:
-        """这只 sprite 就是当前回旋目标时先结清——它即将离开窗面（WP11c 相邻缺口）。
-
-        **目标悬空**：被移除的那一只若正是当前目标，它身上的角度就再没人结清了。
-        控制器（``_golden_spin``）是全壳共享的、还活着，宿主每拍仍按
-        ``_golden_spin_target`` 往一只**已经不在窗里**的 sprite 写角——用户看不见，
-        但它会一直写到下一次换目标（或整个会话自然结束）为止，状态挂在一个死对象上。
-        结清口径与换目标那处是**同一份**（:meth:`_settle_golden_spin_target`：
-        置 None → ``cancel`` → 归零；"谁写 0"只有一个落点），故这里只判条件、
-        不重复实现。
-
-        判别放在"移除前"这一侧：结清要写 0 给这只 sprite，写在它还在窗里的时候最
-        直白（此后宿主已经没有目标可写）。
-        """
-        if self._golden_spin_target is sprite:
-            self._settle_golden_spin_target(self._golden_spin)
-
-    def _spin_direct(self, sprite) -> bool:
-        """立即开转（空闲开一圈；旋转中累计一圈并让当前圈快速收尾）。
-
-        语义 = ``GoldenSpinController.spin_direct``（golden_spin.py:75-82）：
-        累计圈数与逐圈加速都在控制器内部，本壳只负责选定目标 sprite。
-        """
-        spin = self._ensure_golden_spin(sprite)
-        if spin is None:
-            return False
-        spin.spin_direct()
-        return True
-
-    def trigger_golden_spin(self, sprite=None) -> None:
-        """右键菜单入口：让**被点的那一只**原地逆时针转一圈（探头/彩蛋在跑时让路）。
-
-        ``sprite=None`` = 主 sprite（兼容既有调用面）。旧 PetWindow「边缘探头激活时
-        不叠加」同纪律；角度状态机/缓动直接复用 ``golden_spin`` /
-        ``window_effects``，杜绝第二套数值。
-        """
-        target = self.sprite if sprite is None else sprite
-        if target is None or not self._golden_spin_capable(target):
-            return
-        host = self.host_for_sprite(target)
-        if getattr(host.probe, "active", False) or host.throw_egg.active:
-            return
-        spin = self._ensure_golden_spin(target)
-        if spin is None:
-            return
-        spin.cancel_pending()
-        spin.start()
-
-    def _route_click_golden_spin(self, sprite) -> bool:
-        """点击触发黄金回旋路由（window_optional_services.py:242-265 的 sprite 版）。
-
-        - 直连模式（``golden_spin_direct``）或角色无点击素材：立即开转并返回
-          True，调用方不再播点击反应/音效（点击已被效果层消费）；
-        - armed 模式（有点击素材且未开直连）：记 pending 并返回 False，点击
-          动画播完后由 ``_on_click_anim_finished`` 接续（旧机同款两段式）。
-        - 开关关 / 探头激活 / sprite 不支持旋转：False（调用方走普通点击链路）。
-        """
-        if getattr(self.host_for_sprite(sprite).probe, "active", False):
-            return False
-        if not bool(self._config.get("golden_spin_on_click", False)):
-            return False
-        if not self._golden_spin_capable(sprite):
-            return False
-        spin = self._ensure_golden_spin(sprite)
-        if spin is None:
-            return False
-        direct = bool(self._config.get("golden_spin_direct", False))
-        has_clips = bool(self._sprite_categories(sprite).get("clicks"))
-        if not direct and has_clips:
-            spin.arm_after_click()
-            return False
-        spin.cancel_pending()
-        spin.spin_direct()
-        return True
-
-    def _on_click_anim_finished(self) -> None:
-        """点击动画自然结束（armed 回旋接续点，window.py:2533-2537 等价物）。"""
-        spin = getattr(self, "_golden_spin", None)
-        if spin is not None:
-            spin.consume_click_finished()
-
-    def _advance_golden_spin(self) -> None:
-        """兼容面（**deprecation**）：同步驱动控制器走一帧。
-
-        M5e 后角度状态机归 ``GoldenSpinController``（16ms 自带 QTimer）；本方法
-        保留给旧调用点/测试手动推进（不等真实时钟）。
-        """
-        spin = getattr(self, "_golden_spin", None)
-        if spin is not None:
-            spin._update(time.monotonic())
-
-    @property
-    def _golden_spin_timer(self):
-        """兼容面（**deprecation**）：控制器内部计时器（无控制器 → None）。"""
-        spin = getattr(self, "_golden_spin", None)
-        return getattr(spin, "_timer", None)
-
-    @property
-    def _golden_spin_started(self) -> float:
-        """兼容面（**deprecation**）：当前圈的起算时刻（控制器私有字段映射）。"""
-        spin = getattr(self, "_golden_spin", None)
-        return float(getattr(spin, "_rev_started_at", 0.0))
-
-    @_golden_spin_started.setter
-    def _golden_spin_started(self, value: float) -> None:
-        spin = getattr(self, "_golden_spin", None)
-        if spin is not None:
-            spin._rev_started_at = float(value)
-
     # ---- 联动动作（agent_link 的 request_link_* 落点）----
     def _link_anim_busy(self) -> bool:
         """一次性动作（动作池/点击/移动）是否在播——联动请求不打断它。"""
@@ -3677,7 +3446,6 @@ class OverlayShell(QObject):
         # 的仍在恢复侧被跳过（与整窗显隐同一条判据）。
         self._set_all_clips_paused(False)
         self._sync_runtime_marker()  # D7：设置进程避让
-        self.app.installEventFilter(self)  # Esc 全局兜底（弹弓取消）
         if self.tray is not None:
             self.tray.show()
             self._arm_tray_icon_refresh()
@@ -3713,38 +3481,6 @@ class OverlayShell(QObject):
                 continue
             except Exception:
                 logging.exception("overlay: 关闭宿主窗口失败")
-
-    def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt 命名)
-        """应用级 Esc 兜底：overlay 是防抢焦点窗（WS_EX_NOACTIVATE），
-        keyPressEvent 只在确有焦点时收到 Esc；弹弓瞄准中按 Esc 全局取消。
-
-        F-PERF 快路径：本过滤器注册在 QApplication 上（``start()`` 的
-        ``installEventFilter``），110Hz 重绘 + 定时器 + 输入让它每秒被调用
-        数千次（实机 py-spy：GUI 线程 9.4%），而其中只有「KeyPress + Esc +
-        正在瞄准」这条路要动手。故：
-
-        - 非 KeyPress 第一行直接 ``return False``——不构造 ``super()`` 的
-          C++ 往返（``QObject.eventFilter`` 基类实现恒返回 False，Qt 文档
-          明载 "The default implementation always returns false"，故语义
-          逐位等价，见 tests/test_overlay_shell_event_filter.py）；
-        - 不消费的 KeyPress 同样就地返回 False；
-        - 消费分支（瞄准中 Esc）逐位保留原行为：取消会话 + 返回 True 吞掉
-          事件。**目标是会话的 owner 窗**（多窗时输入可能接在副屏那张窗上）：
-          取消只改会话状态，源窗的 grab/按下状态必须由它自己收，否则 Esc 之后
-          那只窗仍扣着 grab，随后的松手会被当成一次普通点击。
-        """
-        if event.type() != QEvent.Type.KeyPress:
-            return False
-        if event.key() != Qt.Key.Key_Escape:
-            return False
-        overlay = getattr(self, "overlay", None)
-        if overlay is None:
-            return False
-        slingshot = overlay.slingshot
-        if not slingshot.aiming:
-            return False
-        (slingshot.owner or overlay)._cancel_slingshot(resume_drag=False)
-        return True
 
     def _run_exit_step(self, label: str, step) -> None:
         """退出收口的一步一隔离（缺陷 13）：单步异常只记日志，不中断后续步骤。
@@ -5567,8 +5303,6 @@ class OverlayShell(QObject):
         self._drop_menu_icon_cache_for(lib)
         if sprite in self._spawned:
             self._spawned.remove(sprite)
-        # 目标悬空：这只若正被共享控制器写角，先结清（它马上就不在窗里了）
-        self._settle_golden_spin_if_target(sprite)
         if host is not None:
             host.overlay.remove_sprite(sprite)
         self._close_self_talk_host(sprite)
@@ -5637,7 +5371,6 @@ class OverlayShell(QObject):
         self.save_position()
         old_main, old_lib = self.sprite, self.lib
         host = self._host_of(old_main)
-        self._settle_golden_spin_if_target(old_main)
         if host is not None:
             host.overlay.remove_sprite(old_main)
         self._close_self_talk_host(old_main)
@@ -6245,13 +5978,9 @@ class OverlayShell(QObject):
                     squash()
 
     def _on_collision_probe(self, event) -> None:
-        """碰撞真撞击 → 边缘探头取消会话（旧机 collision_client 取消链语义）
-        + throw_egg arm（探头被撞飞头部跟随速度）。
+        """碰撞真撞击 → 边缘探头取消会话（旧机 collision_client 取消链语义）。
 
-        arm 只认「本次真取消了活跃探头会话」这个显式事实（探头入口的返回
-        值）——探头侧的 5 秒重进倒计时会残留，不能反过来当证据。
-
-        探头/彩蛋走**撞出这一事件的那块屏**自己的那份（逐屏一份），成员也只看
+        探头走**撞出这一事件的那块屏**自己的那份（逐屏一份），成员也只看
         那块屏的。
 
         同 _on_collision_squash：不按 hit_min_dv 二次过滤（事件的阈值已按
@@ -6260,17 +5989,11 @@ class OverlayShell(QObject):
         from .sprite_collision import SpriteCollisionWorld
         host = self._host_for_collision(event)
         probe = host.probe
-        egg = host.throw_egg
-        if probe is None and egg is None:
+        if probe is None:
             return
         for sprite in host.overlay.sprites:
             if SpriteCollisionWorld._member_id(sprite) in (event.a, event.b):
-                cancelled = None
-                if probe is not None:
-                    cancelled = probe.on_sprite_collision_hit(sprite)
-                if egg is not None:
-                    egg.on_probe_collision_throw(
-                        sprite, probe_cancelled=cancelled)
+                probe.on_sprite_collision_hit(sprite)
 
     def switch_character(self, character_id: str, sprite=None) -> None:
         """切换角色（4.1c）：换 per-pet 库 + 行为状态重置 + 配置持久化。
@@ -6298,9 +6021,6 @@ class OverlayShell(QObject):
         current = str(self._sprite_config(target).get("character", catalog.DEFAULT_CHARACTER))
         if not character_id or character_id == current:
             return
-        egg = self.host_for_sprite(target).throw_egg
-        if egg is not None:
-            egg.cancel_all("character_switch")  # 换角色即换素材，飞行会话兜底回正
         try:
             new_lib = self._instance._create_library(character_id)
         except Exception:
@@ -6410,11 +6130,7 @@ class OverlayShell(QObject):
         if (persist or selected != character_id) and not self._slot_writer(slot)("character", selected):
             self._shutdown_library(new_lib, "未应用角色")
             return False
-        self._settle_golden_spin_if_target(sprite)
         sprite_host = self.host_for_sprite(sprite)
-        egg = sprite_host.throw_egg
-        if egg is not None:
-            egg.cancel_all("character_switch")
         old_lib = self.lib if slot == 0 else self._spawned_libs.get(sprite)
         if slot == 0:
             self.lib = new_lib

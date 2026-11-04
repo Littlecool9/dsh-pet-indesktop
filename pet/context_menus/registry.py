@@ -20,7 +20,6 @@ from .shared import (
     add_clear_spawned_pets,
     add_drag_physics,
     add_edge_probe,
-    add_golden_spin,
     add_harness,
     add_hide_pet,
     add_look_screen,
@@ -51,7 +50,7 @@ ACTION_LABELS = {
     "on_top": "窗口置顶", "autostart": "开机自启",
     "return_corner": "回到右下角", "hide_pet": "隐藏桌宠",
     "spawn_pet": "生小肥鱼", "clear_spawned_pets": "退出子肥鱼",
-    "golden_spin": "黄金回旋", "edge_probe": "边缘探头",
+    "edge_probe": "边缘探头",
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
     "proactive_screen": "主动识屏", "todo_panel": "待办提醒",
@@ -74,7 +73,7 @@ ACTION_ICONS = {
     "on_top": "pin", "autostart": "autostart",
     "return_corner": "corner", "hide_pet": "hide",
     "spawn_pet": "spawn", "clear_spawned_pets": "clear",
-    "golden_spin": "play", "edge_probe": "corner",
+    "edge_probe": "corner",
     "agent_cost": "balance",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
     "proactive_screen": "screen", "todo_panel": "todo",
@@ -163,10 +162,6 @@ class MenuActionRegistry:
             ),
             # 始终可用：消费统计与其它开关无关。
             "agent_cost": MenuActionSpec(add_agent_cost),
-            "golden_spin": MenuActionSpec(
-                add_golden_spin,
-                _callback_available("trigger_golden_spin"),
-            ),
             "edge_probe": MenuActionSpec(add_edge_probe),
             "quick_launch": MenuActionSpec(
                 lambda menu, pet: add_quick_launch_menu(menu, pet.cfg),

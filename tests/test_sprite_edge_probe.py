@@ -469,7 +469,7 @@ def test_collision_hit_cancels_and_reenters_after_delay():
 def test_collision_on_non_probing_sprite_is_ignored():
     world, clock = _world()
     sprite = _sprite((0.0, 300.0))
-    # 未在探头：普通碰撞不取消任何会话 → 返回 False（调用方据此不 arm 彩蛋）
+    # 未在探头：普通碰撞不取消任何会话 → 返回 False
     assert world.on_sprite_collision_hit(sprite) is False
     assert world.mode_of(sprite) == OFF
     assert world.reentry_remaining_of(sprite) == 0.0

@@ -19,7 +19,7 @@
     on_show_balance / on_open_todo_panel                      → AppShell（进程级服务）
     toggle_agent_link                                         → agent_link_manager（共享 manager）
     toggle_proactive_enabled / set_proactive_option           → proactive_watcher（共享监视器）
-    trigger_golden_spin / look_at_screen / rename_character   → 壳的 sprite 等价实现（作用被点 sprite）
+    look_at_screen / rename_character                       → 壳的 sprite 等价实现（作用被点 sprite）
     set_edge_probe_enabled                                    → config（探头世界每 tick 热读）
 
 4.2c D13：菜单作用对象 = 右键命中的那一只（``sprite`` 参数）。设置入口按它
@@ -28,7 +28,7 @@
 
 批 B2：作用对象口径对齐旧版一窗一宠（菜单以 ``pet=self`` 建造，每条都作用
 本窗那一只）——读（勾选态/素材清单）与写（动画/速率/大小/拖动物理/回角落/
-黄金回旋/隐藏/看屏幕）一律取 ``self.sprite``，不再混用 ``self._shell.sprite``。
+隐藏/看屏幕）一律取 ``self.sprite``，不再混用 ``self._shell.sprite``。
 批 B7b：逐只设置的持久化与读取都按该 sprite 自己的配置走——``cfg`` 是它的
 配置视图（子宠 = ``config-slot-N.json``，缺键取同源默认），``_persist_sprite_setting``
 写它自己的那份（主宠仍写主配置），「切换角色」也只切被点的那一只。
@@ -488,17 +488,7 @@ class SpriteMenuFacade:
             return
         self._shell.set_sprite_visible(sprite, False)
 
-    # ---------------------------------------------------------------- 黄金回旋/边缘探头
-    def trigger_golden_spin(self) -> None:
-        """「黄金回旋」：``OverlayShell.trigger_golden_spin(sprite)``（sprite 世界
-        没有 GoldenSpinController，壳用同一组角度常量做 sprite 等价实现）。
-
-        目标 = 被点的那一只（旧版一窗一宠天然只有被点那只）。
-        """
-        fn = getattr(self._shell, "trigger_golden_spin", None)
-        if callable(fn):
-            fn(self.sprite)
-
+    # ---------------------------------------------------------------- 边缘探头
     def set_edge_probe_enabled(self, on: bool) -> None:
         """「边缘探头」开关：只写 config 键。
 
