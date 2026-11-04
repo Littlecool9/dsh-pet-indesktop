@@ -72,8 +72,7 @@ window's `bounds`, its activity rectangles, the behaviour controller and
 per-screen bookkeeping; `PetSprite` is the single pet drawn inside it.
 `TickDriver` is the single timer that advances behaviour, sprites and island
 animation. Cross-screen is the same window moving the sprite between activity
-rectangles (gated by the global `allow_cross_screen` key, default off); closing
-a pet or the app never promotes another pet.
+rectangles (gated by the global `allow_cross_screen` key, default off).
 
 **Modules are the feature layer.** A module is a package under
 `pet/modules/<id>/` registered in `pet/modules/__init__.py::MODULES`. Its
