@@ -39,6 +39,9 @@ def _clean_registry(monkeypatch):
     monkeypatch.setattr(webm_clip, "_first_frame_reg", [])
     monkeypatch.setattr(webm_clip, "_first_frame_bytes", 0)
     monkeypatch.setattr(webm_clip, "_first_frame_budget_bytes", 250)
+    # set_first_frame_budget() 同时写跨库首帧共享表的预算；不还原的话，
+    # 本文件之后同一进程里的测试会带着 250 字节的共享预算跑（共享首帧被逐出、重复解码）。
+    monkeypatch.setattr(webm_clip, "_ffr_share_budget_bytes", webm_clip._ffr_share_budget_bytes)
     yield
 
 
