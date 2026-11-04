@@ -60,6 +60,42 @@ class AppModuleHost(ModuleHostBase):
             logger.debug("模块气泡展示失败", exc_info=True)
             return False
 
+    def companion_bubble_ready(self) -> bool:
+        """陪伴线推送气泡的门禁：免打扰 / 专注 / 全屏 / 桌宠隐藏 / 提醒让路。
+
+        ``self_talk_ready`` 是核心既有的"普通气泡能否上屏"判定（可见、专注、
+        设置页抑制、提醒让路、重要气泡占用）；免打扰另由 ``quiet_mode`` 的
+        全应用单点判据回答。两者都过才允许 SurfCore 主动消息冒泡。
+        """
+        from . import window_alerts
+
+        overlay = getattr(self.shell, "_overlay_shell", None)
+        host = overlay if overlay is not None else self.shell
+        try:
+            if window_alerts.quiet_blocked(host):
+                return False
+        except Exception:
+            logger.debug("陪伴线免打扰判定失败", exc_info=True)
+            return False
+        ready = getattr(overlay, "self_talk_ready", None)
+        if not callable(ready):
+            return False
+        try:
+            return bool(ready())
+        except Exception:
+            logger.debug("陪伴线气泡门禁查询失败", exc_info=True)
+            return False
+
+    def show_companion_bubble(self, text: str, ms: int = 6000) -> bool:
+        """呈现 SurfCore 主动推来的消息；普通可点气泡（点击打开快速对话）。
+
+        不激活窗口、不抢焦点；门禁不过时返回 ``False``（消息丢弃，与既有
+        proactive/联动气泡的"过门才上屏"同语义）。
+        """
+        if not self.companion_bubble_ready():
+            return False
+        return self.show_bubble(str(text), int(ms))
+
     def present_dialog(self, dialog: Any) -> None:
         """按应用既有路径呈现非模态窗（菜单关闭后再 show/raise）。"""
         instance = getattr(self.shell, "instance", None)

@@ -312,6 +312,17 @@ class SpriteMenuFacade:
         return _first_callable(self._hosts(), ("open_chat", "open_full_chat"))
 
     @property
+    def on_open_quick_chat(self):
+        """「快速对话」：气泡锚定本次菜单的作用对象（陪伴线走 SurfCore）。"""
+        if not self._chat_enabled():
+            return None
+        opener = getattr(self._shell, "open_quick_chat", None)
+        if not callable(opener):
+            return None
+        sprite = self.sprite
+        return lambda: opener(sprite)
+
+    @property
     def on_open_chat_settings(self):
         """「AI 设置」：``PetInstance.open_chat_settings``（同一聊天可用性门）。"""
         if not self._chat_enabled():

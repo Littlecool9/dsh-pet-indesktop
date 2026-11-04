@@ -12,6 +12,7 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
     assert layout["layout_id"] == "modern-default-v1"
     assert [node["id"] for node in layout["nodes"]] == [
         "chat",
+        "quick_chat",
         "look_screen",
         "screen_capture",
         "default.separator-interaction",
@@ -315,6 +316,7 @@ def test_layout_restores_required_settings_and_exit_actions():
 def test_missing_user_layout_resolves_versioned_default():
     registered = {
         "chat",
+        "quick_chat",
         "look_screen",
         "screen_capture",
         "animations_hub",
@@ -352,6 +354,7 @@ def test_missing_user_layout_resolves_versioned_default():
     assert result.diagnostics == ()
     assert [node["id"] for node in result.nodes if node["type"] != "separator"] == [
         "chat",
+        "quick_chat",
         "look_screen",
         "screen_capture",
         "animations_hub",
@@ -520,6 +523,7 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     root = [action.text() for action in menu.actions() if not action.isSeparator()]
     expected_root = [
         "AI 对话",
+        "快速对话",
         "看看屏幕",
         "截图提问",
         "播放动画",
@@ -546,7 +550,7 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     assert root == expected_root
     rendered = ["|" if action.isSeparator() else action.text() for action in menu.actions()]
     expected_rendered = [
-        "AI 对话", "看看屏幕", "截图提问", "|",
+        "AI 对话", "快速对话", "看看屏幕", "截图提问", "|",
         "播放动画", "切换角色", "播放速率", "大小", "|",
         "桌宠控制", "快捷启动", "|",
         "工具与帮助", "Agent 联动", "|",
@@ -662,7 +666,7 @@ def test_menu_editor_reorders_and_promotes_actions_with_button_controls():
     editor.move_down_action.trigger()
     reordered_ids = [node["id"] for node in editor.value()["nodes"]]
     chat_index = root_ids.index("chat")
-    assert reordered_ids[chat_index : chat_index + 2] == ["look_screen", "chat"]
+    assert reordered_ids[chat_index : chat_index + 2] == ["quick_chat", "chat"]
 
     promoted = editor.item_for_action("no_move")
     editor.tree.setCurrentItem(promoted)

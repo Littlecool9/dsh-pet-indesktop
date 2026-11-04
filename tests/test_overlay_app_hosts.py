@@ -154,8 +154,8 @@ def test_overlay_switch_character_syncs_open_chat_window(tmp_path):
         _teardown(overlay)
 
 
-def test_overlay_switch_character_syncs_island_chat_bubble(tmp_path):
-    """B07：岛对话气泡（桌宠隐藏时的对话面）同样是聊天面，跟着切角色。"""
+def test_overlay_switch_character_leaves_island_chat_to_surfcore(tmp_path):
+    """陪伴线角色/历史由 SurfCore 持有：换素材角色不再重建岛对话身份。"""
     shell, inst, overlay = _make_overlay_app(tmp_path)
     try:
         class _Bubble:
@@ -170,7 +170,7 @@ def test_overlay_switch_character_syncs_island_chat_bubble(tmp_path):
 
         overlay.switch_character("nova")
 
-        assert bubble.switched == ["nova"]
+        assert bubble.switched == [], "岛对话身份不再随素材角色切换（SurfCore 人设为准）"
     finally:
         _teardown(overlay)
 

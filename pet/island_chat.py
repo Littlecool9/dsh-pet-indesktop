@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """灵动岛对话气泡。
 
-桌宠隐藏后灵动岛是唯一常驻的交互面：点击岛（或 AI 回复到达时）在岛上
-弹出对话气泡，发送/流式回复与快速对话气泡共用同一套会话链路
-（SessionStore / ChatService / PromptBuilder），只是锚点从桌宠换成岛。
+桌宠隐藏后灵动岛是唯一常驻的交互面：点击岛（或回复到达时）在岛上弹出
+对话气泡，发送与回复都经 SurfCore 陪伴线（与快速对话气泡同一后端），只是
+锚点从桌宠换成岛；SurfCore 离线时发送禁用并写明原因。
 
 与 QuickChatBubble 的行为差异：
 
@@ -32,8 +32,8 @@ class IslandChatBubble(QuickChatBubble):
 
     show_pet_requested = Signal()
 
-    def __init__(self, config):
-        super().__init__(config, pet_window=None)
+    def __init__(self, config, companion=None):
+        super().__init__(config, pet_window=None, companion=companion)
         self._anchor: QWidget | None = None
         # 预览式弹出不激活窗口：显式声明，避免 Windows 上 show() 抢前台焦点
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
@@ -72,8 +72,8 @@ class IslandChatBubble(QuickChatBubble):
             self.input.setFocus()
 
     def show_reply(self, text: str) -> None:
-        """只展示一条回复：不发送也不落库（落库由发送方负责）。"""
-        self._active_request_id = None
+        """只展示一条回复：不发送、不提交（SurfCore 自身已记录历史）。"""
+        self._pending = False
         self.hint_label.setText("")
         self._set_reply_text(str(text or ""))
         self._render_reply()

@@ -180,6 +180,7 @@ class _ReferenceHost:
         for key, pool in POOLS.items():
             setattr(self, key, list(pool))
         self.on_open_chat = (lambda: None) if chat else None
+        self.on_open_quick_chat = (lambda: None) if chat else None
         self.on_open_chat_settings = (lambda: None) if chat else None
         self.chat_available = bool(chat)
         self.on_look_screen = self.look_at_screen if chat else None

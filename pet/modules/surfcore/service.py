@@ -88,6 +88,8 @@ class SurfCoreService:
     ) -> None:
         self.client = client
         self.online = False
+        #: 陪伴线桥（由 :class:`SurfCoreModule` 在 start 时挂上；独立使用时为 None）。
+        self.companion: Any = None
         self._host = host
         self._executor = executor or ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="surfcore-call"

@@ -310,19 +310,24 @@ def test_fullscreen_autohide_pauses_subsystems(tmp_path):
 
 
 # ---------------------------------------------------------------- 6. 快速对话
-class _StubChatService:
-    """ChatService 替身：只记 send 调用（不碰网络）。"""
+class _StubCompanion:
+    """陪伴线桥替身：只记 /chat 提交（不碰网络）。"""
 
     def __init__(self) -> None:
-        self.busy = False
-        self.sent: list = []
+        self.online = True
+        self.sent: list[str] = []
+        self.listeners: list = []
 
-    def send(self, messages, config):
-        self.sent.append((messages, config))
-        return "req-1"
+    def add_listener(self, callback) -> None:
+        self.listeners.append(callback)
 
-    def stop(self) -> None:
-        pass
+    def remove_listener(self, callback) -> None:
+        if callback in self.listeners:
+            self.listeners.remove(callback)
+
+    def send(self, text, on_done=None) -> bool:
+        self.sent.append(str(text))
+        return True
 
 
 def test_bubble_click_opens_quick_chat_anchored_to_sprite(tmp_path):
@@ -349,21 +354,19 @@ def test_bubble_click_opens_quick_chat_anchored_to_sprite(tmp_path):
         shell._delete_runtime_marker()
 
 
-def test_quick_chat_enter_sends_through_existing_chat_service(tmp_path):
-    """回车发送走既有 ChatService/SessionStore 链路（不接新后端）。"""
+def test_quick_chat_enter_sends_through_surfcore_companion(tmp_path):
+    """回车发送走陪伴线桥（SurfCore /chat），不再直连 API。"""
     shell, config = _make_shell(tmp_path, real_config=True)
     try:
         shell.overlay.show()
         assert shell.open_quick_chat() is True
         quick = shell._quick_chat
-        stub = _StubChatService()
-        quick.service = stub
+        stub = _StubCompanion()
+        quick.set_companion(stub)
         quick.input.setText("主人今天也要加油")
         quick.input.returnPressed.emit()
-        assert len(stub.sent) == 1
-        messages, _settings = stub.sent[0]
-        assert [m.get("content") for m in messages if m.get("role") == "user"] == [
-            "主人今天也要加油"]
+        assert stub.sent == ["主人今天也要加油"]
+        assert quick.request_in_flight() is True  # 替身没有回包：气泡停等待态
     finally:
         shell._close_quick_chat()
         shell._delete_runtime_marker()
@@ -383,24 +386,27 @@ def test_alert_bubble_click_is_noop(tmp_path):
 
 
 # ---------------------------------------------------------------- 7. 无聊天变体降级
-def test_no_chat_module_degrades_quietly(tmp_path, monkeypatch):
-    """pet.chat 缺失（打包 excludes）→ ImportError 守卫静默降级为不可点。
+def test_quick_chat_does_not_need_the_assistant_chat_module(tmp_path, monkeypatch):
+    """陪伴线不再依赖 ``pet.chat`` 的直连传输：导入面缺失也能打开气泡。
 
-    复现真实变体：``pet.quick_chat`` 的模块级 ``from .chat.service import
-    ChatService`` 在无聊天打包里抛 ImportError（name = ``pet.chat.service``）。
+    气泡的发送由 SurfCore 模块提供；模块未运行时只是离线禁用，不静默回退。
     """
+    from pet.quick_chat import SURFCORE_OFFLINE_REASON
+
     monkeypatch.setitem(sys.modules, "pet.chat.service", None)
     monkeypatch.delitem(sys.modules, "pet.quick_chat", raising=False)
     shell, _ = _make_shell(tmp_path, real_config=True)
     try:
         shell.overlay.show()
-        assert shell.quick_chat_available() is False
-        assert shell.open_quick_chat() is False
-        shell.show_bubble("无聊天变体也能冒泡")
-        assert shell._speech_bubble._raw_text == "无聊天变体也能冒泡"
-        assert shell._speech_bubble.testAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        assert shell.quick_chat_available() is True
+        assert shell.open_quick_chat() is True
+        quick = shell._quick_chat
+        assert quick.send_btn.isEnabled() is False
+        assert quick.hint_label.text() == SURFCORE_OFFLINE_REASON
+        shell.show_bubble("无聊天模块也能冒泡")
+        assert shell._speech_bubble._raw_text == "无聊天模块也能冒泡"
     finally:
+        shell._close_quick_chat()
         shell._delete_runtime_marker()
 
 

@@ -3285,30 +3285,48 @@ def test_close_while_streaming_still_cancels_the_request(tmp_path, monkeypatch):
         app.processEvents()
 
 
-def test_quick_chat_send_shows_generating_hint(tmp_path, monkeypatch):
-    """F6 同型回归（quick chat）：`_started` 此前因 id 过滤恒命中而形同死代码，
-    气泡提示停在 `_send` 里写下的「思考中…」，永远切不到「生成中…」。"""
+def test_quick_chat_send_uses_surfcore_companion(tmp_path):
+    """陪伴线：发送后停「思考中…」，/chat 回包落在同一气泡（不再走 ChatService）。"""
     from PySide6.QtWidgets import QApplication
 
-    from pet.chat.service import ChatService
     from pet.config import Config
     from pet import quick_chat as quick_chat_mod
 
     app = QApplication.instance() or QApplication([])
-    provider = _GatedChatProvider()
-    service = ChatService(provider=provider)
-    monkeypatch.setattr(quick_chat_mod, "ChatService", lambda parent=None: service)
 
-    bubble = quick_chat_mod.QuickChatBubble(Config(tmp_path))
+    class _Companion:
+        online = True
+
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.listeners: list = []
+            self._done = None
+
+        def add_listener(self, callback) -> None:
+            self.listeners.append(callback)
+
+        def remove_listener(self, callback) -> None:
+            pass
+
+        def send(self, text, on_done=None) -> bool:
+            self.sent.append(str(text))
+            self._done = on_done
+            return True
+
+        def complete(self, text: str) -> None:
+            self._done({"ok": True, "reply": {"id": "m", "text": text}}, None)
+
+    companion = _Companion()
+    bubble = quick_chat_mod.QuickChatBubble(Config(tmp_path), companion=companion)
     try:
         bubble.input.setText("你好")
         bubble._send()
-        assert provider.entered.wait(timeout=10.0), "请求未进入 provider"
-        assert _pump_until(app, lambda: bubble.hint_label.text() == "生成中…"), (
-            f"提示未切到生成中：{bubble.hint_label.text()!r}"
-        )
+        assert companion.sent == ["你好"]
+        assert bubble.hint_label.text() == "思考中…"
+        companion.complete("在的")
+        assert _pump_until(app, lambda: not bubble.request_in_flight())
+        assert "在的" in bubble.output.text()
     finally:
-        _abort_request(app, bubble, provider)
         bubble.close()
         app.processEvents()
 

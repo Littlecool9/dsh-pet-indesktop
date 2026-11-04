@@ -39,16 +39,15 @@ class _SpyBubble(QObject):
 
     show_pet_requested = Signal()
 
-    def __init__(self, config):
+    def __init__(self, config, companion=None):
         super().__init__()
         self.config = config
+        self.companion = companion
         self.role = config.get("character") if config is not None else None
-        self.settings = None
-        self.refreshed = 0
         self.feedback: list = []
 
-    def refresh_session(self):
-        self.refreshed += 1
+    def set_companion(self, companion):
+        self.companion = companion
 
     def show_for_island(self, island, activate=True, reply_text=None):
         self.shown = (island, activate, reply_text)
@@ -100,7 +99,7 @@ def test_island_chat_uses_the_slot0_profile_role_not_the_global_default(tmp_path
         assert bubble is not None
         assert bubble.config is main_view, "岛气泡的身份面必须是 slot0 路由视图"
         assert main_view.get("character") == "custom-role"
-        assert bubble.refreshed == 1, "构造后仍要走 refresh_session（会话真值同源）"
+        assert bubble.companion is None, "模块未运行时陪伴线为离线（气泡显示原因）"
     finally:
         shell.island.deleteLater()
 

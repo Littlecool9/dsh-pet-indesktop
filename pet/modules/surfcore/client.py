@@ -167,6 +167,12 @@ def _error_from_http(status: int, raw: bytes) -> SurfCoreError:
         hint = payload.get("hint")
         if isinstance(hint, str):
             server_hint = hint.strip()
+        # /chat /proactive 这类路由失败时只返回 {ok:false,error:"..."}（没有
+        # code/hint）；错误文本就是给用户看的那一句，直接拿来当 hint，免得
+        # 把"今天的额度用完了"降级成通用的"请求参数不被接受"。
+        error_text = payload.get("error")
+        if not server_hint and isinstance(error_text, str):
+            server_hint = error_text.strip()
     code = _map_error_code(status, server_code)
     hint = server_hint or _DEFAULT_HINTS.get(code) or f"SurfCore 返回了 HTTP {status}。"
     return SurfCoreError(code, status, hint)
