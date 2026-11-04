@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """B7a 生命周期收口：屏迁移后的监听重挂/气泡不丢 + ``stop()`` 释放子宠库与在飞供给。
 
-- **F2（确定缺口）**：三条 ``sprite-removed`` 监听（``behavior.forget`` /
-  ``probe.forget`` / ``throw_egg.forget``）只在 ``_build`` 注册，**重建 overlay**
+- **F2（确定缺口）**：两条 ``sprite-removed`` 监听（``behavior.forget`` /
+  ``probe.forget``）只在 ``_build`` 注册，**重建 overlay**
   的路径（今天的单窗拓扑已不存在重建，但任何未来"重建窗口"的实现）必须重挂——
-  否则屏事件之后再退出任意一只宠，``remove_sprite`` 不再注销行为/探头/彩蛋状态；
+  否则屏事件之后再退出任意一只宠，``remove_sprite`` 不再注销行为/探头状态；
 - **屏迁移丢气泡（已登记 §2.3.1）**：``_bind_bubble`` 重建跟随器会 close 旧气泡窗，
   新窗口不 show、``_sticky_*`` 也不重挂。单窗下换家不重建窗口/跟随器，这两条
   因此退化成"换家之后气泡与监听都还在"的回归护栏；
@@ -49,7 +49,7 @@ def _migrate(shell):
 
 # ---------------------------------------------------------------- F2：监听重挂
 def test_migrate_to_screen_keeps_sprite_removed_listeners(tmp_path):
-    """换家之后三条 sprite-removed 监听必须仍在（否则退出子宠残留）。"""
+    """换家之后两条 sprite-removed 监听必须仍在（否则退出子宠残留）。"""
     shell, _lib = _make_shell(tmp_path)
     try:
         shell.spawn_pet()
@@ -58,7 +58,6 @@ def test_migrate_to_screen_keeps_sprite_removed_listeners(tmp_path):
         listeners = shell.overlay._sprite_removed_listeners
         assert shell.behavior.forget in listeners
         assert shell._probe.forget in listeners
-        assert shell._throw_egg.forget in listeners
         # 行为状态表是可观测的那一条：真 tick 建态 → 真移除 → 必须注销
         shell.driver.tick_sim(1 / 60.0)
         assert child in shell.behavior._states, "前提：行为表已为该 sprite 建态"

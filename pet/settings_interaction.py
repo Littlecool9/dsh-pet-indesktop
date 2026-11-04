@@ -61,23 +61,6 @@ def build_click_rows(dialog) -> list[SettingRow]:
                 dialog.click_balance_check,
             )
         )
-    rows.extend(
-        [
-            SettingRow(
-                "golden_spin_click",
-                "点击触发黄金回旋",
-                "开启后点击桌宠触发原地逆时针 360° 旋转；下方子开关可选择跳过点击动画直接回旋。",
-                dialog.golden_spin_click_check,
-            ),
-            SettingRow(
-                "golden_spin_direct",
-                "点击回旋跳过动画",
-                "开启后点击直接开始黄金回旋，不播放 Q 弹与点击素材；连续点击会累计旋转圈数并逐圈加速。",
-                dialog.golden_spin_direct_check,
-                stacked=True,
-            ),
-        ]
-    )
     return rows
 
 

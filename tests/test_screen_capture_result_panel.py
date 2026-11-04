@@ -181,7 +181,7 @@ def test_panel_never_steals_focus_and_esc_closes_it_without_swallowing():
     assert app is not None
 
     # Esc 走应用级过滤器（面板是防抢焦点窗，收不到键盘焦点）：关掉面板，
-    # 但**不吞**事件——别的窗口要用 Esc（弹弓取消 / 关设置页）照旧收得到。
+    # 但**不吞**事件——别的窗口要用 Esc（关设置页）照旧收得到。
     # 这里按真实投递路径验：事件发给另一个窗口，过滤器顺手关面板，事件继续
     # 走到目标自己手里（probe 记到就算没被吞）。
     received: list[int] = []

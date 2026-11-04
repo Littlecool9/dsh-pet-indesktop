@@ -15,7 +15,7 @@
 
 覆盖：
 1. overlay 树 ≡ build_modern_menu(独立 pet 形基准)（注册表 + 用户编排 + 图标分组）；
-2. 显式清单：用户点名的缺失条目（AI 对话/黄金回旋/显示本轮消费/
+2. 显式清单：用户点名的缺失条目（AI 对话/显示本轮消费/
    边缘探头/大小/DeepSeek Harness/主动识屏/Agent 联动/
    网络信息）逐项在树里；
 3. 无聊天变体：聊天门条目在两侧一起消失；
@@ -70,7 +70,6 @@ ALLOWED_EXTRAS = frozenset({"退出这只"})
 # 用户点名的缺失条目（窗口侧清单 → overlay 菜单必须逐项存在）
 REQUIRED_LABELS = (
     "AI 对话",
-    "黄金回旋",
     "显示本轮消费",
     "边缘探头",
     "大小",
@@ -362,7 +361,7 @@ def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
         menu = build_sprite_full_menu(shell)
         labels = _all_labels(menu)
         for label in ("AI 对话", "播放动画", "切换角色", "播放速率", "大小",
-                      "拖动物理", "边缘探头", "黄金回旋", "显示本轮消费", "桌宠设置"):
+                      "拖动物理", "边缘探头", "显示本轮消费", "桌宠设置"):
             assert label in labels, f"modern 树缺项：{label}"
         controls = _find(menu, "桌宠控制").menu()
         assert _find(controls, "生小肥鱼") is not None
@@ -480,7 +479,6 @@ def test_menu_routes_service_semantics(tmp_path, monkeypatch):
     shell, instance, config = _make_overlay(tmp_path)
     manager_calls: list[tuple] = []
     watcher_calls: list[str] = []
-    spin_calls: list[str] = []
     reopened: list = []
     try:
         shell.agent_link_manager = type("_M", (), {
@@ -488,8 +486,6 @@ def test_menu_routes_service_semantics(tmp_path, monkeypatch):
                 manager_calls.append((key, on)), True)[1]})()
         shell.proactive_watcher = type("_W", (), {
             "apply_config": lambda self: watcher_calls.append("apply")})()
-        monkeypatch.setattr(shell, "trigger_golden_spin",
-                            lambda sprite=None: spin_calls.append(sprite))
         monkeypatch.setattr(shell.overlay, "reopen_context_menu",
                             lambda menu: reopened.append(menu))
 
@@ -499,9 +495,6 @@ def test_menu_routes_service_semantics(tmp_path, monkeypatch):
         _find(menu, "AI 对话").trigger()
         assert ("open_chat",) in instance.calls
         assert _find_anywhere(menu, "AI 设置") is None
-        # 黄金回旋 → 壳的 sprite 版旋转（作用对象 = 被点 sprite；主宠菜单 = 主 sprite）
-        _require(menu, "黄金回旋").trigger()
-        assert spin_calls == [shell.sprite]
         # 边缘探头 → config 键（探头世界每 tick 热读）；勾选动作 = toggled
         probe = _require(menu, "边缘探头")
         probe.setChecked(True)
@@ -725,44 +718,6 @@ def test_close_on_trigger_action_defers_then_dispatches(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- 8. 菜单入口的服务等价物
-def test_golden_spin_rotates_once_and_restores(tmp_path):
-    """「黄金回旋」→ sprite 整帧旋转一圈（golden_spin 常量 + 缓动）。"""
-    shell, _instance, _config = _make_overlay(tmp_path)
-    try:
-        sprite = shell.sprite
-        shell.trigger_golden_spin()
-        assert shell._golden_spin_timer is not None
-        assert shell._golden_spin_timer.isActive()
-        assert sprite.throw_rotation == 0.0
-        # 中途：缓动后应落在 (0, -360) 之间（逆时针）
-        shell._golden_spin_started = time.monotonic() - 0.2
-        shell._advance_golden_spin()
-        assert -360.0 < sprite.throw_rotation < 0.0
-        # 超过单圈时长：停表 + 回正
-        shell._golden_spin_started = time.monotonic() - 1.0
-        shell._advance_golden_spin()
-        assert not shell._golden_spin_timer.isActive()
-        assert sprite.throw_rotation == 0.0
-    finally:
-        shell._delete_runtime_marker()
-
-
-def test_golden_spin_skips_while_throw_egg_active(tmp_path):
-    """探头/彩蛋在跑时不叠加旋转（PetWindow「探头激活时不叠加」同纪律）。"""
-    shell, _instance, _config = _make_overlay(tmp_path)
-
-    class _BusyEgg:
-        active = True
-
-    try:
-        # 探头/彩蛋逐屏一份：本用例只有一块屏，替身挂到那块屏的宿主上
-        shell._main_host.throw_egg = _BusyEgg()
-        shell.trigger_golden_spin()
-        assert shell._golden_spin_timer is None or not shell._golden_spin_timer.isActive()
-    finally:
-        shell._delete_runtime_marker()
-
-
 def test_look_screen_throttles_and_syncs_reply(tmp_path, monkeypatch):
     """「看看屏幕」：忙碌/冷却提示 + worker 结果回 GUI（sync_look_to_chat）。"""
     shell, instance, _config = _make_overlay(tmp_path)

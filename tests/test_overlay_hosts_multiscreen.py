@@ -31,10 +31,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QGuiApplication,
-    QKeyEvent,
     QMouseEvent,
-    QPainter,
-    QPixmap,
 )
 from PySide6.QtWidgets import QApplication
 
@@ -197,29 +194,10 @@ def _release(local, global_pos):
         Qt.KeyboardModifier.NoModifier)
 
 
-def _painted(overlay, canvas) -> bool:
-    """在该 overlay 上真跑一次瞄准 UI 绘制，返回"是否画了内容"。
-
-    画布由调用方持有：``QPainter`` 活过临时 ``QPixmap`` 会访问违例。
-    """
-    painter = QPainter(canvas)
-    try:
-        return bool(overlay._paint_slingshot(painter))
-    finally:
-        painter.end()
-
-
 def _tick(shell, dt=1 / 60.0):
     """一个真 tick 的两段（推进段收尾才跑跨屏路由）。"""
     shell.driver.tick_sim(dt)
     shell.driver.advance_overlays(dt)
-
-
-def _right_press(local, global_pos):
-    return QMouseEvent(
-        QEvent.Type.MouseButtonPress, QPointF(local), QPointF(global_pos),
-        Qt.MouseButton.RightButton, Qt.MouseButton.RightButton,
-        Qt.KeyboardModifier.NoModifier)
 
 
 def _drag_across(shell, sprite, *, steps=16, step_px=40):
@@ -837,140 +815,13 @@ def test_island_wall_has_a_landing_on_every_screen(tmp_path, monkeypatch):
         _cleanup(shell)
 
 
-# ---------------------------------------------------------------- 跨屏组合手势
-def test_slingshot_gesture_after_crossing_uses_one_coordinate_system(
-        tmp_path, monkeypatch):
-    """跨屏拖到副屏后、**同一次 grab** 里点右键进弹弓：输入与预览同一坐标系。
-
-    单窗下"跨屏"只是同一张窗内的位移，锚点、拉拽矢量、瞄准 UI 全部在同一套局部
-    坐标里——这条用例钉住的就是"没有两套坐标可混"：拖过一整块屏之后手势仍然跟着
-    光标走，不会因为跨屏甩出去。
-    """
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        main = shell.sprite
-        main.set_pos(QPointF(200.0, 700.0))
-        overlay = shell.overlay
-        origin = QPointF(overlay.geometry().topLeft())
-        cursor, local = _drag_across(shell, main, steps=30, step_px=60)
-        assert _screen_of(shell, main) is b, "前提：这只已经拖到副屏上"
-        assert b.geometry().contains(cursor.toPoint()), "前提：光标确实落在副屏上"
-        assert overlay._mouse_grab is main
-
-        # 同一次 grab 里点右键 = 进瞄准（会话活在唯一控制器上）
-        overlay.mousePressEvent(_right_press(local, cursor))
-        slingshot = shell._slingshot
-        assert slingshot.aiming is True
-        assert slingshot.sprite is main
-        assert slingshot.anchor == QPointF(main.pos), "锚点就是这只在窗口坐标里的位置"
-        assert (slingshot.anchor_cursor - slingshot.anchor).manhattanLength() < (
-            main.rect().width() + main.rect().height()), "锚点光标与锚点同系"
-
-        # 光标向左挪 60px：拉拽矢量 = 60px（60 在弹弓拉拽上限之内）
-        pull_cursor = cursor - QPointF(60.0, 0.0)
-        overlay.mouseMoveEvent(_move(pull_cursor - origin, pull_cursor))
-        assert slingshot.pull.x() == pytest.approx(60.0, abs=1.0)
-        assert slingshot.pull.y() == pytest.approx(0.0, abs=1.0)
-
-        # 瞄准 UI 由这张窗画，脏区也归它
-        canvas = QPixmap(16, 16)   # 画布要活到 painter 结束（临时对象会崩）
-        assert _painted(overlay, canvas) is True
-        assert overlay._slingshot_dirty.isEmpty() is False
-
-        # 再点右键 = 取消并就地恢复拖拽：抓取偏移按当前光标重建
-        overlay.mousePressEvent(_right_press(pull_cursor - origin, pull_cursor))
-        assert slingshot.aiming is False
-
-        before = QPointF(main.pos)
-        next_cursor = pull_cursor + QPointF(40.0, 0.0)
-        overlay.mouseMoveEvent(_move(next_cursor - origin, next_cursor))
-        assert (QPointF(main.pos) - before).x() == pytest.approx(40.0, abs=2.0), (
-            "恢复拖拽后跟着光标走")
-
-        overlay.mouseReleaseEvent(_release(next_cursor - origin, next_cursor))
-    finally:
-        _cleanup(shell)
-
-
-# ---------------------------------------------------------------- 多窗弹弓的坐标所有者
+# ---------------------------------------------------------------- 多窗 DPR 夹具
 def _mixed_dpr_shell(tmp_path, monkeypatch):
     """混合缩放的双屏壳（副屏 DPR=2 → 每屏一窗）与其两块屏。"""
     a, b = _two_screens()
     b.set_rects((1920, 0, 1920, 1080), (1920, 0, 1920, 1040), dpr=2.0)
     _install_screens(monkeypatch, a, b)
     return _make_shell(tmp_path, a, {"allow_cross_screen": True}), a, b
-
-
-def _aim_on_host(shell, sprite) -> None:
-    """在 sprite **当前宿主窗**上按下左键、再点右键进瞄准（真鼠标事件）。"""
-    host = shell.host_for_sprite(sprite)
-    overlay = host.overlay
-    _hittable(sprite)
-    origin = QPointF(overlay.geometry().topLeft())
-    hit = QPointF(sprite.rect().center())
-    overlay.mousePressEvent(_press(hit, origin + hit))
-    cursor = origin + hit + QPointF(10.0, 0.0)
-    overlay.mousePressEvent(_right_press(cursor - origin, cursor))
-
-
-def test_slingshot_ui_only_paints_on_the_owning_window(tmp_path, monkeypatch):
-    """多窗：弹弓瞄准 UI **只由源窗**画，别家窗一笔不画（不再画幽灵弹弓）。
-
-    会话是壳内共享的一份（``shell._slingshot``），但每张窗有自己的局部坐标系：
-    副屏瞄准时按"本地坐标相同位置"重画，主窗上就会出现一条错位的幽灵橡皮带。
-    改为会话显式记录 owner，非 owner 窗直接跳过这一段绘制。
-    """
-    shell, a, b = _mixed_dpr_shell(tmp_path, monkeypatch)
-    try:
-        main = shell.sprite
-        assert shell.move_sprite_to_screen(main, b) is True
-        host_b = shell.host_for_sprite(main)
-        assert host_b.screen is b, "前提：这只在副屏的窗里"
-        overlay_b = host_b.overlay
-        overlay_a = shell.host_for_screen(a).overlay
-        assert overlay_a is not overlay_b
-
-        _aim_on_host(shell, main)
-
-        slingshot = shell._slingshot
-        assert slingshot.aiming is True
-        canvas = QPixmap(16, 16)     # 画布要活到 painter 结束（临时对象会崩）
-        assert _painted(overlay_b, canvas) is True, "源窗照常画橡皮带 + 轨迹"
-        assert _painted(overlay_a, canvas) is False, "非源窗不得画弹弓（幽灵）"
-        assert slingshot.owner is overlay_b, "会话必须记下接输入的那张窗"
-    finally:
-        _cleanup(shell)
-
-
-def test_global_escape_cancels_the_owning_window_session(tmp_path, monkeypatch):
-    """多窗：全局 Esc 必须路由到 owner——源窗的 grab/press 状态同时被收掉。
-
-    共享会话却固定调主窗 ``_cancel_slingshot`` 时，副屏瞄准按下 Esc 只会取消会话
-    本身：副屏的 ``_mouse_grab``/``_press_global`` 仍在，随后松手会走普通点击分支。
-    """
-    shell, _a, b = _mixed_dpr_shell(tmp_path, monkeypatch)
-    try:
-        main = shell.sprite
-        assert shell.move_sprite_to_screen(main, b) is True
-        overlay_b = shell.host_for_sprite(main).overlay
-        _aim_on_host(shell, main)
-        assert shell._slingshot.aiming is True
-        assert overlay_b._mouse_grab is main
-
-        shell.eventFilter(shell.overlay, QKeyEvent(
-            QEvent.Type.KeyPress, Qt.Key.Key_Escape,
-            Qt.KeyboardModifier.NoModifier))
-
-        assert shell._slingshot.aiming is False
-        assert overlay_b._mouse_grab is None, "源窗的 grab 必须一起收"
-        assert overlay_b._press_global is None
-        assert overlay_b._press_click_only is False
-        assert main.interaction_state == "normal"
-        assert shell._slingshot.owner is None
-    finally:
-        _cleanup(shell)
 
 
 # ---------------------------------------------------------------- 多窗几何变化

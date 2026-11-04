@@ -19,7 +19,7 @@
 4. 主屏切换不搬任何宠；
 5. 拔屏只迁这块屏上的宠，别的屏一个像素不动；
 6. 一次 tick 每只各推进一次（一张窗、一个 timer）；
-7. 换屏不是"退出这只宠"：不广播移除（不注销行为/探头/彩蛋状态）、不释放 clip；
+7. 换屏不是"退出这只宠"：不广播移除（不注销行为/探头状态）、不释放 clip；
 8. ``screen_name`` 与 ``rx/ry`` 逐只独立落盘（比例是相对**它自己那块屏**算的）、
    逐只独立恢复；
 9. 带落点的迁移把这只放到指定的全局左上角。
@@ -456,7 +456,7 @@ def test_transfer_keeps_clip_playing_and_never_broadcasts_removal(tmp_path, two_
         shell.move_sprite_to_screen(main, secondary)
 
         assert removed == [], (
-            "换屏不得广播 sprite 移除（那正是行为/探头/彩蛋状态的注销链）")
+            "换屏不得广播 sprite 移除（那正是行为/探头状态的注销链）")
         assert _screen_of(shell, main) is secondary
         assert main._clip is clip, "换屏不得释放这只的 clip（换屏不等于换动画）"
         assert clip._timer.isActive() is True, "换屏后播放节拍必须还在跑"

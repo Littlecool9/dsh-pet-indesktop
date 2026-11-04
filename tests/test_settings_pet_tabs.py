@@ -39,7 +39,7 @@ TAB1_ROWS = (
 TAB1_ADVANCED_ROWS = ()
 TAB2_ROWS = (
     "playback_speed", "animation_gap", "no_move",
-    "drag_physics", "drop_gravity", "throw_strength", "slingshot_enabled",
+    "drag_physics", "drop_gravity", "throw_strength",
     "lock_position", "shift_drag", "edge_probe",
     "spawn_inherit_size", "spawn_scale", "clear_spawned_pets",
     "collision_enabled", "collision_sound_enabled",

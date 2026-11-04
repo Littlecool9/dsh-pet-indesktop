@@ -32,7 +32,6 @@ DEFAULT_BASE_SCALE: float = 0.72        # 基准缩放
 FLAG_VISIBLE: int = 1 << 0              # 1: 可见
 FLAG_THROWN: int = 1 << 1               # 2: 正在抛掷中
 FLAG_DRAGGING: int = 1 << 2             # 4: 正在拖拽中 (无限质量)
-FLAG_SLINGSHOT_AIMING: int = 1 << 3     # 8: 弹弓蓄力中
 FLAG_LOCK_POSITION: int = 1 << 4        # 16: 锁定位置 (无限质量)
 FLAG_NO_MOVE: int = 1 << 5              # 32: 禁止自主漫游
 FLAG_MOUSE_THROUGH: int = 1 << 6        # 64: 鼠标穿透

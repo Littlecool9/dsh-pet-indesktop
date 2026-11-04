@@ -25,7 +25,6 @@ def test_legacy_click_sound_path_migration(tmp_path: Path):
         "path": custom_path,
     }
     assert cfg.get("click_sound_volume") == 0.70
-    assert cfg.get("slingshot_enabled") is True
     assert cfg.get("throw_strength") == "standard"
 
 

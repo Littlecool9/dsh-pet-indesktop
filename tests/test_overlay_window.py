@@ -675,7 +675,7 @@ def test_rotated_visible_pixel_outside_rect_is_hit():
     """45° 探头姿态：画在 rect 之外的可见像素必须点得中（粗筛用绘制外接矩形）。
 
     粗筛若仍用未旋转的 ``rect()``，旋转溢出的像素在 alpha 细判之前就被排除——
-    贴边探头 / 黄金回旋式的抛掷旋转全部"画在哪点不到哪"。
+    贴边探头的旋转全部"画在哪点不到哪"。
     """
     overlay, sprite = _rotated_hit_sprite()
     rect = sprite.rect()
@@ -699,23 +699,6 @@ def test_rotated_visible_pixel_outside_rect_is_hit():
     assert sprite.alpha_at(QPoint(hit.x() - rect.x(), hit.y() - rect.y())) \
         >= ALPHA_HIT_THRESHOLD                            # 细判本身能认出该像素
     assert overlay.sprite_at(hit) is sprite               # 粗筛不再提前排除
-
-
-def test_throw_rotation_overflow_pixel_is_hit():
-    """抛掷旋转（彩蛋）溢出像素同理：粗筛跟随 paint_bounds 的合成投影。"""
-    overlay, sprite = _rotated_hit_sprite()
-    rect = sprite.rect()
-    inside = QPoint(rect.x() + 10, rect.y() + 10)
-
-    sprite.set_throw_rotation(45.0)
-    bounds = sprite.paint_bounds()
-    assert bounds.contains(rect)
-
-    rotated = _paint_transform(rect, 45.0).map(QPointF(inside))
-    hit = QPoint(int(rotated.x()), int(rotated.y()))
-    assert not rect.contains(hit), "前提：旋转后的可见像素已溢出未旋转矩形"
-    assert bounds.contains(hit)
-    assert overlay.sprite_at(hit) is sprite
 
 
 def test_rotated_sprite_at_misses_off_pixel_inside_bounds():

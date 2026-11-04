@@ -11,8 +11,6 @@ from pet.physics import (
     THROW_STRENGTH_CAPS,
     estimate_release_velocity,
     normalize_throw_strength,
-    slingshot_speed,
-    slingshot_trajectory,
     soft_clamp_speed,
     spring_velocity,
     throw_speed_cap,
@@ -140,31 +138,6 @@ def test_estimate_release_velocity_custom_cap():
     assert vx_crazy > vx_gentle
     assert vx_crazy < 9000.0
 
-
-def test_slingshot_speed_threshold_ease_out_and_cap():
-    cap = 4800.0
-    assert slingshot_speed(23.9, 24.0, 160.0, cap) == 0.0
-    low = slingshot_speed(24.0, 24.0, 160.0, cap)
-    middle = slingshot_speed(92.0, 24.0, 160.0, cap)
-    high = slingshot_speed(160.0, 24.0, 160.0, cap)
-    beyond = slingshot_speed(1000.0, 24.0, 160.0, cap)
-    assert 0.0 < low < middle < high < cap
-    assert beyond == high
-
-
-def test_slingshot_trajectory_samples_gravity_arc():
-    path = slingshot_trajectory(100.0, -200.0, duration=1.0, points=11)
-    assert len(path) == 11
-    assert path[0] == (0.0, 0.0)
-    assert path[-1] == (100.0, 500.0)
-    assert path[5][0] == 50.0
-    assert path[5][1] == 75.0
-
-
-def test_slingshot_trajectory_handles_invalid_sampling():
-    assert slingshot_trajectory(100.0, 0.0, duration=0.0, points=12) == []
-    assert slingshot_trajectory(100.0, 0.0, duration=1.0, points=0) == []
-    assert slingshot_trajectory(100.0, 0.0, duration=1.0, points=1) == [(0.0, 0.0)]
 
 def test_flight_anim_speed_scales_with_speed():
     from pet.physics import flight_anim_speed

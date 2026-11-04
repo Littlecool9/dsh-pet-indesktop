@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""共享的绘制/命中变换小工具（黄金回旋 + 边缘探头共用）。
+"""共享的绘制/命中变换小工具（边缘探头）。
 
 旋转在绘制层完成，不改动 _rebuild_frame / 帧缓存 / 解码链。paintEvent 与
 _sync_mask 使用同一 begin/end 旋转路径，保证非 Windows mask 与画面一致；

@@ -47,33 +47,6 @@ def throw_speed_cap(strength: str) -> float:
     return THROW_STRENGTH_CAPS[normalized]
 
 
-# ---- 弹弓参数（不可配置常量） ----
-SLINGSHOT_MIN_DISTANCE = 24.0
-SLINGSHOT_MAX_DISTANCE = 160.0
-SLINGSHOT_BASE_SPEED = 900.0
-SLINGSHOT_MAX_DEFORMATION = 1.3
-
-
-def slingshot_deformation(pull_x: float, pull_y: float, progress: float,
-                          maximum: float = SLINGSHOT_MAX_DEFORMATION) -> tuple[float, float]:
-    """Return smooth x/y scale factors for an anisotropic slingshot stretch.
-
-    The stretch and compression axes are projected onto the widget axes, so
-    changing the pull angle never selects between discontinuous branches.
-    """
-    progress = max(0.0, min(1.0, float(progress)))
-    maximum = max(1.0, float(maximum))
-    distance = math.hypot(float(pull_x), float(pull_y))
-    if distance <= 1e-6 or progress <= 0.0:
-        return 1.0, 1.0
-    ux, uy = float(pull_x) / distance, float(pull_y) / distance
-    stretch = 1.0 + (maximum - 1.0) * progress
-    squeeze = 1.0 - (1.0 - 1.0 / maximum) * progress
-    return (
-        math.hypot(stretch * ux, squeeze * uy),
-        math.hypot(stretch * uy, squeeze * ux),
-    )
-
 # ---- 抛掷 ----
 GRAVITY = 1400.0          # px/s²
 # 碰边恢复系数。0.78 → 0.68：thrown 的地面段长度 ≈ 2·RESTITUTION·(v0-STOP)/(g·(1-RESTITUTION))，
@@ -114,30 +87,6 @@ def soft_clamp_speed(speed: float, cap: float = MAX_THROW_SPEED) -> float:
     if speed <= 0.0 or cap <= 0.0:
         return 0.0
     return cap * (1.0 - math.exp(-speed / cap))
-
-
-def slingshot_speed(distance: float, minimum: float, maximum: float, cap: float) -> float:
-    """Map pull distance to an ease-out launch speed bounded by ``cap``."""
-    if distance < minimum or maximum <= minimum or cap <= 0.0:
-        return 0.0
-    u = max(0.0, min(1.0, (float(distance) - minimum) / (maximum - minimum)))
-    eased = 1.0 - (1.0 - u) ** 2
-    raw = SLINGSHOT_BASE_SPEED + (3.0 * cap - SLINGSHOT_BASE_SPEED) * eased
-    return soft_clamp_speed(raw, cap=cap)
-
-
-def slingshot_trajectory(vx: float, vy: float, duration: float = 0.8,
-                         points: int = 12, gravity: float = GRAVITY
-                         ) -> list[tuple[float, float]]:
-    """Sample a first-flight parabolic path relative to its launch point."""
-    if duration <= 0.0 or points <= 0:
-        return []
-    if points == 1:
-        return [(0.0, 0.0)]
-    step = float(duration) / (points - 1)
-    return [(float(vx) * (i * step),
-             float(vy) * (i * step) + 0.5 * float(gravity) * (i * step) ** 2)
-            for i in range(points)]
 
 
 def spring_velocity(v: float, x: float, target: float, dt: float,

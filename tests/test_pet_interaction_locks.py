@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""弹弓几何（纯数学）与边缘探头点击音效抑制（sprite/overlay 宿主）。
+"""边缘探头点击音效抑制（sprite/overlay 宿主）。
 
-旧 PetWindow 的锁定位 / SHIFT 拖拽 / 不透明度 / 弹弓会话由 overlay 的
-``test_overlay_dead_switches`` 与 ``test_sprite_slingshot`` 覆盖；本文件保留
-两条仍属于纯逻辑/overlay 接线的回归：
-- 弹弓锚点与方向形变（``sprite_slingshot.trajectory_anchor`` /
-  ``physics.slingshot_deformation``）；
-- 探头消费点击时不播点击音效（``ShellOverlayWindow.mouseReleaseEvent``）。
+旧 PetWindow 的锁定位 / SHIFT 拖拽 / 不透明度由 overlay 的
+``test_overlay_dead_switches`` 覆盖；本文件保留探头消费点击时不播点击音效
+（``ShellOverlayWindow.mouseReleaseEvent``）的回归。
 """
 from __future__ import annotations
 
@@ -18,36 +15,7 @@ from PySide6.QtCore import QEvent, QPointF, QRect, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from pet import physics
-from pet.sprite_slingshot import trajectory_anchor
-
 app = QApplication.instance() or QApplication([])
-
-
-def test_slingshot_trajectory_anchor_starts_at_character_edge():
-    character = QRect(10, 8, 100, 100)
-    anchor = trajectory_anchor(character, QPointF(1, 1))
-    # QRect's right/bottom are inclusive, so the ray exits at (109, 107).
-    assert anchor == QPointF(109.0, 107.0)
-
-
-def test_slingshot_geometry_uses_smooth_directional_deformation():
-    horizontal = physics.slingshot_deformation(160.0, 0.0, 1.0)
-    vertical = physics.slingshot_deformation(0.0, -160.0, 1.0)
-    size = 100
-    assert round(size * horizontal[0]) == round(size * 1.3)
-    assert round(size * horizontal[1]) == round(size / 1.3)
-    assert round(size * vertical[0]) == round(size / 1.3)
-    assert round(size * vertical[1]) == round(size * 1.3)
-
-
-def test_slingshot_band_points_use_visible_edge_and_mouse_endpoint():
-    character = QRect(10, 8, 100, 100)
-    center = character.center()
-    mouse = QPointF(4.0, 57.0)
-    start = trajectory_anchor(character, mouse - QPointF(center))
-    assert start == QPointF(9.0, 57.0)
-    assert (start, mouse) == (QPointF(9.0, 57.0), QPointF(4.0, 57.0))
 
 
 def _click(shell, point):

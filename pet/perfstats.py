@@ -30,7 +30,7 @@
   Smooth 缩放→fromImage）。
 - ``rebuild.mask``：_sync_mask 掩码生成耗时（canvas 绘制 + createAlphaMask
   + QRegion）。
-- ``paint.draw``：paintEvent 全段耗时（含 slingshot/squash 附加绘制）。
+- ``paint.draw``：paintEvent 全段耗时（含 squash 附加绘制）。
 
 零开销论证（默认关闭）：
 - 产品代码里的每个打点形如 ``if perfstats.ENABLED: ...``：关闭时每帧

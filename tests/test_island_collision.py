@@ -121,7 +121,6 @@ class WallWin:
         self._hidden_paused = False
         self._interaction_state = "IDLE"
         self._throw_speed_cap = 4800.0
-        self._throw_egg = None
         self._edge_probe = None
         self._squash_active = False
         self._just_dragged = False

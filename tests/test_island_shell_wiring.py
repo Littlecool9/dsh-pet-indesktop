@@ -271,7 +271,7 @@ class _IslandOverlayHost:
         self._island_host = None
         host = types.SimpleNamespace(
             screen=None, overlay=self.overlay, collision=self.collision,
-            is_main=True, probe=None, throw_egg=None)
+            is_main=True, probe=None)
         self._hosts = [host]
         self.attach_island = OverlayShell.attach_island.__get__(self)
         self._island_screen_host = OverlayShell._island_screen_host.__get__(self)

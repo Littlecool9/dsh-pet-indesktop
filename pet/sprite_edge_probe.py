@@ -290,9 +290,8 @@ class SpriteEdgeProbeWorld:
 
         返回是否**真的取消了本次活跃探头会话**：True = 执行了
         ``cancel(sprite, "collision_throw")``；未在探头/功能关/隐藏等早退路径
-        返回 False。壳层把该返回值显式转给彩蛋 arm 条件——重进倒计时是
-        cancel 的产物、会残留 5 秒，不能反过来当作「本次撞击取消了会话」的
-        证据（实机 arm 30 次 vs 探头退出仅 11 次的根因）。
+        返回 False（重进倒计时是 cancel 的产物、会残留 5 秒，不能反过来当作
+        「本次撞击取消了会话」的证据）。
         """
         if self._hidden or not self._enabled():
             return False

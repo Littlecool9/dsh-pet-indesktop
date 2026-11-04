@@ -78,8 +78,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "ffmpeg_recycle_minutes",
         "first_frame_cache_max_mb",
         "focus_mode",
-        "golden_spin_direct",
-        "golden_spin_on_click",
         # 全局快捷键（进程级；空串 = 不绑）
         "hotkey_open_chat",
         "hotkey_look_screen",
@@ -120,7 +118,6 @@ RELOAD_WHITELIST_SNAPSHOT = frozenset(
         "self_talk_texts",
         "settings_process_isolation",
         "shift_drag",
-        "slingshot_enabled",
         "spawn_inherit_dynamic_island",
         "spawn_inherit_size",
         "spawn_scale",

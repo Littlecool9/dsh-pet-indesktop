@@ -590,29 +590,6 @@ def test_shell_wires_edge_probe_world():
     assert shell._probe.forget in shell.overlay._sprite_removed_listeners
 
 
-def test_shell_wires_throw_egg_world():
-    """throw_egg 接线：世界挂**本屏宿主**的 extras（probe 之后）+ 碰撞真撞击 arm 链 +
-    sprite 移除注销 + bounds 同步。"""
-    shell, screen, _ = _make_shell()
-    host = shell._main_host
-    egg = shell._throw_egg
-    assert egg is not None
-    assert egg in host.extras
-    # extras 顺序：probe 先（cancel 会话）、egg 后（读物理结算速度）
-    assert host.extras.index(shell._probe) < host.extras.index(egg)
-    assert egg.forget in shell.overlay._sprite_removed_listeners
-    from PySide6.QtCore import QRect
-    screen.set_rects((0, 0, 1280, 720), (0, 0, 1280, 680))
-    shell.handle_geometry_changed()
-    assert egg.bounds == QRect(0, 0, 1280, 680)
-
-
-def test_shell_wires_slingshot_config():
-    """弹弓接线：overlay.slingshot 接 shell 的 config（slingshot_enabled 热读）。"""
-    shell, _, _ = _make_shell()
-    assert shell.overlay.slingshot.config is shell._config
-
-
 def test_shell_attach_island_bridge():
     """岛桥接线：attach_island 幂等可重复调；桥挂进程级 collision 世界；
     None 摘桥；stop() 收口。"""

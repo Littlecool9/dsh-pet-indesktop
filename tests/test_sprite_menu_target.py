@@ -10,10 +10,9 @@
 1. ``switch_clip`` / ``trigger_move`` / ``set_playback_speed`` / ``change_scale`` /
    ``set_drag_physics`` / ``go_default_corner`` 作用于被点 sprite，素材清单读它的库；
    子宠设置写它自己的 ``config-slot-N.json``（B7b；主配置一字不动）；
-2. ``trigger_golden_spin(sprite=...)`` 转被点的那只；
-3. ``hide`` 只隐藏被点的那只（主宠 = 宿主窗，维持整窗隐藏语义）；
-4. ``look_at_screen(sprite=...)`` 记住发起者；
-5. ``DeepSeek 余额`` 的父窗传**发起的那一只**的代次呈现器（手动结果归发起者），
+2. ``hide`` 只隐藏被点的那只（主宠 = 宿主窗，维持整窗隐藏语义）；
+3. ``look_at_screen(sprite=...)`` 记住发起者；
+4. ``DeepSeek 余额`` 的父窗传**发起的那一只**的代次呈现器（手动结果归发起者），
 
 
 装配：真 ``OverlayShell`` + 真 ``PetSprite`` + 真 ``Config``；子宠走真
@@ -242,51 +241,6 @@ def test_main_menu_still_persists_to_master_config(tmp_path):
         assert slot["playback_speed"] == 1.6
         assert slot["drag_physics"] is True
         assert {key: config.get(key) for key in before} == before
-    finally:
-        shell._delete_runtime_marker()
-
-
-# ---------------------------------------------------------------- F2 黄金回旋
-def test_golden_spin_targets_clicked_sprite(tmp_path):
-    """「黄金回旋」转被点的那只（旧版一窗一宠，天然只有被点那只）。"""
-    shell, _instance, _config = _make_shell(tmp_path)
-    try:
-        child = _spawn_child(shell)
-        menu = build_sprite_full_menu(shell, child)
-
-        _require(menu, "黄金回旋").trigger()
-        assert shell._golden_spin_target is child
-        assert shell._golden_spin_timer is not None
-        assert shell._golden_spin_timer.isActive()
-        assert shell.sprite.throw_rotation == 0.0
-
-        # 控制器角度只写目标 sprite
-        shell._golden_spin_started = time.monotonic() - 0.2
-        shell._advance_golden_spin()
-        assert -360.0 < child.throw_rotation < 0.0
-        assert shell.sprite.throw_rotation == 0.0
-        # 转满一圈：停表 + 目标 sprite 回正（也顺手收掉在跑的定时器）
-        shell._golden_spin_started = time.monotonic() - 1.0
-        shell._advance_golden_spin()
-        assert not shell._golden_spin_timer.isActive()
-        assert child.throw_rotation == 0.0
-        assert shell.sprite.throw_rotation == 0.0
-    finally:
-        shell.clear_spawned_pets()
-        shell._delete_runtime_marker()
-
-
-def test_golden_spin_defaults_to_main_sprite(tmp_path):
-    """无参调用（旧调用点）仍转主宠。"""
-    shell, _instance, _config = _make_shell(tmp_path)
-    try:
-        shell.trigger_golden_spin()
-        assert shell._golden_spin_target is shell.sprite
-        assert shell._golden_spin_timer.isActive()
-        shell._golden_spin_started = time.monotonic() - 1.0
-        shell._advance_golden_spin()
-        assert not shell._golden_spin_timer.isActive()
-        assert shell.sprite.throw_rotation == 0.0
     finally:
         shell._delete_runtime_marker()
 

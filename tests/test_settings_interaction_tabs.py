@@ -30,8 +30,7 @@ ROWS_BY_TAB = {
     "hotkeys": ("hotkey_open_chat", "hotkey_look_screen", "hotkey_screen_capture"),
     "click": (
         "mouse_through", "click_sound", "click_sound_pack", "click_sound_volume",
-        "click_sound_preview", "click_balance", "golden_spin_click",
-        "golden_spin_direct",
+        "click_sound_preview", "click_balance",
     ),
     "self_talk": (
         "self_talk_bubble_style", "self_talk", "self_talk_duration", "self_talk_min",
@@ -97,12 +96,11 @@ def test_every_interaction_row_routes_to_its_tab_and_is_reachable(dialog):
 
     半数行另有**父开关显隐联动**（既有契约，见 test_desktop_pet_features 的依赖显隐
     用例）：``self_talk_*`` 细项随「气泡自言自语」、``click_sound_*`` 细项随
-    「点击音效」、``golden_spin_direct`` 随「点击回旋」。所以先把这三个父开关全打开，
-    再断言"激活标签后确实看得到"。
+    「点击音效」。所以先把这两个父开关全打开，再断言"激活标签后确实看得到"。
     """
     from pet.settings_widgets import SettingsTabContainer
 
-    for parent in ("self_talk_check", "click_sound_check", "golden_spin_click_check"):
+    for parent in ("self_talk_check", "click_sound_check"):
         getattr(dialog, parent).setChecked(True)
     tabs = _interaction_page(dialog).findChild(SettingsTabContainer, "settingsTaskTabs")
     for tab_key, keys in ROWS_BY_TAB.items():
