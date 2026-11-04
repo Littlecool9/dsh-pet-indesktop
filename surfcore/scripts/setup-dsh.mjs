@@ -429,6 +429,14 @@ function autoInstallProfileBundles() {
     return { attempted: true, ok: true };
   }
   log(`dsh plugin --profile ${PROFILE} install 返回退出码 ${r.status}。`);
+  // 输出已被 spawnSync 捕获；不打出来的话用户只看得到退出码，无从排错。
+  const output = `${r.stdout || ''}\n${r.stderr || ''}`.trim();
+  if (output) {
+    const tail = output.split(/\r?\n/).slice(-40).join('\n');
+    log(`dsh plugin install 输出（末尾 40 行）：\n${tail}`);
+  } else {
+    log('dsh plugin install 没有任何输出；可手动运行 `dsh plugin --profile <profile> install` 查看。');
+  }
   return { attempted: true, ok: false, reason: `dsh plugin install 返回退出码 ${r.status}` };
 }
 
