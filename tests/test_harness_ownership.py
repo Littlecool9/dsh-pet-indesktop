@@ -196,9 +196,7 @@ def _real_shell(tmp_path, monkeypatch, *, dsh_link: bool, autostart: bool = True
     cfg.save()
     shell = app_mod.AppShell(_qapp(), cfg, enable_chat=enable_chat)
     # 与本用例无关的进程级服务同步/启停全部置空（只测 harness 门控与收口）
-    shell._apply_balance_timer = lambda: None
     shell._sync_dynamic_island = lambda: None
-    shell._sync_todo_service = lambda: None
     shell._sync_festival_service = lambda: None
     return shell
 

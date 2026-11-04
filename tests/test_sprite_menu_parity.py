@@ -101,20 +101,18 @@ class _StubAppShell:
     def _record(self, name, *args, **kwargs):
         self.calls.append((name, args, kwargs))
 
-    def show_balance(self, parent=None):
-        self._record("show_balance", parent)
-
-    def open_todo_panel(self):
-        self._record("open_todo_panel")
-
     def running_module(self, module_id):
-        if module_id != "network_info":
-            return None
         shell = self
 
         class _Module:
             def open_dialog(self):
                 shell._record("open_network_info")
+
+            def open_panel(self):
+                shell._record("open_todo_panel")
+
+            def show_balance(self, parent=None):
+                shell._record("show_balance", parent)
 
         return _Module()
 
@@ -154,6 +152,12 @@ class _ReferenceModule:
     def open_dialog(self) -> None:
         pass
 
+    def open_panel(self) -> None:
+        pass
+
+    def show_balance(self, parent=None) -> None:
+        pass
+
 
 class _ReferenceHost:
     """现代建造器的独立 pet 形基准：显式声明 app 同款回调，不依赖 overlay facade。"""
@@ -164,10 +168,9 @@ class _ReferenceHost:
             setattr(self, key, list(pool))
         self.on_open_chat = (lambda: None) if chat else None
         self.on_open_chat_settings = (lambda: None) if chat else None
-        self.on_show_balance = (lambda parent=None: None) if chat else None
+        self.chat_available = bool(chat)
         self.on_look_screen = self.look_at_screen if chat else None
         self.on_open_modern_settings = lambda: None
-        self.on_open_todo_panel = lambda: None
         self.running_module = lambda _module_id: _ReferenceModule()
         self.module_unavailable_reason = lambda _module_id: ""
         self.on_switch_character = lambda character_id: None

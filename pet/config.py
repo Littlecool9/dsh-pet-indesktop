@@ -84,11 +84,6 @@ DEFAULT_CONTEXT_MENU_APPEARANCE = {
     "dark_foreground": "#f3f3f3",
     "dark_hover": "#3a3a3a",
 }
-DEFAULT_QUICK_LAUNCH_APPS = [
-    {"name": "默认浏览器", "path": "", "kind": "default_browser"},
-]
-
-
 # 2026-09-23：右键菜单去掉「鼠标穿透」（该开关的唯一入口收敛到桌宠设置 + 托盘菜单），
 # 用户旧布局里残留的该节点在此一次性剔除——否则菜单编辑器会把它一直回存成「此平台
 # 不可用」，旧入口就没有干净去向（docs/SETTINGS-CHANGE-GATES.md「旧 key/旧入口有去向」）。
@@ -161,23 +156,6 @@ def _clean_menu_appearance(value):
     ):
         result[key] = _clean_color(value.get(key), defaults[key])
     return result
-
-
-def _clean_quick_launch_apps(value):
-    if not isinstance(value, list):
-        return [dict(item) for item in DEFAULT_QUICK_LAUNCH_APPS]
-    cleaned = []
-    for item in value[:20]:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "application")
-        path = str(item.get("path") or "").strip()
-        name = str(item.get("name") or "").strip()[:60]
-        if kind == "default_browser":
-            cleaned.append({"name": name or "默认浏览器", "path": "", "kind": "default_browser"})
-        elif path and name:
-            cleaned.append({"name": name, "path": path, "kind": "application"})
-    return cleaned
 
 
 def _default_proactive_screen_data() -> dict:
@@ -807,7 +785,9 @@ def normalize_pet_profile_snapshot(raw: Any) -> dict:
 
     raw = raw if isinstance(raw, dict) else {}
     defaults = Config._initial_data()
-    data = {key: defaults[key] for key in PER_PET_KEYS}
+    # 每宠键可能由模块拥有（如余额的 click_show_balance）：模块被移除时
+    # 默认表里不再有它，快照里也不该凭空造一个键出来。
+    data = {key: defaults[key] for key in PER_PET_KEYS if key in defaults}
     data.update({key: copy.deepcopy(value) for key, value in raw.items()
                  if key in PER_PET_KEYS and (value is not None or key in _NULL_ACCEPTING_KEYS)})
     _migrate_pet_profile_values(data, raw)
@@ -880,7 +860,6 @@ class Config:
             # 菜单不再挡住桌宠。想连点多个动作连播的用户手改成 true（菜单行为类
             # 偏好：不进设置页，config.json 里改）。
             "anim_menu_stay_open": False,
-            "quick_launch_apps": [dict(item) for item in DEFAULT_QUICK_LAUNCH_APPS],
             "auto_hide_fullscreen": True,  # 全屏应用自动隐藏（Windows）
             # 允许桌宠跨屏（全局键、重启级）：开启后每块有桌宠的屏各一张合成窗，
             # 拖动可以跨显示器；关闭时全部桌宠只留在启动时那块屏。默认关 =
@@ -893,12 +872,6 @@ class Config:
             "click_sound_enabled": True,  # 点击 Q 弹音效
             "click_sound_pack": _default_click_sound_pack(),
             "click_sound_volume": 0.70,
-            "click_show_balance": False,  # 点击显示 DeepSeek 余额
-            "balance_refresh_minutes": 0,  # DeepSeek 余额自动刷新间隔（分钟，0=关闭）
-            "balance_tier_labels_mode": "default",  # 峰谷提示文案：default / liangwen / custom
-            "balance_tier_label_peak": "",  # 自定义“高峰”文本（custom 模式）
-            "balance_tier_label_idle": "",  # 自定义“空闲”文本（custom 模式）
-            "balance_tier_color_enabled": True,  # 峰谷提示颜色：高峰红/低谷绿
             "agent_cost_enabled": False,  # Agent 本轮结束时显示消费金额（用余额差值估算）
             "edge_probe_enabled": False,  # 拖到屏幕左右边缘后自动进入探头姿态
             "autostart_wanted": False,  # 用户曾开启过开机自启（用于启动自检：被安全软件清理时提醒）
@@ -934,8 +907,6 @@ class Config:
             "chat_ui_style": "modern",  # modern / classic（仅聊天窗口保留双实现）
             "chat_follow_pet": False,  # 聊天窗口是否跟随桌宠移动
             "system_notifications_enabled": True,  # 对话完成/失败/需要授权时弹桌面系统通知
-            "todo_reminder_enabled": True,  # 待办提醒总开关
-            "todo_reminder_lead_minutes": 5,  # 待办提前提醒分钟数（0~60，0=不提前）
             # 全局快捷键（进程级，不随每宠不同）：空串 = 未绑定。
             # 三个动作见 pet/hotkeys.py 的 ACTIONS；写进来时按 hotkey_spec 收成
             # 规范形式，不认识的一律清空（配置里不存脏值）。
@@ -1098,7 +1069,6 @@ class Config:
             "shift_drag",
             "pet_opacity",
             "context_menu_appearance",
-            "quick_launch_apps",
             "anim_menu_stay_open",
             "auto_hide_fullscreen",
             "quiet_minutes_default",
@@ -1107,8 +1077,6 @@ class Config:
             "click_sound_enabled",
             "click_sound_pack",
             "click_sound_volume",
-            "click_show_balance",
-            "balance_refresh_minutes",
             "autostart_wanted",
             "harness_autostart",
             "harness_launch_target",
@@ -1116,10 +1084,6 @@ class Config:
             "pnpm_bin",
             "agent_cost_enabled",
             "edge_probe_enabled",
-            "balance_tier_labels_mode",
-            "balance_tier_label_peak",
-            "balance_tier_label_idle",
-            "balance_tier_color_enabled",
             "chat_background",
             "modern_chat_background",
             "chat_background_opacity",
@@ -1131,8 +1095,6 @@ class Config:
             "chat_ui_style",
             "chat_follow_pet",
             "system_notifications_enabled",
-            "todo_reminder_enabled",
-            "todo_reminder_lead_minutes",
             "character_aliases",
             "chat_always_on_top",
             "dynamic_island",
@@ -1453,7 +1415,6 @@ class Config:
         # 动画菜单连播（#221）：布尔走 _bool_or_default（防手写 "false" 被当开）
         self.data["anim_menu_stay_open"] = _bool_or_default(
             self.data.get("anim_menu_stay_open"), False)
-        self.data["quick_launch_apps"] = _clean_quick_launch_apps(self.data.get("quick_launch_apps"))
         # 全局快捷键：收成规范形式（顺序/大小写统一），不认识/残缺 → 空串。
         # 归一化放在这里而不是只靠设置页，是因为配置文件可能被手改。
         from . import hotkey_spec as _hotkey_spec
@@ -1486,9 +1447,6 @@ class Config:
 
         # 上游 #60 系统通知开关：同规防字符串布尔误开（bool("false") is True）。
         self.data["system_notifications_enabled"] = _bool_or_default(self.data.get("system_notifications_enabled"), True)
-        # 待办提醒：开关同规防字符串布尔误开；提前量钳到 [0, 60] 分钟（0=不提前）。
-        self.data["todo_reminder_enabled"] = _bool_or_default(self.data.get("todo_reminder_enabled"), True)
-        self.data["todo_reminder_lead_minutes"] = int(_float_or_default(self.data.get("todo_reminder_lead_minutes"), 5.0, 0.0, 60.0))
         # 免打扰（issue #208）：默认时长归一到一个合法档位（手改成 7 分钟不该让
         # 菜单里一个勾选项都对不上）；布尔键同族同规，防手改字符串布尔误开。
         self.data["quiet_minutes_default"] = normalize_quiet_minutes(
@@ -1563,7 +1521,6 @@ class Config:
             "self_talk_bubble_style",
             "context_menu_appearance",
             "context_menu_layout",
-            "quick_launch_apps",
             "anim_menu_stay_open",
             "click_sound_enabled",
             "click_sound_pack",
@@ -1573,8 +1530,6 @@ class Config:
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
             "ffmpeg_recycle_minutes",
-            "todo_reminder_enabled",
-            "todo_reminder_lead_minutes",
             "focus_mode",
             "quiet_minutes_default",
             "quiet_also_on_fullscreen",
@@ -1724,7 +1679,9 @@ class Config:
                         if not target.exists():
                             values = normalize_pet_profile_snapshot(original)
                             result = pet_profiles.write_profile_settings(
-                                self.dir, 0, {key: values[key] for key in pet_profiles.PER_PET_KEYS})
+                                self.dir, 0,
+                                {key: values[key] for key in pet_profiles.PER_PET_KEYS
+                                 if key in values})
                             if not result.ok:
                                 raise cwl.JsonStateError(str(result))
                     for key in pet_profiles.PER_PET_KEYS | pet_profiles.SLOT_LOCAL_KEYS:

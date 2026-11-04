@@ -75,7 +75,6 @@ from . import harness_launcher as harness_mod
 from .click_sound import warm_click_sound_effects
 from .config import (
     DEFAULT_CONTEXT_MENU_APPEARANCE,
-    DEFAULT_QUICK_LAUNCH_APPS,
     DEFAULT_SELF_TALK_BUBBLE_STYLE,
     DEFAULT_SELF_TALK_DURATION_SECONDS,
     DEFAULT_SELF_TALK_MAX_INTERVAL,
@@ -88,7 +87,7 @@ from .context_menus.icons import (
     custom_icon_file_error,
     vector_widget_icon,
 )
-from .context_menus.quick_launch import fitted_application_icon
+from .context_menus.icons import fitted_application_icon
 from .context_menus.registry import CUSTOM_ICON_CHOICES, MENU_ACTIONS
 from .menu_layout import (
     load_default_menu_layout,
@@ -824,7 +823,7 @@ class ModernSettingsDialog(QDialog):
             menu_available_actions.difference_update({"chat", "look_screen", "balance", "proactive_screen"})
         self.menu_available_actions = frozenset(menu_available_actions)
         menu_enabled_actions = set(menu_available_actions)
-        if not self.config.get("quick_launch_apps", DEFAULT_QUICK_LAUNCH_APPS):
+        if not self.config.get("quick_launch_apps"):
             menu_enabled_actions.discard("quick_launch")
         self.menu_layout_editor = MenuLayoutEditor(
             self.config.get("context_menu_layout"),
@@ -849,7 +848,7 @@ class ModernSettingsDialog(QDialog):
         launcher_layout.setContentsMargins(0, 0, 0, 0)
         launcher_layout.setSpacing(18)
         self.quick_launch_editor = QuickLaunchEditor(
-            self.config.get("quick_launch_apps", DEFAULT_QUICK_LAUNCH_APPS),
+            self.config.get("quick_launch_apps") or [],
             launcher_content,
         )
         launcher_layout.addWidget(

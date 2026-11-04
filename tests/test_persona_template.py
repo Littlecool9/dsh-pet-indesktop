@@ -27,7 +27,8 @@ def test_all_advertised_fields_reach_presentation_layer():
     """模板宣称的每个字段都必须真正到达表现层（气泡/弹窗文案渲染）。
 
     两层机械验证，杜绝「模板提供了字段、运行时却从未注入」的糖衣：
-    1. AST 解析 pet/agent_link.py 与 pet/app.py 里全部 _dialogue/_persona_text
+    1. AST 解析 pet/agent_link.py、pet/app.py 与余额模块（余额文案的现调用点）
+       里全部 _dialogue/_persona_text
        调用点，断言 PARAMETERS[key] == 该 key 调用点显式注入的 kwargs 并集
        （双向：多宣称=占位符永远原样露出的谎言；少宣称=已注入却不告知）。
        动态 key 调用点（activity/pattern/model_access）按 kwargs 签名归组校验。
@@ -47,8 +48,8 @@ def test_all_advertised_fields_reach_presentation_layer():
     delivered = {}
     expansion_keys = set()
     dynamic = []
-    for fname in ("agent_link.py", "app.py"):
-        tree = ast.parse((root / "pet" / fname).read_text(encoding="utf-8"))
+    for rel in ("agent_link.py", "app.py", "modules/balance/module.py"):
+        tree = ast.parse((root / "pet" / rel).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -164,7 +165,7 @@ def test_all_advertised_fields_reach_presentation_layer():
     assert {"count", "errorCode", "errorMessage"} <= set(entries["model_access.one"]["parameters"])
     assert entries["balance.result"]["parameters"] == ["text"]
 
-    # balance.loading/balance.result 真实渲染（pet/app.py），必须可导出；死键不得回流
+    # balance.loading/balance.result 真实渲染（余额模块），必须可导出；死键不得回流
     assert "balance.loading" in entries and "balance.result" in entries
     assert "balance.query" not in entries
 

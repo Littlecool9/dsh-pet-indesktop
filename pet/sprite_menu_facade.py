@@ -16,7 +16,7 @@
     cfg/scale/change_scale/playback_speed/set_playback_speed  → 被点 sprite + 各自那份 config
     on_open_chat / on_open_chat_settings                      → PetInstance.open_chat*
     on_open_modern_settings                                   → OverlayShell.open_settings_for
-    on_show_balance / on_open_todo_panel                      → AppShell（进程级服务）
+    running_module / module_unavailable_reason                → AppShell 模块注册表
     toggle_agent_link                                         → agent_link_manager（共享 manager）
     toggle_proactive_enabled / set_proactive_option           → proactive_watcher（共享监视器）
     look_at_screen / rename_character                       → 壳的 sprite 等价实现（作用被点 sprite）
@@ -299,6 +299,11 @@ class SpriteMenuFacade:
         return bool(getattr(self._instance, "enable_chat", True))
 
     @property
+    def chat_available(self) -> bool:
+        """聊天能力门（余额等依赖聊天凭据的模块菜单项据此决定是否出现）。"""
+        return self._chat_enabled()
+
+    @property
     def on_open_chat(self):
         """「AI 对话」：legacy 由 app 注入 ``PetInstance.open_chat``（纯桌宠版
         注入 None → 条目整条不显示）；这里同一门（``enable_chat``）。"""
@@ -362,25 +367,6 @@ class SpriteMenuFacade:
                 if host is not None:
                     return host
         return self._shell
-
-    @property
-    def on_show_balance(self):
-        """「DeepSeek 余额」：``AppShell.show_balance``（app._wire_window 注入的
-        同一个方法）；父窗传**发起 sprite 的呈现器**（呈现代次收口，见
-        :meth:`_service_host`）。壳本身也是合法宿主（``cfg`` / ``show_bubble`` /
-        ``request_link_anim`` 全套面），故壳不可用时不会出现 AttributeError。
-        """
-        if not self._chat_enabled():
-            return None
-        fn = _first_callable(self._hosts(), ("show_balance",))
-        if fn is None:
-            return None
-        host = self._service_host()
-        return lambda *_ignored: fn(host)
-
-    @property
-    def on_open_todo_panel(self):
-        return _first_callable(self._hosts(), ("open_todo_panel",))
 
     # ---------------------------------------------------------------- 模块入口
     def running_module(self, module_id: str):

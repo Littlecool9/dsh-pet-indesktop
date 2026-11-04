@@ -115,7 +115,7 @@ def test_dynamic_island_resizes_when_info_changes(tmp_path: Path):
 
 def test_dynamic_island_balance_tier_color_syncs_to_setting(tmp_path: Path, monkeypatch):
     """灵动岛余额峰谷信息槽跟随设置的颜色开关显示高峰/低谷颜色。"""
-    import pet.balance as balance_mod
+    import pet.balance_pricing as balance_mod
     from pet.dynamic_island import DynamicIsland
 
     app = QApplication.instance() or QApplication([])
