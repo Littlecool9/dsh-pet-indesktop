@@ -21,11 +21,11 @@ import time
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QPointF, QRect, Qt
+from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
-from pet.config import Config
-from pet.window import PetWindow
-from tests.test_window_pause import FakeLibrary
+from pet.overlay_window import OverlayWindow
 
 # 本文件必须跑在真实窗口系统上：offscreen 平台根本没有原生 HWND
 # （GetWindowLongW 拿不到扩展样式），也没有真实前台窗口可判定。
@@ -119,14 +119,47 @@ def _click_at(x: int, y: int) -> None:
         time.sleep(0.05)
 
 
-def _make_pet(tmp_path) -> PetWindow:
-    return PetWindow(FakeLibrary(), Config(base=tmp_path))
+class _OpaqueSprite:
+    """overlay 命中判定所需的最小 sprite（不透明矩形，不移动）。"""
+
+    def __init__(self, pos, size) -> None:
+        self.pos = QPointF(*pos)
+        self._size = size
+        self.velocity = QPointF(0, 0)
+        self.frame_dirty = False
+        self.image = QImage(size[0], size[1], QImage.Format.Format_ARGB32)
+        self.image.fill(Qt.GlobalColor.blue)
+
+    def rect(self):
+        return QRect(int(self.pos.x()), int(self.pos.y()),
+                     self._size[0], self._size[1])
+
+    def alpha_at(self, local):
+        x, y = int(local.x()), int(local.y())
+        if 0 <= x < self._size[0] and 0 <= y < self._size[1]:
+            return (self.image.pixel(x, y) >> 24) & 0xFF
+        return 0
+
+    def advance(self, dt):
+        return None
+
+    def paint(self, painter: QPainter):
+        painter.drawImage(self.rect(), self.image)
+
+    def on_press(self, pos):
+        pass
+
+    def on_move(self, pos):
+        pass
+
+    def on_release(self, pos):
+        pass
 
 
-def test_pet_window_has_noactivate_ex_style(tmp_path):
-    """桌宠窗口必须带 WS_EX_NOACTIVATE，否则点击会夺走前台（issue #98）。"""
+def test_overlay_window_has_noactivate_ex_style():
+    """overlay 宠物窗口必须带 WS_EX_NOACTIVATE，否则点击会夺走前台（issue #98）。"""
     app = QApplication.instance() or QApplication([])
-    win = _make_pet(tmp_path)
+    win = OverlayWindow()
     try:
         win.show()
         _pump(app)
@@ -142,10 +175,12 @@ def test_pet_window_has_noactivate_ex_style(tmp_path):
         _pump(app)
 
 
-def test_clicking_pet_does_not_steal_foreground(tmp_path):
+def test_clicking_pet_does_not_steal_foreground():
     """跨进程实测：点击桌宠后，前台窗口仍属于原来的应用。
 
     必须跨进程：同进程窗口共享前台队列，`GetForegroundWindow()` 分不清。
+    overlay 是全屏合成窗，点击必须落在不透明 sprite 上，否则逐像素穿透会按设计
+    让点击直达下层应用，就测不到"点击是否夺前台"。
     """
     app = QApplication.instance() or QApplication([])
     holder = Path(__file__).resolve().parent / 'helpers' / 'foreground_holder.py'
@@ -164,11 +199,9 @@ def test_clicking_pet_does_not_steal_foreground(tmp_path):
             pytest.skip('前台锁拒绝把新窗口推上前台（本机环境），'
                         '无法判定桌宠是否夺前台')
 
-        win = _make_pet(tmp_path)
-        # 先给窗口一帧真实角色内容：点击必须落在不透明区域，否则逐像素穿透会
-        # 按设计让点击穿透到下层，就测不到"点击是否夺前台"（与捕获兼容用例同法）。
-        win.movie = win.lib.movie(win.idle)
-        win._rebuild_frame()
+        win = OverlayWindow()
+        sprite = _OpaqueSprite((100, 100), (200, 200))
+        win.add_sprite(sprite)
         win.show()
         _pump(app, 40)
         pet_hwnd = int(win.winId())
@@ -178,12 +211,16 @@ def test_clicking_pet_does_not_steal_foreground(tmp_path):
         u32 = _user32()
         rect = wt.RECT()
         u32.GetWindowRect(wt.HWND(pet_hwnd), ctypes.byref(rect))
-        bounds = win._mask_bounds
-        if bounds is not None and not bounds.isEmpty():
-            lx, ly = bounds.center().x(), bounds.center().y()
-        else:
-            lx, ly = win.width() // 2, win.height() // 2
-        cx, cy = rect.left + lx, rect.top + ly
+        local = sprite.rect().center()
+        cx, cy = rect.left + local.x(), rect.top + local.y()
+
+        # 逐像素穿透控制器要看得到"光标落在不透明像素上"才恢复接收点击：
+        # 先把光标移过去，再给事件循环时间跑一轮探测。
+        u32.SetCursorPos(cx, cy)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.02)
 
         # 安全哨兵：只有光标下确实是桌宠窗口时才发真实点击，绝不误点别的应用
         under = _hwnd(u32.WindowFromPoint(wt.POINT(cx, cy)))

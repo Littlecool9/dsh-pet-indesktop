@@ -29,7 +29,15 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QMenu
 
 from pet import catalog
-from pet.context_menu import populate_context_menu
+from pet.context_menus import build_modern_menu
+from pet.context_menus.menu_styles import (
+    apply_modern_menu_style,
+    install_modern_check_indicators,
+)
+from pet.context_menus.menu_styles.common import (
+    install_responsive_menu_style,
+    install_stay_open_interaction,
+)
 
 app = QApplication.instance() or QApplication([])
 
@@ -86,8 +94,15 @@ class _FakePet:
 
 
 def _build_menu(pet) -> QMenu:
+    """现代菜单流水线（旧 ``populate_context_menu`` 的等价建造路径）。"""
     menu = QMenu()
-    populate_context_menu(menu, pet)
+    cfg = getattr(pet, "cfg", None)
+    apply_modern_menu_style(
+        menu, cfg.get("context_menu_appearance", {}) if cfg is not None else {})
+    build_modern_menu(menu, pet)
+    install_modern_check_indicators(menu)
+    install_responsive_menu_style(menu)
+    install_stay_open_interaction(menu)
     return menu
 
 

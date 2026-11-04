@@ -25,8 +25,16 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from pet import menu_layout  # noqa: E402
-from pet.context_menu import populate_context_menu  # noqa: E402
+from pet.context_menus import build_modern_menu  # noqa: E402
 from pet.context_menus import registry as registry_mod  # noqa: E402
+from pet.context_menus.menu_styles import (  # noqa: E402
+    apply_modern_menu_style,
+    install_modern_check_indicators,
+)
+from pet.context_menus.menu_styles.common import (  # noqa: E402
+    install_responsive_menu_style,
+    install_stay_open_interaction,
+)
 from pet.screen_capture import actions as actions_mod  # noqa: E402
 
 
@@ -102,10 +110,21 @@ class _FakePet:
         return lambda *args, **kwargs: None
 
 
+def _populate(menu, pet):
+    """旧 ``populate_context_menu`` 的等价流水线（overlay 侧同一建造器）。"""
+    cfg = getattr(pet, "cfg", None)
+    apply_modern_menu_style(
+        menu, cfg.get("context_menu_appearance", {}) if cfg is not None else {})
+    build_modern_menu(menu, pet)
+    install_modern_check_indicators(menu)
+    install_responsive_menu_style(menu)
+    install_stay_open_interaction(menu)
+
+
 def _screen_capture_action(pet=None):
     """「截图」在菜单上是一个**直接动作**（不套子菜单——只有一个选项没必要，实机反馈）。"""
     menu = QMenu()
-    populate_context_menu(menu, pet or _FakePet())
+    _populate(menu, pet or _FakePet())
     action = next(
         (item for item in menu.actions() if item.text() == "截图提问"), None
     )
@@ -204,15 +223,14 @@ def test_the_entry_survives_without_a_chat_capability():
 def test_group_is_hidden_when_the_host_has_no_screen_capture_surface():
     """宿主没接这套回调（纯桌宠变体）= 能力不可用 → 整组不出现。"""
     menu = QMenu()
-    populate_context_menu(menu, _FakePet(surfaces=False))
+    _populate(menu, _FakePet(surfaces=False))
     assert "截图提问" not in [action.text() for action in menu.actions()]
 
 
 def test_real_hosts_expose_the_single_entry():
     """入口在两个真实宿主上都接了线（只查菜单树会漏：两边同时缺也"自证"通过）。
 
-    单窗拓扑 = ``PetWindow``；sprite 拓扑 = ``OverlayShell``（``SpriteMenuFacade``
-    只是每次右键重建的转发面，真正的长期宿主是壳）。``on_screen_capture`` 缺了，
+    长期宿主 = ``OverlayShell``（``SpriteMenuFacade`` 只是每次右键重建的转发面）。``on_screen_capture`` 缺了，
     菜单上那组就会因为"能力不可用"整组消失，而只比对菜单树的用例抓不到。
 
     **顺带钉旧名字必须死透**：三个老回调（``on_screen_capture_ocr`` / ``_translate``
@@ -221,10 +239,9 @@ def test_real_hosts_expose_the_single_entry():
     """
     from pet.overlay_shell import OverlayShell
     from pet.sprite_menu_facade import SpriteMenuFacade
-    from pet.window import PetWindow
 
     retired = ("on_screen_capture_ocr", "on_screen_capture_translate", "on_screen_capture_ask")
-    for host in (PetWindow, OverlayShell, SpriteMenuFacade):
+    for host in (OverlayShell, SpriteMenuFacade):
         assert isinstance(getattr(host, "on_screen_capture", None), property), (
             f"{host.__name__}.on_screen_capture 没接线")
         for name in retired:
