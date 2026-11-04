@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """边缘探头 sprite 版 offscreen 单测（overlay/sprite 架构移植）。
 
-语义蓝本是旧窗口机 pet/edge_probe.py（只读参考，不 import 其控制器；只
-import 纯几何函数 probe_body_bounds 做口径对拍）。本文件覆盖：
+语义蓝本是旧窗口机 pet/edge_probe.py（已随旧窗口删除；放宽域公式在本文件
+内联对拍）。本文件覆盖：
 
 - 进入条件：使能（config 每次判定前热读）/贴边/静止三条件齐备才进；
 - 过渡动画时间基：注入时钟，一个 tick 跳 150ms 必须推进到 OutCubic(0.5)
@@ -33,7 +33,6 @@ from PySide6.QtCore import QObject, QPointF, QRect, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QRegion
 from PySide6.QtWidgets import QApplication
 
-from pet.edge_probe import probe_body_bounds
 from pet.overlay_window import OverlayWindow
 from pet.pet_sprite import INTERACTION_DRAG, INTERACTION_NORMAL, INTERACTION_THROWN, PetSprite
 from pet.sprite_behavior import STATE_MOVE, BehaviorController
@@ -554,7 +553,7 @@ def test_multiple_sprites_are_independent():
 
 # ---------------------------------------------------------------- 钳制放宽与恢复
 def test_probe_clamp_matches_old_probe_body_bounds_and_restores():
-    """探头放宽域与旧 probe_body_bounds 逐值一致；取消恢复常规钳制。"""
+    """探头放宽域与旧 probe_body_bounds 公式逐值一致；取消恢复常规钳制。"""
     world, clock = _world()
     sprite = _sprite((0.0, 300.0))
     _drive_to_peeking(world, clock, [sprite])
@@ -562,7 +561,14 @@ def test_probe_clamp_matches_old_probe_body_bounds_and_restores():
     body = sprite.body_rect()
     assert body.left() < BOUNDS.left()  # 身体已藏出左缘
     body_local = body.translated(-sprite.rect().topLeft())
-    assert sprite.probe_clamp_bounds().toAlignedRect() == probe_body_bounds(BOUNDS, body_local)
+    # 旧 probe_body_bounds 的放宽域公式（随旧窗口删除，在本文件内联）：
+    expected = QRect(
+        BOUNDS.left() - body_local.x() - body_local.width(),
+        BOUNDS.top() - body_local.y(),
+        BOUNDS.width() + 2 * body_local.width() + 2 * body_local.x(),
+        BOUNDS.height() + 2 * body_local.y(),
+    )
+    assert sprite.probe_clamp_bounds().toAlignedRect() == expected
 
     # 放宽域内可继续把身体整体推出（旧语义：左右各放宽一个身体宽）
     target = QPointF(BOUNDS.left() - body.width() + 4, sprite.pos.y())

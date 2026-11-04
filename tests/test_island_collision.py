@@ -16,7 +16,6 @@ from PySide6.QtWidgets import QApplication
 
 from pet import collision
 from pet import physics as physics_mod
-from pet import window_placement
 from pet.config import Config
 from pet.dynamic_island import DynamicIsland
 from pet.island_collision import IslandCollisionBody
@@ -99,8 +98,9 @@ class FakePhysicsTimer:
 class WallWin:
     """同步墙的窗口桩：全窗口即身体（无 body_box），带虚拟坐标/物理状态。
 
-    _move_window_towwards 走真实统一出口（window_placement.move_window_towards），
-    供"落窗即钳制 / 抛掷反射 / submit 推挤 / 撞岛业务链"端到端断言使用。
+    本地 ``_move_window_towards`` 复刻已删除的统一位置出口语义：若挂了
+    ``_island_clamp_body`` hook 就先让它钳制再落窗，供"落窗即钳制 / 抛掷反射 /
+    submit 推挤 / 撞岛业务链"端到端断言使用。
     """
 
     def __init__(self, x: float, y: float, w: int, h: int, *,
@@ -157,7 +157,10 @@ class WallWin:
                       int(self._y) + self._draw_delta.y())
 
     def _move_window_towards(self, x, y, body_bounds=None):
-        window_placement.move_window_towards(self, x, y, body_bounds=body_bounds)
+        hook = getattr(self, "_island_clamp_body", None)
+        if callable(hook):
+            x, y = hook(self, x, y, self._stable_body_local_rect())
+        self.move(x, y)
 
     def _cancel_move(self):
         pass
@@ -238,7 +241,7 @@ def test_synchronous_clamp_keeps_body_out_of_island(tmp_path):
     """同步硬墙：统一位置出口在每次落窗前把身体框钳出岛碰撞区（像屏幕边界墙）。
 
     30Hz 判定有采样间隙（帧间可钻进区→被弹→速度不足离区→再判定→抽搐）；
-    同步钳制在 move_window_towwards 里逐次落窗，身体框根本不进入岛区，从源头
+    同步钳制在统一位置出口里逐次落窗，身体框根本不进入岛区，从源头
     杜绝穿透与抽搐。这里目标位置让身体中心落在岛轴上，应被钳到岛外。
     """
     _qapp()
@@ -251,8 +254,7 @@ def test_synchronous_clamp_keeps_body_out_of_island(tmp_path):
         stadium = body._island_stadium()
         ax0, ax1, ay, rr, _h = stadium
         target_cx = (ax0 + ax1) / 2.0
-        window_placement.move_window_towards(
-            win, target_cx - win._w / 2.0, ay - win._h / 2.0)
+        win._move_window_towards(target_cx - win._w / 2.0, ay - win._h / 2.0)
         _assert_body_out_of_stadium(win, body, "落点恰在岛轴")
     finally:
         island.hide()
@@ -260,7 +262,7 @@ def test_synchronous_clamp_keeps_body_out_of_island(tmp_path):
 
 
 def test_no_island_clamp_without_hook(tmp_path):
-    """无 hook（岛碰撞关闭）时 move_window_towards 不钳制——行为与改造前一致。"""
+    """无 hook（岛碰撞关闭）时统一位置出口不钳制——行为与改造前一致。"""
     _qapp()
     island, body = _make_body(tmp_path)
     try:
@@ -270,8 +272,7 @@ def test_no_island_clamp_without_hook(tmp_path):
         stadium = body._island_stadium()
         ax0, ax1, ay, _rr, _h = stadium
         target_cx = (ax0 + ax1) / 2.0
-        window_placement.move_window_towards(
-            win, target_cx - win._w / 2.0, ay - win._h / 2.0)
+        win._move_window_towards(target_cx - win._w / 2.0, ay - win._h / 2.0)
         center_x = win.x() + win._draw_delta.x() + win._w / 2.0
         center_y = win.y() + win._draw_delta.y() + win._h / 2.0
         # 统一出口对坐标取整（int(round)），容差放 1px
@@ -291,7 +292,7 @@ def test_clamp_noop_when_body_already_outside(tmp_path):
         body._running = True
         win = WallWin(100, 100, 120, 120)
         win._island_clamp_body = body._clamp_body
-        window_placement.move_window_towards(win, 100.0, 100.0)
+        win._move_window_towards(100.0, 100.0)
         assert win.x() == 100 and win.y() == 100
     finally:
         island.hide()
@@ -312,7 +313,7 @@ def test_wall_inactive_when_stopped_hidden_or_docked(tmp_path):
         ty = ay - win._h / 2.0
 
         def center_on_axis():
-            window_placement.move_window_towards(win, tx, ty)
+            win._move_window_towards(tx, ty)
             center_x = win.x() + win._w / 2.0
             return abs(center_x - (ax0 + ax1) / 2.0) < 1.0
 
@@ -345,8 +346,7 @@ def test_tall_pet_side_wall_uses_half_width(tmp_path):
         ax0, _ax1, ay, rr, _h = stadium
         # 目标：身体中心与岛轴同高、位于左端帽左侧 90px（90 < 78+22 会越界），
         # 纯横向分离，按横向半宽推出
-        window_placement.move_window_towards(
-            win, ax0 - 90.0 - 156.0 / 2.0, ay - 194.0 / 2.0)
+        win._move_window_towards(ax0 - 90.0 - 156.0 / 2.0, ay - 194.0 / 2.0)
         center_x = win.x() + win._w / 2.0
         assert abs(center_x - (ax0 - (78.0 + rr + 1.0))) < 2.0
     finally:
@@ -366,8 +366,7 @@ def test_wall_geometry_independent_of_screen_size(tmp_path):
             win._island_clamp_body = body._clamp_body
             stadium = body._island_stadium()
             ax0, ax1, ay, rr, _h = stadium
-            window_placement.move_window_towards(
-                win, (ax0 + ax1) / 2.0 - win._w / 2.0, ay - win._h / 2.0)
+            win._move_window_towards((ax0 + ax1) / 2.0 - win._w / 2.0, ay - win._h / 2.0)
             _assert_body_out_of_stadium(win, body, f"屏幕 {screen_w}x{screen_h}")
         finally:
             island.hide()
@@ -624,7 +623,7 @@ def test_body_without_island_never_blocks_movement(tmp_path):
         body._pets_provider = lambda: [win]   # 钩子照挂（AppShell 的既有行为）
         body.refresh_hooks()
 
-        window_placement.move_window_towards(win, 300, 420)
+        win._move_window_towards(300, 420)
 
         assert win.x() == 300 and win.y() == 420, "没有岛就不该有任何墙"
     finally:
