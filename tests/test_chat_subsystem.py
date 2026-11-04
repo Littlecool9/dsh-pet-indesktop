@@ -20,7 +20,6 @@ from pet.chat.providers import (
     normalize_chat_endpoint,
 )
 from pet.chat.session_store import SessionStore
-from pet.window import _squash_geometry
 
 
 def test_provider_endpoint_normalization():
@@ -283,7 +282,7 @@ def test_pet_window_visible_content_rect_uses_alpha_mask():
     from PySide6.QtCore import QPoint, QRect, QSize
     from PySide6.QtGui import QRegion
     from PySide6.QtWidgets import QApplication
-    from pet.window import PetWindow
+    from pet import window_placement
 
     class FakePet:
         def frameGeometry(self):
@@ -297,7 +296,8 @@ def test_pet_window_visible_content_rect_uses_alpha_mask():
             return QRegion(QRect(36, 24, 72, 112))
 
     app = QApplication.instance() or QApplication([])
-    assert PetWindow.visible_content_rect(FakePet()) == QRect(QPoint(136, 224), QSize(72, 112))
+    assert window_placement.visible_content_rect(FakePet()) == QRect(
+        QPoint(136, 224), QSize(72, 112))
     app.processEvents()
 
 
@@ -467,25 +467,31 @@ def test_chat_window_session_switch_and_character_refresh(tmp_path: Path):
 
 
 def test_squash_geometry_uses_logical_frame_size_at_high_dpi():
-    # DPR=2 的 QPixmap 物理尺寸不能直接拿来当 QWidget 逻辑绘制尺寸。
-    # Q 弹中间帧应与 DPR 无关，并保持脚底在窗口底线。
-    logical = _squash_geometry(
-        window_width=640,
-        window_height=390,
-        frame_width=640,
-        frame_height=360,
-        progress=0.5,
-    )
-    physical_mistake = _squash_geometry(
-        window_width=640,
-        window_height=390,
-        frame_width=1280,
-        frame_height=720,
-        progress=0.5,
-    )
-    assert logical == (-32, 84, 704, 306)
-    assert physical_mistake != logical
-    assert logical[1] + logical[3] == 390
+    """Q 弹中间帧只吃逻辑 rect（与 DPR 无关），并保持脚底在 sprite 底线。
+
+    旧 ``window._squash_geometry`` 已随 PetWindow 删除；sprite 世界的同式实现是
+    ``PetSprite._squashed_rect``（只读逻辑 ``rect()``，不读 pixmap 物理尺寸）。
+    """
+    from PySide6.QtCore import QRect
+
+    from pet.pet_sprite import PetSprite
+
+    class _SpriteGeom:
+        _squash_progress = 0.5
+
+        def __init__(self):
+            self._dpr = 1.0
+
+        def rect(self):
+            return QRect(0, 0, 640, 360)
+
+    sprite = _SpriteGeom()
+    logical = PetSprite._squashed_rect(sprite)
+    sprite._dpr = 2.0  # DPR 翻倍不得改变几何
+    assert PetSprite._squashed_rect(sprite) == logical
+    assert (logical.x(), logical.y(), logical.width(), logical.height()) == (
+        -32, 54, 704, 306)
+    assert logical.y() + logical.height() == 360
 
 
 def test_follow_pet_option_registers_and_unregisters_position_listener(tmp_path: Path):
@@ -738,7 +744,7 @@ def test_chat_ui_style_defaults_modern_and_dispatches_classic_on_request(tmp_pat
 
 def test_single_modern_menu_routes_to_selected_chat_dispatcher():
     from PySide6.QtWidgets import QApplication, QMenu
-    from pet.context_menu import populate_context_menu
+    from pet.context_menus import build_modern_menu
 
     class Config(dict):
         def get(self, key, default=None):
@@ -761,7 +767,7 @@ def test_single_modern_menu_routes_to_selected_chat_dispatcher():
     app = QApplication.instance() or QApplication([])
     pet = Pet()
     menu = QMenu()
-    populate_context_menu(menu, pet)
+    build_modern_menu(menu, pet)
     next(action for action in menu.actions() if action.text() == "AI 对话").trigger()
     assert pet.calls == ["selected"]
     app.processEvents()
@@ -1672,44 +1678,6 @@ def test_append_look_sync_persists_to_session(tmp_path: Path):
     app.processEvents()
 
 
-def test_quit_closes_active_context_menu_before_leaving_event_loop(monkeypatch):
-    import time
-    from PySide6.QtWidgets import QApplication
-    import pet.window as window_mod
-    from pet.window import PetWindow
-
-    events = []
-
-    class FakeMenu:
-        def close(self):
-            events.append("close")
-
-    class FakeApp:
-        def quit(self):
-            events.append("quit")
-
-    class FakeQApplication:
-        @staticmethod
-        def instance():
-            return FakeApp()
-
-    class FakePet:
-        _active_context_menu = FakeMenu()
-
-        def _save_position(self):
-            events.append("save")
-
-    monkeypatch.setattr(window_mod, "QApplication", FakeQApplication)
-    PetWindow._request_quit(FakePet())
-    # 退出不再保存当前位置（自动移动/抛掷后的位置不覆盖手动放置记忆）
-    assert events == ["close"]
-    app = QApplication.instance() or QApplication([])
-    deadline = time.time() + 0.2
-    while events[-1:] != ["quit"] and time.time() < deadline:
-        app.processEvents()
-        time.sleep(0.005)
-    assert events == ["close", "quit"]
-
 
 def test_short_conversation_starts_at_timeline_top_while_composer_stays_bottom(tmp_path: Path):
     from PySide6.QtWidgets import QApplication
@@ -1733,257 +1701,7 @@ def test_short_conversation_starts_at_timeline_top_while_composer_stays_bottom(t
     app.processEvents()
 
 
-def test_close_required_menu_callback_runs_only_after_exec_returns(monkeypatch):
-    from PySide6.QtCore import QPoint
-    import pet.window as window_mod
-    from pet.window import PetWindow
 
-    state = {"inside_exec": False}
-    calls = []
-
-    class FakeSignal:
-        def connect(self, callback):
-            self.callback = callback
-
-        def emit(self):
-            self.callback()
-
-    class FakeMenu:
-        def __init__(self, _parent):
-            self.aboutToShow = FakeSignal()
-            self.aboutToHide = FakeSignal()
-            self.destroyed = FakeSignal()
-
-        def exec(self, _pos):
-            state["inside_exec"] = True
-            self._deferred_callbacks = [lambda: calls.append(state["inside_exec"])]
-            state["inside_exec"] = False
-
-        def findChildren(self, _type):
-            return []
-
-        def sizeHint(self):
-            from PySide6.QtCore import QSize
-
-            return QSize(120, 180)
-
-        def setLayoutDirection(self, _direction):
-            pass
-
-        def deleteLater(self):
-            self.destroyed.emit()
-
-    class FakePet:
-        def _restore_on_top_after_context_menu(self):
-            pass
-
-        def visible_content_rect(self):
-            from PySide6.QtCore import QRect
-
-            return QRect(300, 300, 200, 150)
-
-        def _screen_available(self, _screen_name=None):
-            from PySide6.QtCore import QRect
-
-            class _Screen:
-                @staticmethod
-                def availableGeometry():
-                    return QRect(0, 0, 1920, 1080)
-
-            return _Screen()
-
-    class _BubbleStub:
-        def hide(self):
-            pass
-
-    FakePet._speech_bubble = _BubbleStub()
-
-    monkeypatch.setattr(window_mod, "QMenu", FakeMenu)
-    monkeypatch.setattr(window_mod, "_populate_context_menu", lambda _menu, _pet: None)
-    monkeypatch.setattr(window_mod.QTimer, "singleShot", lambda *args: args[-1]())
-    pet = FakePet()
-    PetWindow._show_context_menu(pet, QPoint(12, 18))
-    assert calls == [False]
-    assert pet._active_context_menu is None
-
-
-def test_context_menu_window_callback_waits_until_old_menu_is_destroyed(monkeypatch):
-    from PySide6.QtCore import QPoint
-
-    import pet.window as window_mod
-    from pet.window import PetWindow
-
-    calls = []
-    timers = []
-    created = []
-
-    class FakeSignal:
-        def __init__(self):
-            self.callbacks = []
-
-        def connect(self, callback):
-            self.callbacks.append(callback)
-
-        def emit(self):
-            for callback in list(self.callbacks):
-                callback()
-
-    class FakeMenu:
-        def __init__(self, _parent):
-            self.aboutToShow = FakeSignal()
-            self.aboutToHide = FakeSignal()
-            self.destroyed = FakeSignal()
-            self.delete_requested = False
-            created.append(self)
-
-        def exec(self, _pos):
-            self._deferred_callbacks = [lambda: calls.append("settings")]
-
-        def findChildren(self, _type):
-            return []
-
-        def sizeHint(self):
-            from PySide6.QtCore import QSize
-
-            return QSize(120, 180)
-
-        def setLayoutDirection(self, _direction):
-            pass
-
-        def deleteLater(self):
-            self.delete_requested = True
-
-    class FakePet:
-        def _restore_on_top_after_context_menu(self):
-            pass
-
-        def visible_content_rect(self):
-            from PySide6.QtCore import QRect
-
-            return QRect(300, 300, 200, 150)
-
-        def _screen_available(self, _screen_name=None):
-            from PySide6.QtCore import QRect
-
-            class _Screen:
-                @staticmethod
-                def availableGeometry():
-                    return QRect(0, 0, 1920, 1080)
-
-            return _Screen()
-
-    class _BubbleStub:
-        def hide(self):
-            pass
-
-    FakePet._speech_bubble = _BubbleStub()
-
-    monkeypatch.setattr(window_mod, "QMenu", FakeMenu)
-    monkeypatch.setattr(window_mod, "_populate_context_menu", lambda _menu, _pet: None)
-    monkeypatch.setattr(
-        window_mod.QTimer,
-        "singleShot",
-        lambda *args: timers.append(args[-1]),
-    )
-
-    pet = FakePet()
-    PetWindow._show_context_menu(pet, QPoint(12, 18))
-    menu = created[0]
-    assert menu.delete_requested is True
-    assert calls == []
-    assert timers == []
-
-    menu.destroyed.emit()
-    assert calls == []
-    assert len(timers) == 1
-    timers.pop()()
-    assert calls == ["settings"]
-
-
-def test_context_menu_drops_callbacks_when_owning_pet_is_already_destroyed(monkeypatch):
-    from types import SimpleNamespace
-
-    from PySide6.QtCore import QPoint
-
-    import pet.window as window_mod
-    from pet.window import PetWindow
-
-    timers = []
-    created = []
-
-    class FakeSignal:
-        def __init__(self):
-            self.callbacks = []
-
-        def connect(self, callback):
-            self.callbacks.append(callback)
-
-        def emit(self):
-            for callback in list(self.callbacks):
-                callback()
-
-    class FakeMenu:
-        def __init__(self, _parent):
-            self.aboutToShow = FakeSignal()
-            self.aboutToHide = FakeSignal()
-            self.destroyed = FakeSignal()
-            created.append(self)
-
-        def exec(self, _pos):
-            self._deferred_callbacks = [lambda: None]
-
-        def findChildren(self, _type):
-            return []
-
-        def sizeHint(self):
-            from PySide6.QtCore import QSize
-
-            return QSize(120, 180)
-
-        def setLayoutDirection(self, _direction):
-            pass
-
-        def deleteLater(self):
-            pass
-
-    class FakePet:
-        def _restore_on_top_after_context_menu(self):
-            pass
-
-        def visible_content_rect(self):
-            from PySide6.QtCore import QRect
-
-            return QRect(300, 300, 200, 150)
-
-        def _screen_available(self, _screen_name=None):
-            from PySide6.QtCore import QRect
-
-            class _Screen:
-                @staticmethod
-                def availableGeometry():
-                    return QRect(0, 0, 1920, 1080)
-
-            return _Screen()
-
-    class _BubbleStub:
-        def hide(self):
-            pass
-
-    FakePet._speech_bubble = _BubbleStub()
-
-    monkeypatch.setattr(window_mod, "QMenu", FakeMenu)
-    monkeypatch.setattr(window_mod, "_populate_context_menu", lambda _menu, _pet: None)
-    monkeypatch.setattr(
-        window_mod, "shiboken6", SimpleNamespace(isValid=lambda _obj: False), raising=False
-    )
-    monkeypatch.setattr(
-        window_mod.QTimer, "singleShot", lambda *args: timers.append(args)
-    )
-
-    pet = FakePet()
-    PetWindow._show_context_menu(pet, QPoint(12, 18))
-    created[0].destroyed.emit()
-    assert timers == []
 
 
 def test_close_required_actions_are_queued_while_menu_is_visible():
@@ -2100,32 +1818,6 @@ def test_present_dialog_restores_a_minimized_chat_window(tmp_path: Path):
     dialog.close()
     app.processEvents()
 
-
-def test_quit_runs_immediately_when_native_menu_has_already_returned(monkeypatch):
-    import pet.window as window_mod
-    from pet.window import PetWindow
-
-    events = []
-
-    class FakeApp:
-        def quit(self):
-            events.append("quit")
-
-    class FakeQApplication:
-        @staticmethod
-        def instance():
-            return FakeApp()
-
-    class FakePet:
-        _active_context_menu = None
-
-        def _save_position(self):
-            events.append("save")
-
-    monkeypatch.setattr(window_mod, "QApplication", FakeQApplication)
-    PetWindow._request_quit(FakePet())
-    # 退出不再保存当前位置
-    assert events == ["quit"]
 
 
 def test_pet_animation_and_self_talk_defaults_are_persisted(tmp_path: Path):

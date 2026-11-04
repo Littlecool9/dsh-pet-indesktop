@@ -372,20 +372,26 @@ class TestDestroyedFallback:
 
 class TestCloseEventStopsMonitors:
     def test_window_close_stops_agent_monitors(self, tmp_path, app):
-        """窗口 closeEvent 会停掉全部 Agent 监视器 worker。"""
-        from tests.pet_window_fakes import make_pet_window
+        """进程级退出停掉全部 Agent 监视器 worker。
 
-        win = make_pet_window(tmp_path, "b9-close")
-        # Phase 1：默认 Agent 联动全关，窗口不会自动创建管理器；测试显式装配。
-        mgr = win._ensure_agent_link_manager()
-        mon = mgr.monitors["dsh"]
-        mon._POLL_INTERVAL_S = 0.05
-        mon.start()
-        assert mon._worker.is_alive()
-        win.close()
-        app.processEvents()
-        assert not mon._running
-        assert not mon._worker.is_alive()
+        overlay 拓扑没有逐窗 closeEvent 收口：共享 manager 由
+        ``AppShell._on_about_to_quit`` → ``SharedSubsystems.stop_all`` 收口。
+        """
+        from pet.app import AppShell
+
+        shell = AppShell(app, Config(base=tmp_path))
+        try:
+            mgr = shell._shared.agent_link
+            mon = mgr.monitors["dsh"]
+            mon._POLL_INTERVAL_S = 0.05
+            mon.start()
+            assert mon._worker.is_alive()
+            shell._shared.stop_all()
+            app.processEvents()
+            assert not mon._running
+            assert not mon._worker.is_alive()
+        finally:
+            shell._shared.stop_all()
 
 
 def _make_opencode_db(path, rows):

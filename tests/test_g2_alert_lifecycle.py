@@ -27,7 +27,6 @@ from __future__ import annotations
 import logging
 import os
 import time
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -35,7 +34,6 @@ import pytest  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-import pet.window as window_mod  # noqa: E402
 from pet import click_sound  # noqa: E402
 from pet.speech_bubble import PetSpeechBubble  # noqa: E402
 from pet.sprite_bubble import sprite_anchor_rect_global  # noqa: E402
@@ -592,7 +590,7 @@ def test_hidden_signal_chain_drives_restore_and_queue_advance(tmp_path, probes, 
     """hidden 链路必须真的驱动重挂/推进（真事件循环），且防抖把重挂次数封住。"""
     shown, _sounds = probes
     clock = [500.0]
-    monkeypatch.setattr(window_mod, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr("pet.clock.time.monotonic", lambda: clock[0])
     shell, _cfg = _make_slot_shell(tmp_path)
     try:
         shell.overlay.show()

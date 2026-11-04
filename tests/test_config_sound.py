@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 
 from pet.config import Config
-from pet import physics as physics_mod
-from pet import window as window_mod
 
 
 def test_legacy_click_sound_path_migration(tmp_path: Path):
@@ -92,69 +90,3 @@ def test_invalid_sound_and_physics_config_normalization(tmp_path: Path):
     assert cfg.get("click_sound_volume") == 0.70
     assert cfg.get("click_sound_pack") == {"kind": "builtin", "id": "default", "path": ""}
     assert cfg.get("throw_strength") == "standard"
-
-
-def test_throw_physics_substep_long_frame():
-    """测试长帧（如 dt=0.1s）时的子步积分稳定性：不超过边界、多个子步拆分。"""
-    step_dts = []
-    orig_throw_step = physics_mod.throw_step
-
-    def instrumented_throw_step(px, py, vx, vy, dt, left, top, right, bottom, gravity=physics_mod.GRAVITY):
-        step_dts.append(dt)
-        return orig_throw_step(px, py, vx, vy, dt, left, top, right, bottom, gravity)
-
-    class FakeScreen:
-        def availableGeometry(self):
-            class Geometry:
-                def left(self): return 0
-                def top(self): return 0
-                def right(self): return 1920
-                def bottom(self): return 1080
-            return Geometry()
-
-    class FakePetWindow:
-        _w = 300
-        _h = 300
-        scale = 1.0
-        cfg = {}
-        _draw_delta = None  # None → 统一出口按零偏移处理
-        _phys_pos = [500.0, 500.0]
-        _phys_vel = [1200.0, -800.0]
-        _moved_to = None
-        _stopped = False
-        _saved = False
-
-        # 抛掷边界/统一出口的真实现（贴边改造后 _tick_throw_physics 经这些
-        # seam 落窗；未声明 body_box 的角色回退"窗口即身体"，与旧语义同构）
-        _stable_body_local_rect = window_mod.PetWindow._stable_body_local_rect
-        _throw_bounds = window_mod.PetWindow._throw_bounds
-        _move_window_towards = window_mod.PetWindow._move_window_towards
-
-        def _screen_available(self):
-            return FakeScreen()
-
-        def move(self, x, y):
-            self._moved_to = (x, y)
-
-        def _stop_physics(self):
-            self._stopped = True
-
-        def _save_position(self):
-            self._saved = True
-
-    pet = FakePetWindow()
-    # 模拟 0.1s 长帧
-    # 猴子补丁 instrumented_throw_step
-    saved_fn = physics_mod.throw_step
-    physics_mod.throw_step = instrumented_throw_step
-    try:
-        window_mod.PetWindow._tick_throw_physics(pet, dt=0.1)
-    finally:
-        physics_mod.throw_step = saved_fn
-
-    # 验证子步：0.1s 被拆分成不超过 0.008s 的子步
-    assert len(step_dts) == 13  # 12 * 0.008 + 0.004 = 0.1
-    for sub_dt in step_dts:
-        assert sub_dt <= 0.008 + 1e-6
-    assert abs(sum(step_dts) - 0.1) < 1e-6
-    assert pet._moved_to is not None

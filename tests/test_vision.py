@@ -179,8 +179,7 @@ def test_vision_request_includes_self_recognition_hint(monkeypatch):
 def test_look_worker_receives_snapshot_and_does_not_mutate_shared_config(monkeypatch):
     """回归测试：看看屏幕 worker 接收快照，不改写主线程 ProviderConfig 共享对象。"""
     from pet.chat.models import ProviderConfig, ChatSettings
-    from pet.window import PetWindow
-    from pet.config import Config
+    from pet.overlay_shell import OverlayShell
     from types import SimpleNamespace
 
     shared_provider = ProviderConfig.from_dict("test-p", {
@@ -189,22 +188,29 @@ def test_look_worker_receives_snapshot_and_does_not_mutate_shared_config(monkeyp
     })
     shared_settings = ChatSettings(providers={"test-p": shared_provider}, active_provider="test-p")
 
-    win = PetWindow.__new__(PetWindow)
-    win.cfg = SimpleNamespace(
+    sprite = object()
+    config = SimpleNamespace(
         chat_settings=lambda: shared_settings,
         resolve_api_key=lambda p: "sk-resolved-secret",
-        get=lambda k, d=None: d,
         # Config.character_display_name：用户别名优先（回归：识屏链路曾直取默认名）
         character_display_name=lambda cid: "小鲸鱼",
     )
-    win._last_look_ts = 0.0
-    win._look_busy = False
     bubbles = []
-    win.show_bubble = lambda msg, *a, **k: bubbles.append(msg)
+    win = SimpleNamespace(
+        sprite=sprite,
+        _config=config,
+        _last_look_ts=0.0,
+        _look_busy=False,
+        _all_sprites=lambda: [sprite],
+        _sprite_config=lambda _sprite: SimpleNamespace(
+            get=lambda key, default=None: "shenshen"),
+        _look_bubble=lambda text, duration_ms=3200: bubbles.append(text),
+        _look_worker=lambda *args: None,
+    )
     threads = []
     monkeypatch.setattr("threading.Thread", lambda **kwargs: SimpleNamespace(start=lambda: threads.append(kwargs)))
 
-    win._on_look_screen()
+    OverlayShell.look_at_screen(win, sprite)
 
     assert len(threads) == 1
     passed_args = threads[0]["args"]

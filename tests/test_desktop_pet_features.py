@@ -18,6 +18,27 @@ def _slot0_config(tmp_path):
     return route_settings_config(Config(base=tmp_path, instance_id="slot-0"))
 
 
+def _populate_modern_menu(menu, pet):
+    """旧 ``populate_context_menu`` 的等价流水线（overlay 侧同一建造器 + 安装器）。"""
+    from pet.context_menus import build_modern_menu
+    from pet.context_menus.menu_styles import (
+        apply_modern_menu_style,
+        install_modern_check_indicators,
+    )
+    from pet.context_menus.menu_styles.common import (
+        install_responsive_menu_style,
+        install_stay_open_interaction,
+    )
+
+    cfg = getattr(pet, "cfg", None)
+    apply_modern_menu_style(
+        menu, cfg.get("context_menu_appearance", {}) if cfg is not None else {})
+    build_modern_menu(menu, pet)
+    install_modern_check_indicators(menu)
+    install_responsive_menu_style(menu)
+    install_stay_open_interaction(menu)
+
+
 def test_speech_bubble_never_accepts_focus():
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
@@ -310,103 +331,11 @@ def test_all_bubble_presets_use_soft_layered_shadows():
     app.processEvents()
 
 
-def test_pet_scale_change_reflows_visible_bubble_after_rebuilding_mask():
-    from PySide6.QtCore import QRect
-
-    from pet.window import PetWindow
-
-    events = []
-
-    class Bubble:
-        def isVisible(self):
-            return True
-
-        def reflow(self, anchor, *, pet_scale):
-            events.append(("reflow", anchor, pet_scale))
-
-    class FakePet:
-        scale = 0.5
-        _h = 100
-        _speech_bubble = Bubble()
-        _collision_bounds_cache = {}
-
-        def geometry(self):
-            return QRect(20, 30, 100, self._h)
-
-        def x(self):
-            return 20
-
-        def _apply_scale(self):
-            self._h = 200
-            events.append("scale")
-
-        def move(self, x, y):
-            events.append(("move", x, y))
-
-        def _rebuild_frame(self):
-            events.append("rebuild")
-
-        def visible_content_rect(self):
-            assert events[-1] == "rebuild"
-            return QRect(25, 35, 160, 210)
-
-        def update(self):
-            events.append("update")
-
-        def _save_position(self):
-            events.append("save")
-
-    pet = FakePet()
-    PetWindow.change_scale(pet, 1.0)
-    assert events[2] == "rebuild"
-    assert events[3] == ("reflow", QRect(25, 35, 160, 210), 1.0)
-
-
-def test_change_scale_with_destroyed_bubble_is_noop():
-    """N7：closeEvent 置 _speech_bubble=None 后，迟到的 change_scale 不得 AttributeError。"""
-    from PySide6.QtCore import QRect
-
-    from pet.window import PetWindow
-
-    class FakePet:
-        scale = 1.0
-        _h = 100
-        _speech_bubble = None
-        _collision_bounds_cache = {}
-
-        def geometry(self):
-            return QRect(0, 0, 100, self._h)
-
-        def x(self):
-            return 0
-
-        def _apply_scale(self):
-            self._h = 200
-
-        def move(self, x, y):
-            pass
-
-        def _rebuild_frame(self):
-            pass
-
-        def visible_content_rect(self):
-            return QRect(0, 0, 100, 200)
-
-        def update(self):
-            pass
-
-        def _save_position(self):
-            pass
-
-    PetWindow.change_scale(FakePet(), 1.5)
-
-
 def test_self_talk_images_and_duration_are_normalized_and_scheduled_after_hide(tmp_path, monkeypatch):
     from PIL import Image
 
     from pet.config import Config, DEFAULT_SELF_TALK_DURATION_SECONDS
     from pet.speech_bubble import list_self_talk_images
-    from pet.window import PetWindow
 
     image_dir = tmp_path / "talk-images"
     image_dir.mkdir()
@@ -492,81 +421,6 @@ def test_self_talk_image_scale_config_and_bubble_size(tmp_path):
     app.processEvents()
 
 
-def test_self_talk_scheduling_and_random_talk_dispatch(tmp_path, monkeypatch):
-    """自言自语调度间隔与随机图片/文本派发（原 test_self_talk_images... 的后半段）。"""
-    from pathlib import Path  # noqa: F401
-
-    from PySide6.QtCore import QRect
-
-    from pet.window import PetWindow
-
-    image_dir = tmp_path / "talk-images"
-    image_dir.mkdir()
-    # _show_random_self_talk 会惰性剔除不存在的图片文件——必须有真实图片
-    from PIL import Image
-    Image.new("RGB", (20, 10), "blue").save(image_dir / "one.png")
-
-    starts = []
-
-    class Timer:
-        def stop(self):
-            pass
-
-        def start(self, milliseconds):
-            starts.append(milliseconds)
-
-    class FakePet:
-        _self_talk_timer = Timer()
-        _self_talk_enabled = True
-        _self_talk_texts = ["hello"]
-        _self_talk_images = [image_dir / "one.png"]
-        _self_talk_image_scale = 1.0
-        _self_talk_min_interval = 5.0
-        _self_talk_max_interval = 5.0
-        _self_talk_duration_seconds = 7.5
-        # 出图概率改成显式配置项后，派发不再"等权随机"：这里钉 100% 才能确定性地
-        # 验证"派发到图片"这条支路（默认 30% 会让本用例随机变成文本分支）。
-        cfg = {"self_talk_image_chance": 100}
-
-        def _show_self_talk_text(self, text):
-            # 文本分支最终落到窗口的 _show_self_talk_text（真实实现见 window_alerts）
-            return self._speech_bubble.show_text(
-                text, QRect(10, 20, 180, 240), 7500, pet_scale=self.scale
-            )
-
-    monkeypatch.setattr("pet.window.random.uniform", lambda *_: 5.0)
-    PetWindow._schedule_self_talk(FakePet(), after_display=True)
-    assert starts == [12500]
-
-    shown = []
-
-    class Bubble:
-        def show_image(self, path, anchor, duration, *, pet_scale, image_scale=1.0):
-            shown.append((Path(path), anchor, duration, pet_scale, image_scale))
-            return True
-
-        def show_text(self, text, anchor, duration, *, pet_scale):
-            shown.append((text, anchor, duration, pet_scale))
-            return True
-
-    runtime_pet = FakePet()
-    runtime_pet._speech_bubble = Bubble()
-    runtime_pet.scale = 0.72
-    runtime_pet.visible_content_rect = lambda: QRect(10, 20, 180, 240)
-    monkeypatch.setattr("pet.window.random.choice", lambda choices: choices[-1])
-    assert PetWindow._show_random_self_talk(runtime_pet)
-    assert shown == [(image_dir / "one.png", QRect(10, 20, 180, 240), 7500, 0.72, 1.0)]
-
-    # 0% = 只出文本：即使图片池里有图、choice 又总挑最后一个，也必须走文本分支。
-    text_pet = FakePet()
-    text_pet.cfg = {"self_talk_image_chance": 0}
-    text_pet._speech_bubble = Bubble()
-    text_pet.scale = 0.72
-    text_pet.visible_content_rect = lambda: QRect(10, 20, 180, 240)
-    assert PetWindow._show_random_self_talk(text_pet)
-    assert shown[1] == ("hello", QRect(10, 20, 180, 240), 7500, 0.72)
-
-
 def test_speech_bubble_tail_is_one_surface_and_shadow_has_no_graphics_effect():
     from PySide6.QtCore import QPointF, QRect
     from PySide6.QtWidgets import QApplication
@@ -633,7 +487,8 @@ def test_icon_composition_ignores_low_alpha_noise_and_fills_canvas():
 def test_modern_pet_context_menu_has_spawn_action_with_avatar_icon(monkeypatch):
     from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
-    import pet.window as window_mod
+    import pet.catalog as catalog_mod
+    import pet.context_menus.shared as menu_shared
 
     class FakeConfig:
         values = {"character": "shenshen", "on_top": True}
@@ -680,11 +535,11 @@ def test_modern_pet_context_menu_has_spawn_action_with_avatar_icon(monkeypatch):
             return lambda *args, **kwargs: None
 
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(window_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(window_mod.catalog, "list_available_characters", lambda: ["shenshen"])
+    monkeypatch.setattr(menu_shared.autostart_mod, "is_enabled", lambda: False)
+    monkeypatch.setattr(catalog_mod, "list_available_characters", lambda: ["shenshen"])
     pet = FakePet()
     menu = QMenu()
-    window_mod._populate_context_menu(menu, pet)
+    _populate_modern_menu(menu, pet)
 
     direct_actions = [action for action in menu.actions() if not action.isSeparator()]
     assert direct_actions
@@ -710,8 +565,6 @@ def test_context_menu_has_no_template_switch_entry(tmp_path):
     """
     from PySide6.QtWidgets import QApplication, QMenu
 
-    from pet.context_menu import populate_context_menu
-
     class Config:
         def __init__(self):
             self.values = {"context_menu_template": "legacy", "character": "shenshen"}
@@ -735,7 +588,7 @@ def test_context_menu_has_no_template_switch_entry(tmp_path):
 
     app = QApplication.instance() or QApplication([])
     menu = QMenu()
-    populate_context_menu(menu, Pet())
+    _populate_modern_menu(menu, Pet())
     labels = [action.text() for action in menu.actions() if not action.isSeparator()]
     assert menu.objectName() == "modernContextMenu"
     assert "切换到新版菜单" not in labels
@@ -796,8 +649,9 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     from PySide6.QtGui import QPixmap
     from PySide6.QtWidgets import QApplication, QMenu
 
-    import pet.window as window_mod
+    import pet.catalog as catalog_mod
     import pet.context_menus.registry as registry_mod
+    import pet.context_menus.shared as menu_shared
 
     class FakeConfig:
         def __init__(self):
@@ -844,11 +698,11 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
             return lambda *args, **kwargs: None
 
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(window_mod.autostart_mod, "is_enabled", lambda: False)
-    monkeypatch.setattr(window_mod.catalog, "list_available_characters", lambda: ["shenshen"])
+    monkeypatch.setattr(menu_shared.autostart_mod, "is_enabled", lambda: False)
+    monkeypatch.setattr(catalog_mod, "list_available_characters", lambda: ["shenshen"])
     pet = FakePet()
     menu = QMenu()
-    window_mod._populate_context_menu(menu, pet)
+    _populate_modern_menu(menu, pet)
     labels = [action.text() for action in menu.actions() if not action.isSeparator()]
     expected_labels = [
         "AI 对话",
@@ -894,8 +748,6 @@ def test_pure_pet_context_menu_keeps_web_but_hides_harness():
     """纯桌宠（无 Chat/DSH 联动）右键菜单去掉 DeepSeek Harness。"""
     from PySide6.QtWidgets import QApplication, QMenu
 
-    from pet.context_menu import populate_context_menu
-
     class FakeConfig:
         def get(self, key, default=None):
             return {
@@ -918,7 +770,7 @@ def test_pure_pet_context_menu_keeps_web_but_hides_harness():
 
     app = QApplication.instance() or QApplication([])
     menu = QMenu()
-    populate_context_menu(menu, FakePet())
+    _populate_modern_menu(menu, FakePet())
     def labels_in(menu):
         labels = []
         for action in menu.actions():
@@ -941,8 +793,6 @@ def test_pure_pet_context_menu_keeps_web_but_hides_harness():
 
 def test_context_menu_always_applies_the_modern_style():
     from PySide6.QtWidgets import QApplication, QMenu, QStyle, QWidget
-
-    from pet.context_menu import populate_context_menu
 
     class Config:
         def get(self, key, default=None):
@@ -968,7 +818,7 @@ def test_context_menu_always_applies_the_modern_style():
 
     app = QApplication.instance() or QApplication([])
     menu = QMenu()
-    populate_context_menu(menu, Pet())
+    _populate_modern_menu(menu, Pet())
     assert menu.objectName() == "modernContextMenu"
     # The modern menu follows the compact macOS project-menu reference: a
     # white hairline surface, small system text, outline icons and subtle rules
@@ -1577,8 +1427,6 @@ def test_modern_menu_adds_quick_launch_submenu_and_uses_saved_appearance(monkeyp
     from PySide6.QtWidgets import QApplication, QMenu
 
     import pet.context_menus.quick_launch as quick_launch_mod
-    from pet.context_menu import populate_context_menu
-
     class Config:
         values = {
             "character": "shenshen",
@@ -1612,7 +1460,7 @@ def test_modern_menu_adds_quick_launch_submenu_and_uses_saved_appearance(monkeyp
     monkeypatch.setattr(quick_launch_mod, "launch_quick_app", lambda app: launched.append(app) or True)
     app = QApplication.instance() or QApplication([])
     menu = QMenu()
-    populate_context_menu(menu, Pet())
+    _populate_modern_menu(menu, Pet())
     shortcut = next(action for action in menu.actions() if action.text() == "快捷启动")
     assert shortcut.menu() is not None
     assert [action.text() for action in shortcut.menu().actions()] == ["默认浏览器", "Finder"]
@@ -1658,11 +1506,7 @@ def test_runtime_pet_icon_crops_transparent_canvas_before_scaling():
     from PySide6.QtGui import QPainter, QPixmap
     from PySide6.QtWidgets import QApplication
 
-    from pet.window import PetWindow
-
-    class FakePet:
-        idle = None
-        lib = None
+    from pet.overlay_shell import _crop_icon_pixmap
 
     app = QApplication.instance() or QApplication([])
     source = QPixmap(100, 100)
@@ -1670,10 +1514,8 @@ def test_runtime_pet_icon_crops_transparent_canvas_before_scaling():
     painter = QPainter(source)
     painter.fillRect(QRect(45, 40, 10, 20), Qt.GlobalColor.blue)
     painter.end()
-    fake = FakePet()
-    fake._frame_pixmap = source
 
-    icon = PetWindow.icon_pixmap(fake, 32)
+    icon = _crop_icon_pixmap(source, 32)
     assert max(icon.width(), icon.height()) >= 30
     app.processEvents()
 
@@ -1693,8 +1535,6 @@ def test_modern_animation_leaf_icons_are_loaded_only_when_category_opens(monkeyp
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QApplication, QMenu
-
-    from pet.context_menu import populate_context_menu
 
     class Config(dict):
         def get(self, key, default=None):
@@ -1726,7 +1566,7 @@ def test_modern_animation_leaf_icons_are_loaded_only_when_category_opens(monkeyp
     app = QApplication.instance() or QApplication([])
     menu = QMenu()
     pet = Pet()
-    populate_context_menu(menu, pet)
+    _populate_modern_menu(menu, pet)
     # Opening the root menu must not synchronously decode every animation.
     assert pet.icon_requests == 0
     animations = next(submenu for submenu in menu._owned_submenus if submenu.title() == "播放动画")
@@ -1806,42 +1646,6 @@ def test_reopened_animation_menu_reuses_cached_images_immediately():
     assert idle.actions(), "首次展开分类子菜单时应填充动作"
     assert not idle.actions()[0].icon().isNull()
     app.processEvents()
-
-
-def test_representative_animation_image_is_cached_on_pet(monkeypatch):
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QImage
-
-    import pet.window as window_mod
-    from pet.window import PetWindow
-
-    calls = []
-
-    def decode(path):
-        calls.append(path)
-        image = QImage(64, 64, QImage.Format.Format_ARGB32)
-        image.fill(Qt.GlobalColor.blue)
-        return image
-
-    class Clip:
-        path = "/tmp/cached-animation.webm"
-
-    class Library:
-        def movie(self, _name):
-            return Clip()
-
-        def clip_path(self, _name):
-            return Clip.path
-
-    class Pet:
-        lib = Library()
-
-    monkeypatch.setattr(window_mod, "decode_representative_frame", decode)
-    pet = Pet()
-    first = PetWindow.animation_icon_image(pet, "idle-a")
-    second = PetWindow.animation_icon_image(pet, "idle-a")
-    assert not first.isNull() and not second.isNull()
-    assert calls == ["/tmp/cached-animation.webm"]
 
 
 def test_representative_animation_decode_is_shared_across_pets(monkeypatch, tmp_path):
@@ -1974,33 +1778,6 @@ def test_representative_animation_frame_uses_the_later_middle():
     assert representative_frame_index(100) == 61
 
 
-def test_template_reopen_reuses_original_visible_menu_position(monkeypatch):
-    from PySide6.QtCore import QPoint
-    from PySide6.QtWidgets import QApplication, QMenu
-
-    import pet.window as window_mod
-    from pet.window import PetWindow
-
-    class FakePet:
-        _context_menu_anchor = QPoint(320, 240)
-
-        def __init__(self):
-            self.shown_at = None
-
-        def _show_context_menu(self, point):
-            self.shown_at = QPoint(point)
-
-    app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(window_mod.QTimer, "singleShot", lambda *args: args[-1]())
-    menu = QMenu()
-    menu.move(410, 260)
-    fake = FakePet()
-    PetWindow.reopen_context_menu(fake, menu)
-    assert fake.shown_at == QPoint(410, 260)
-    menu.close()
-    app.processEvents()
-
-
 def test_modern_menu_exposes_no_template_switch_action():
     """旧版菜单与它的「切换到…菜单」入口一起退役：注册表里不再有该动作。
 
@@ -2055,45 +1832,6 @@ def test_product_copy_has_no_external_brand_reference():
             if forbidden in path.read_text(encoding="utf-8", errors="ignore").lower():
                 hits.append(str(path))
     assert hits == []
-
-
-def test_return_corner_cancels_all_position_writers_before_move():
-    from PySide6.QtCore import QRect
-
-    from pet.window import PetWindow
-
-    calls = []
-
-    class Screen:
-        @staticmethod
-        def availableGeometry():
-            return QRect(0, 0, 1000, 700)
-
-        @staticmethod
-        def name():
-            return "test"
-
-        @staticmethod
-        def devicePixelRatio():
-            return 1.0
-
-    class FakePet:
-        _w = 120
-        _h = 180
-        _dragging = False
-        _press_global = None
-        _grab_offset = None
-
-        def _cancel_move(self): calls.append("move")
-        def _stop_physics(self): calls.append("physics")
-        def _screen_available(self): return Screen()
-        def move(self, x, y): calls.append((x, y))
-        def _save_position(self): calls.append("save")
-
-    PetWindow._go_default_corner(FakePet())
-    assert calls[:2] == ["move", "physics"]
-    assert calls[-1] == "save"
-    assert (855, 519) in calls
 
 
 def test_context_menu_leaf_actions_stay_open_until_focus_is_lost():
@@ -2222,7 +1960,7 @@ def test_external_character_dirs_dedupes_base_dir(tmp_path, monkeypatch):
 def test_self_talk_deleted_external_dir_falls_back_to_text_not_bundled(tmp_path):
     """回归：用户显式配置的外部图片目录被删后，不再回退内置彩蛋池
     （用户删目录的意图就是不要再看图）。"""
-    from pet.window import _resolve_self_talk_image_dir
+    from pet.overlay_shell import _resolve_self_talk_image_dir
 
     gone = tmp_path / "deleted_dir"
     assert _resolve_self_talk_image_dir(str(gone)) == ""

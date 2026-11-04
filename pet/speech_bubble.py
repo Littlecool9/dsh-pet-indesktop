@@ -786,13 +786,6 @@ class PetSpeechBubble(QFrame):
         if was_visible:
             self.show()
 
-    def set_host_on_top(self, on: bool) -> None:
-        """跟随宿主「桌面置顶」开关。"""
-        on = bool(on)
-        if on == self._host_on_top:
-            return
-        self._host_on_top = on
-        self._apply_window_flags()
 
     def set_interactive(self, on: bool) -> None:
         """开启后气泡可被鼠标点击（用于触发快速对话），默认全透明穿透。"""

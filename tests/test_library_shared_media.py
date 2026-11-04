@@ -197,9 +197,9 @@ def test_peer_library_defers_low_priority_pool(tmp_path, monkeypatch):
             # 池级残留回收照旧开（它管内存，与预热责任无关）
             assert lib2._idle_trim_timer.isActive() is True
             # 兄弟库只建了高优先级交互核，低优先级池一个 clip 都不建
-            assert set(lib2.movies()) == set(high)
+            assert set(lib2._movies) == set(high)
             assert lib2._warm_low_priority_background() is None
-            assert set(lib2.movies()) == set(high)
+            assert set(lib2._movies) == set(high)
         finally:
             lib2.shutdown()
 
@@ -207,7 +207,7 @@ def test_peer_library_defers_low_priority_pool(tmp_path, monkeypatch):
         lib1._warm_low_priority_background()
         _wait_until(lambda: not lib1._low_warm_in_flight
                     and lib1._low_first_frames_done, what="责任持有者低优先级批次")
-        assert set(lib1.movies()) == set(lib1.names())
+        assert set(lib1._movies) == set(lib1.names())
     finally:
         lib1.shutdown()
 
@@ -233,7 +233,7 @@ def test_owner_exit_hands_warm_responsibility_to_peer(tmp_path, monkeypatch):
         lib2._warm_low_priority_background()
         _wait_until(lambda: not lib2._low_warm_in_flight
                     and lib2._low_first_frames_done, what="接手的低优先级批次")
-        assert set(lib2.movies()) == set(lib2.names())
+        assert set(lib2._movies) == set(lib2.names())
     finally:
         lib1.shutdown()
         lib2.shutdown()
@@ -253,7 +253,7 @@ def test_peer_can_still_create_low_priority_clip_on_demand(tmp_path, monkeypatch
         _, low = lib2._priority_names()
         clip = lib2.movie(low[0])
         assert clip is not None
-        assert set(lib2.movies()) == set(lib2._priority_names()[0]) | {low[0]}
+        assert set(lib2._movies) == set(lib2._priority_names()[0]) | {low[0]}
     finally:
         lib1.shutdown()
         lib2.shutdown()
@@ -334,21 +334,21 @@ def test_webm_first_frame_decode_is_shared_across_libraries(tmp_path, monkeypatc
             lib = MovieLibrary(asset_dir=videos)
             libs.append(lib)
             lib.schedule_high_priority_warm()
-            clips = list(lib.movies().values())
+            clips = list(lib._movies.values())
             assert clips, "高优先级 clip 应立即创建"
             _wait_until(
                 lambda clips=clips: all(
                     getattr(c, "_first_image", None) is not None for c in clips),
                 what="高优先级首帧预热")
-        single = len(libs[0].movies())
+        single = len(libs[0]._movies)
         stats = webm_clip.first_frame_share_stats()
         # 单库口径 = 高优先级 clip 数；三库合计仍等于它（后两库全部命中共享表）
         assert len(spawns) == single, f"ffmpeg 首帧解码 {len(spawns)} 次（单库口径 {single}）"
         assert stats["spawns"] == single
         assert stats["hits"] == 2 * single
         # 三份库的首帧是同一张 QImage 对象（不产生第二/第三份像素）
-        images = [lib.movies()[name]._first_image
-                  for lib in libs for name in lib.movies()]
+        images = [lib._movies[name]._first_image
+                  for lib in libs for name in lib._movies]
         assert len({id(img) for img in images}) == single
     finally:
         for lib in libs:
@@ -380,9 +380,9 @@ def test_concurrent_peer_warm_does_not_respawn_ffmpeg(tmp_path, monkeypatch):
             lib.schedule_high_priority_warm()   # 三库并发起预热，不排队
         def _ready():
             return all(all(getattr(c, "_first_image", None) is not None
-                           for c in lib.movies().values()) for lib in libs)
+                           for c in lib._movies.values()) for lib in libs)
         _wait_until(_ready, timeout_s=60.0, what="三库并发首帧预热")
-        single = len(libs[0].movies())
+        single = len(libs[0]._movies)
         assert len(spawns) == single, f"并发预热下 ffmpeg 首帧解码 {len(spawns)} 次（单库口径 {single}）"
     finally:
         for lib in libs:
@@ -512,12 +512,12 @@ def test_three_same_character_pets_share_one_media_view(tmp_path):
         shell.lib._warm_low_priority_background()
         _wait_until(lambda: not shell.lib._low_warm_in_flight
                     and shell.lib._low_first_frames_done, what="责任持有者低优先级批次")
-        assert set(shell.lib.movies()) == set(shell.lib.names())
+        assert set(shell.lib._movies) == set(shell.lib.names())
         for lib in libs[1:]:
-            assert set(lib.movies()) == set(lib._priority_names()[0])
-        assert len(libs[0].movies()) == len(libs[0].names())
+            assert set(lib._movies) == set(lib._priority_names()[0])
+        assert len(libs[0]._movies) == len(libs[0].names())
         # 三宠同名 clip 仍是各自的实例（播放态隔离）
-        name = sorted(libs[0].movies())[0]
+        name = sorted(libs[0]._movies)[0]
         assert len({id(lib.movie(name)) for lib in libs}) == 3
     finally:
         _teardown(shell)

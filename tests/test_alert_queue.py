@@ -1,94 +1,20 @@
 # -*- coding: utf-8 -*-
 """提醒消息队列（alert queue）行为测试。
 
-所有需要用户注意的提醒（审批/问题/硬失败/卡住介入）经 PetWindow.show_alert
+所有需要用户注意的提醒（审批/问题/硬失败/卡住介入）经宿主 ``show_alert``
 入队：一次只展示一个，当前有提醒时普通 show_bubble 让路不覆盖，hide_bubble/
-限时结束自动弹出下一条，clear_alerts 清空全部。
+限时结束自动弹出下一条，clear_alerts 清空全部。宿主 = overlay 壳
+（``OverlayShell`` 的提醒面直接复用 ``window_alerts`` 同一份实现）。
 """
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QObject, QRect, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from collections import deque
 
-from pet import catalog
 from pet.window_alerts import show_alert
-from pet.config import Config
-from pet.window import PetWindow
-
-NAMES = [
-    catalog.IDLE,
-    catalog.TURN,
-    catalog.MOVES[0],
-    catalog.CLICKS[0],
-    catalog.DRAG,
-    "写代码",
-]
-
-
-class FakeClip(QObject):
-    frameChanged = Signal(int)
-    finished = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._running = False
-        self._pm = QPixmap(2, 2)
-        self._pm.fill()
-
-    def stop(self):
-        self._running = False
-
-    def start(self):
-        self._running = True
-
-    def jumpToFrame(self, frame_index):
-        return frame_index <= 0
-
-    def set_playback_speed(self, speed):
-        pass
-
-    def currentPixmap(self):
-        return self._pm
-
-    def currentFrameNumber(self):
-        return 0
-
-    def frameCount(self):
-        return 1
-
-    def duration(self):
-        return 1.0
-
-    def currentTimeSeconds(self):
-        return 0.0
-
-
-class FakeLibrary:
-    def __init__(self):
-        self._clips = {name: FakeClip() for name in NAMES}
-        self.manifest = {}
-        self.folder_map = {}
-        self.folder_files = None
-        self.no_mirror = set()
-
-    def names(self):
-        return list(NAMES)
-
-    def movies(self):
-        return dict(self._clips)
-
-    def movie(self, name):
-        return self._clips[name]
-
-    def frames(self, name):
-        return 1
-
-    def duration(self, name):
-        return 1.0
 
 
 class FakeBubble(QObject):
@@ -100,10 +26,16 @@ class FakeBubble(QObject):
         super().__init__()
         self.shown: list[dict] = []
         self.dismiss_calls = 0
+        self._raw_text = ""
+        self._interactive_active = False
+        self._visible = True
 
     def show_text(self, text, anchor, duration_ms, *, pet_scale=None,
                   subtitle="", sticky=False, buttons=None,
                   title_first=False, width_locked=False):
+        self._raw_text = str(text)
+        self._interactive_active = bool(buttons)
+        self._visible = True
         self.shown.append({
             "text": str(text), "sticky": bool(sticky),
             "duration_ms": int(duration_ms), "buttons": buttons,
@@ -116,13 +48,20 @@ class FakeBubble(QObject):
         pass
 
     def hide(self):
-        pass
+        self._visible = False
 
     def isVisible(self):
-        return True
+        return self._visible
 
     def dismiss(self):
         self.dismiss_calls += 1
+        self._visible = False
+
+    def close(self):
+        pass
+
+    def set_interactive(self, on):
+        pass
 
 
 @pytest.fixture
@@ -132,14 +71,17 @@ def app():
 
 @pytest.fixture
 def win(app, tmp_path):
-    lib = FakeLibrary()
-    w = PetWindow(lib, Config(base=tmp_path))
-    # 用记录型假气泡替换真实气泡，避免依赖 Qt 窗口显示
-    w._speech_bubble = FakeBubble()
-    w.show()
+    import tests.test_sprite_menu_facade as fac
+
+    shell, _lib = fac._make_shell(tmp_path)
+    # 用记录型假气泡替换主 sprite 的跟随气泡，避免依赖真实气泡窗口
+    shell._bubble_follower.bubble = FakeBubble()
+    shell.overlay.show()
     app.processEvents()
-    yield w
-    w.close()
+    yield shell
+    shell.overlay.hide()
+    shell.stop()
+    shell._delete_runtime_marker()
     app.processEvents()
 
 
@@ -182,14 +124,15 @@ def test_show_bubble_yields_when_alert_active(win):
     assert win._speech_bubble.shown[-1]["text"] == "审批一"
 
 
-def test_bubble_body_opens_quick_chat_only_for_plain_bubble(win):
+def test_bubble_body_opens_quick_chat_only_for_plain_bubble(win, monkeypatch):
     """普通无按钮气泡主体点击仍打开快速对话。"""
     opened = []
-    win.on_open_quick_chat = lambda: opened.append(True)
+    monkeypatch.setattr(win, "open_quick_chat",
+                        lambda sprite=None: opened.append(True))
     win.show_bubble("普通气泡")
     assert win._speech_bubble.shown[-1]["text"] == "普通气泡"
     assert win._speech_bubble.shown[-1]["sticky"] is False
-    win._on_speech_bubble_clicked()
+    win._on_bubble_clicked(win.sprite)
     assert opened == [True]
 
 
@@ -201,20 +144,22 @@ def test_bubble_body_opens_quick_chat_only_for_plain_bubble(win):
         ["不要", "终止"],
     ],
 )
-def test_interactive_bubble_body_does_not_open_quick_chat(win, labels):
+def test_interactive_bubble_body_does_not_open_quick_chat(win, monkeypatch, labels):
     """带决定/控制按钮的气泡主体点击不应打开快速对话。"""
     opened = []
-    win.on_open_quick_chat = lambda: opened.append(True)
+    monkeypatch.setattr(win, "open_quick_chat",
+                        lambda sprite=None: opened.append(True))
     win.show_alert(
         "请选择", buttons=[(label, lambda: None) for label in labels],
         sticky=True, alert_id="interactive",
     )
-    win._on_speech_bubble_clicked()
+    win._on_bubble_clicked(win.sprite)
     assert opened == []
 
 
-def test_interactive_button_callback_still_runs_and_closes(win):
+def test_interactive_button_callback_still_runs_and_closes(win, monkeypatch):
     actions = []
+    monkeypatch.setattr(win, "open_quick_chat", lambda sprite=None: None)
     win.show_alert(
         "提醒", buttons=[("关闭提醒", lambda: (actions.append(True), win.resolve_alert("close")))],
         sticky=True, alert_id="close",
@@ -224,16 +169,17 @@ def test_interactive_button_callback_still_runs_and_closes(win):
     assert actions == [True]
     assert win._alert_current is None
     assert win._sticky_bubble_active is False
-    win._on_speech_bubble_clicked()
+    win._on_bubble_clicked(win.sprite)
 
 
-def test_plain_and_interactive_bubble_clicks_are_independent(win):
+def test_plain_and_interactive_bubble_clicks_are_independent(win, monkeypatch):
     opened = []
-    win.on_open_quick_chat = lambda: opened.append(True)
+    monkeypatch.setattr(win, "open_quick_chat",
+                        lambda sprite=None: opened.append(True))
     win.show_bubble("普通气泡")
-    win._on_speech_bubble_clicked()
+    win._on_bubble_clicked(win.sprite)
     win.show_alert("审批", buttons=[("同意", lambda: None)], sticky=True, alert_id="mixed")
-    win._on_speech_bubble_clicked()
+    win._on_bubble_clicked(win.sprite)
     assert opened == [True]
 
 
@@ -338,9 +284,9 @@ def test_resume_activity_restores_sticky_alert_buttons(win, app):
     assert win._sticky_buttons is not None
     assert win._speech_bubble.shown[-1]["buttons"] is not None
 
-    win.hide()
+    win.set_pet_visible(False)
     app.processEvents()
-    win.show()
+    win.set_pet_visible(True)
     app.processEvents()
 
     shown = win._speech_bubble.shown[-1]

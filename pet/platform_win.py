@@ -429,14 +429,6 @@ def _fg_fullscreen_probe() -> tuple[bool, str]:
     return False, detail
 
 
-def _fg_fullscreen_win32() -> bool:
-    """前台窗口是否真全屏。仅返回布尔值，诊断细节见 _fg_fullscreen_probe。"""
-    try:
-        return _fg_fullscreen_probe()[0]
-    except Exception:
-        return False
-
-
 def _register_windows_hotkey(hotkey_id: int, modifiers: int, vk: int,
                              hwnd: int = 0, user32=None) -> bool:
     """注册一个**系统级**热键：``RegisterHotKey(hwnd, id, modifiers, vk)``。

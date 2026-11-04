@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """单模块导入成本微基准（每个模块一个全新子进程，避免顺序耦合）。
 
-    .venv/Scripts/python.exe tools/import_cost.py pet.window pet.balance ...
+    .venv/Scripts/python.exe tools/import_cost.py pet.overlay_shell pet.balance ...
 
 输出：该模块（含其独占依赖）在 tracemalloc Python 堆上的增量 MB，以及
 ``sys.modules`` 里新增的模块数。用于回答"把某个模块改成按需 import 能省多少"。
@@ -34,7 +34,7 @@ print(json.dumps({"mb": (cur - baseline) / 1048576.0, "modules": new_mods}))
 
 def main() -> int:
     targets = sys.argv[1:] or [
-        'pet.window', 'pet.balance', 'pet.festival_service', 'pet.voice_chime_service',
+        'pet.overlay_shell', 'pet.balance',
         'pet.context_menus.shared', 'pet.autostart', 'pet.webm_clip', 'pet.agent_link',
         'pet.dynamic_island', 'pet.chat',
     ]

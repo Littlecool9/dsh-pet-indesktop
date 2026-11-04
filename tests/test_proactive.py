@@ -939,14 +939,19 @@ class TestPhase3VisionLinkAndDryRun:
 class TestPhase4UIAndMenuIntegration:
     def test_window_menu_proactive_and_agent_toggles(self, tmp_path, monkeypatch):
         from PySide6.QtWidgets import QApplication, QMessageBox
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
+        import tests.test_sprite_menu_facade as fac
+        from pet.agent_link import AgentLinkManager
+        from pet.proactive import ProactiveScreenWatcher
+        from pet.sprite_menu_facade import SpriteMenuFacade
 
-        app = QApplication.instance() or QApplication([])
-
-        cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
+        QApplication.instance() or QApplication([])
+        shell, _lib = fac._make_shell(tmp_path)
+        cfg = shell._config
+        watcher = ProactiveScreenWatcher(shell, cfg)
+        mgr = AgentLinkManager(shell, cfg, min_interval=0.0)
+        shell.proactive_watcher = watcher
+        shell.agent_link_manager = mgr
+        facade = SpriteMenuFacade(shell, shell.sprite)
 
         # mock QMessageBox 避免弹窗阻塞
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
@@ -954,86 +959,93 @@ class TestPhase4UIAndMenuIntegration:
         from pet.agent_link import ClaudeCodeMonitor
         monkeypatch.setattr(ClaudeCodeMonitor, "install_hooks", lambda f: True)
 
-        # 触发菜单事件中的开关逻辑
-        win._toggle_proactive_enabled(True)
-        assert cfg.data["proactive_screen"]["enabled"] is True
-        assert win.proactive_watcher.is_running() is False  # 白名单为空依然不运行定时器
+        try:
+            # 触发菜单事件中的开关逻辑
+            facade.toggle_proactive_enabled(True)
+            assert cfg.get("proactive_screen")["enabled"] is True
+            assert watcher.is_running() is False  # 白名单为空依然不运行定时器
 
-        win._set_proactive_option("allow_when_mouse_through", False)
-        assert cfg.data["proactive_screen"]["allow_when_mouse_through"] is False
+            facade.set_proactive_option("allow_when_mouse_through", False)
+            assert cfg.get("proactive_screen")["allow_when_mouse_through"] is False
 
-        win._toggle_agent_link("claude", True)
-        assert cfg.data["agent_link"]["claude"] is True
-        # 窗口必须关闭：泄漏的真实窗口会在共享事件循环上继续推进动画链
-        win.close()
-        win.deleteLater()
+            facade.toggle_agent_link("claude", True)
+            assert cfg.get("agent_link")["claude"] is True
+        finally:
+            mgr.shutdown()
+            shell.stop()
+            shell._delete_runtime_marker()
 
     def test_context_menu_proactive_build_no_name_error(self, tmp_path):
-        """右键菜单（上游模板系统）构建不抛错，且包含主动识屏与 Agent 联动。"""
-        from PySide6.QtWidgets import QApplication, QMenu
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
-        from pet.context_menu import populate_context_menu
+        """右键菜单（共享建造器）构建不抛错，且包含主动识屏与 Agent 联动。"""
+        from types import SimpleNamespace
 
-        app = QApplication.instance() or QApplication([])
+        from PySide6.QtWidgets import QApplication
+        import tests.test_sprite_menu_facade as fac
+        from pet.sprite_menu_facade import build_sprite_full_menu
 
-        cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
-        win.on_open_chat = lambda: None  # 有聊天能力才显示主动识屏入口
-        win.on_open_settings = lambda: None
-
-        menu = QMenu()
-        populate_context_menu(menu, win)
-        texts = []
-        for a in menu.actions():
-            texts.append(a.text())
-            if a.menu():
-                texts.extend(x.text() for x in a.menu().actions())
-        import sys
+        QApplication.instance() or QApplication([])
+        shell, _lib = fac._make_shell(tmp_path)
+        shell._instance = SimpleNamespace(
+            enable_chat=True,
+            open_chat=lambda: None,
+            open_full_chat=lambda: None,
+        )
+        try:
+            labels = fac._recursive_labels(build_sprite_full_menu(shell))
+        finally:
+            shell.stop()
+            shell._delete_runtime_marker()
         if sys.platform == "win32":
-            assert any("主动识屏" in t for t in texts)
-        assert any("Agent 联动" in t for t in texts)
-        win.close()
-        win.deleteLater()
+            assert any("主动识屏" in t for t in labels)
+        assert any("Agent 联动" in t for t in labels)
 
     def test_enable_with_empty_whitelist_bubble_hint(self, tmp_path, monkeypatch):
         """测试 4a：白名单为空时开启主动识屏，应提示「白名单还是空的」气泡。"""
         from PySide6.QtWidgets import QApplication
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
+        import tests.test_sprite_menu_facade as fac
+        from pet.proactive import ProactiveScreenWatcher
+        from pet.sprite_menu_facade import SpriteMenuFacade
 
-        app = QApplication.instance() or QApplication([])
-
-        cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
+        QApplication.instance() or QApplication([])
+        shell, _lib = fac._make_shell(tmp_path)
+        cfg = shell._config
+        watcher = ProactiveScreenWatcher(shell, cfg)
+        shell.proactive_watcher = watcher
+        facade = SpriteMenuFacade(shell, shell.sprite)
 
         bubbles = []
-        monkeypatch.setattr(win, "show_bubble", lambda text, duration_ms=3200: bubbles.append((text, duration_ms)))
+        monkeypatch.setattr(shell, "show_bubble",
+                            lambda text, duration_ms=3200: bubbles.append((text, duration_ms)))
 
-        # 白名单为空（默认），开启后应给出「白名单还是空的」提示
-        win._toggle_proactive_enabled(True)
-        assert cfg.data["proactive_screen"]["enabled"] is True
-        assert win.proactive_watcher.is_running() is False
-        assert any("白名单" in text for text, _ in bubbles)
-        win.close()
-        win.deleteLater()
+        try:
+            # 白名单为空（默认），开启后应给出「白名单还是空的」提示
+            facade.toggle_proactive_enabled(True)
+            assert cfg.get("proactive_screen")["enabled"] is True
+            assert watcher.is_running() is False
+            assert any("白名单" in text for text, _ in bubbles)
+        finally:
+            shell.stop()
+            shell._delete_runtime_marker()
 
     def test_agent_link_toggle_bubble_notice(self, tmp_path, monkeypatch):
         """测试 4c：开启 Agent 联动应气泡提示「后续版本实装」。"""
+        from types import SimpleNamespace
+
         from PySide6.QtWidgets import QApplication
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
+        from pet.agent_link import AgentLinkManager
+        from pet.sprite_menu_facade import SpriteMenuFacade
 
         app = QApplication.instance() or QApplication([])
-
         cfg = Config(base=tmp_path)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
-
         bubbles = []
-        monkeypatch.setattr(win, "show_bubble", lambda text, duration_ms=3200: bubbles.append((text, duration_ms)))
+        shell = SimpleNamespace(
+            _config=cfg,
+            sprite=object(),
+            show_bubble=lambda text, duration_ms=3200: bubbles.append((text, duration_ms)),
+        )
+        mgr = AgentLinkManager(shell, cfg, min_interval=0.0)
+        shell.agent_link_manager = mgr
+        facade = SpriteMenuFacade(shell)
 
         # DSH 开启需授权确认 + 安装桥接插件：mock 掉弹窗与真实 dsh CLI 调用
         from PySide6.QtWidgets import QMessageBox
@@ -1042,22 +1054,23 @@ class TestPhase4UIAndMenuIntegration:
         monkeypatch.setattr(DshMonitor, "install_bridge", classmethod(lambda cls: (True, "ok")))
         monkeypatch.setattr(DshMonitor, "uninstall_bridge", classmethod(lambda cls: None))
 
-        win._toggle_agent_link("dsh", True)
-        # 安装走后台线程：等 install_finished 信号回来再断言
-        import time
-        for _ in range(60):
-            app.processEvents()
-            if cfg.data["agent_link"]["dsh"]:
-                break
-            time.sleep(0.05)
-        assert cfg.data["agent_link"]["dsh"] is True
-        assert any(("DSH" in text) or ("联动" in text) or ("实装" in text) for text, _ in bubbles)
+        try:
+            facade.toggle_agent_link("dsh", True)
+            # 安装走后台线程：等 install_finished 信号回来再断言
+            for _ in range(60):
+                app.processEvents()
+                if (cfg.get("agent_link") or {}).get("dsh"):
+                    break
+                time.sleep(0.05)
+            assert cfg.get("agent_link")["dsh"] is True
+            assert any(("DSH" in text) or ("联动" in text) or ("实装" in text)
+                       for text, _ in bubbles)
 
-        # 关闭不强制要求气泡，仅需状态落盘
-        win._toggle_agent_link("dsh", False)
-        assert cfg.data["agent_link"]["dsh"] is False
-        win.close()
-        win.deleteLater()
+            # 关闭不强制要求气泡，仅需状态落盘
+            facade.toggle_agent_link("dsh", False)
+            assert cfg.get("agent_link")["dsh"] is False
+        finally:
+            mgr.shutdown()
 # ============================================================================
 # 9. Phase 5 短期记忆分类与注入测试
 # ============================================================================
@@ -1380,36 +1393,36 @@ class TestUXFixesRound3:
     def test_self_talk_yields_to_important_bubble(self, tmp_path):
         """重要气泡占用期间，自言自语必须让路。"""
         from PySide6.QtWidgets import QApplication
-        from pet.window import PetWindow
-        from pet.library import MovieLibrary
-        import time
+        import tests.test_sprite_menu_facade as fac
 
         app = QApplication.instance() or QApplication([])
-        cfg = Config(base=tmp_path)
-        cfg.set("self_talk_enabled", True)
-        lib = MovieLibrary(character_id="shenshen")
-        win = PetWindow(lib, cfg)
-        win.show()
+        shell, _lib = fac._make_shell(tmp_path)
+        shell._config.set("self_talk_enabled", True)
+        shell._self_talk_enabled = True
+        shell.overlay.show()
         app.processEvents()
 
         shown = []
-        # 上游新结构：自言自语经 _show_random_self_talk 显示（返回是否真实显示）
-        win._show_random_self_talk = lambda: shown.append(1) or True
+        # 自言自语经 _show_random_self_talk 显示（返回是否真实显示）
+        shell._show_random_self_talk = lambda: shown.append(1) or True
 
-        # 无占用时自言自语正常显示
-        win._on_self_talk_timeout()
-        assert len(shown) == 1
+        try:
+            # 无占用时自言自语正常显示
+            shell._on_self_talk_timeout()
+            assert len(shown) == 1
 
-        # 占用期间自言自语跳过
-        win.hold_bubble(60.0)
-        win._on_self_talk_timeout()
-        assert len(shown) == 1  # 没有新增
+            # 占用期间自言自语跳过
+            shell.hold_bubble(60.0)
+            shell._on_self_talk_timeout()
+            assert len(shown) == 1  # 没有新增
 
-        # 占用过期后恢复
-        win._bubble_busy_until = time.monotonic() - 1  # 字段自审查修复起为单调时钟
-        win._on_self_talk_timeout()
-        assert len(shown) == 2
-        win.close()
+            # 占用过期后恢复
+            shell._bubble_busy_until = time.monotonic() - 1  # 字段自审查修复起为单调时钟
+            shell._on_self_talk_timeout()
+            assert len(shown) == 2
+        finally:
+            shell.stop()
+            shell._delete_runtime_marker()
 
     def test_daily_cap_upper_relaxed(self):
         """每日上限取消 100 硬顶：用户自定义可达 9999。"""

@@ -9,14 +9,8 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QObject, QRect
-from PySide6.QtWidgets import QApplication
 
-from pet.edge_probe import PEEKING, EdgeProbeController
 from pet.throw_egg import THROW_EGG_RECOVER_SPEED, ThrowEggController
-
-
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 class _Avail:
@@ -240,56 +234,3 @@ def test_update_on_inactive_is_noop():
     egg.on_pet_contact(30.0)
     assert not egg.active
     assert win._updates == updates_before
-
-
-def test_arm_wired_into_collision_throw_cancel():
-    """arm 条件正向：探头激活被撞取消 → 彩蛋进入激活。"""
-    _qapp()
-    win = _FakeWin()
-    egg = ThrowEggController(win)
-    win._throw_egg = egg
-    probe = EdgeProbeController(win)
-    probe.enabled = True
-    probe._mode = PEEKING  # 模拟探头处于激活会话
-    probe.cancel("collision_throw", restore=False)
-    assert egg.active
-    assert probe._reentry_armed
-
-
-def test_non_collision_cancel_does_not_arm():
-    """arm 条件反向：非碰撞取消（如拖离）不激活彩蛋。"""
-    _qapp()
-    win = _FakeWin()
-    egg = ThrowEggController(win)
-    win._throw_egg = egg
-    probe = EdgeProbeController(win)
-    probe.enabled = True
-    probe._mode = PEEKING
-    probe.cancel("drag_away", restore=False)
-    assert not egg.active
-    assert not probe._reentry_armed
-
-
-def test_stop_physics_backstop_ends_egg(tmp_path):
-    """落地停稳兜底：window._stop_physics 无条件调用 throw_egg.end()。"""
-    from tests.pet_window_fakes import FakeLibrary
-
-    from pet.config import Config
-    from pet.window import PetWindow
-
-    app = _qapp()
-    cfg = Config(str(tmp_path / "cfg.json"))
-    cfg.set("collision_enabled", False)
-    win = PetWindow(FakeLibrary(), cfg)
-    win.resize(100, 100)
-    win.show()
-    app.processEvents()
-
-    egg = win._throw_egg
-    assert not egg.active
-    egg.arm()
-    assert egg.active
-    win._stop_physics()
-    assert not egg.active
-    assert egg.current_angle_deg() == 0.0
-    win.close()

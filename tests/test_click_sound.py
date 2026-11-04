@@ -14,7 +14,6 @@ import pytest
 from PySide6.QtCore import QTimer
 
 from pet import click_sound
-from pet import window as window_mod
 
 
 class FakeQtAudio:
@@ -233,7 +232,9 @@ def test_resolve_click_sound_candidates_and_choose(tmp_path):
     assert any(c.name == "Ya2.mp3" for c in duck_candidates)
 
 
-def test_window_play_click_sound_uses_pack(monkeypatch, tmp_path):
+def test_overlay_click_sound_uses_pack(monkeypatch, tmp_path):
+    from pet.sprite_sound import SpriteSoundPlayer
+
     custom = _make_file(tmp_path, "custom.wav")
     cfg_dir = tmp_path / "data"
     cfg_dir.mkdir()
@@ -248,18 +249,12 @@ def test_window_play_click_sound_uses_pack(monkeypatch, tmp_path):
                 return 0.8
             return default
 
-    class FakePet:
-        click_sound_enabled = True
-        cfg = Cfg()
-
     sent = []
-
-    def capture(path, volume=1.0):
-        sent.append((path, volume))
-        return True
-
-    monkeypatch.setattr(window_mod, "play_sound", capture)
-    window_mod.PetWindow._play_click_sound(FakePet())
+    player = SpriteSoundPlayer(Cfg(), clock=lambda: 1000.0)
+    monkeypatch.setattr(
+        player, "_submit",
+        lambda path, volume, gate, cfg=None: sent.append((path, volume)))
+    player.on_click()
     assert sent == [(custom, 0.8)]
 
 
@@ -531,50 +526,45 @@ def test_play_with_effect_returns_false_when_error_persists(tmp_path, monkeypatc
     assert key not in pool._qt_effects, "不可用的对象不得留在缓存里反复重试"
 
 
-def test_click_sound_immediate_toggle_in_dialog_affects_pet_window(tmp_path, monkeypatch):
-    """回归测试：设置对话框中即时关闭点击音效，桌宠窗口点击立即不播放。"""
-    from pet.config import Config
-    from pet.window import PetWindow
-    from pet.modern_settings_dialog import ModernSettingsDialog
+def test_click_sound_immediate_toggle_in_dialog_affects_overlay_runtime(
+        tmp_path, monkeypatch):
+    """设置对话框即时关闭点击音效，overlay 运行期点击立即不播放。"""
     from PySide6.QtWidgets import QApplication
-    from types import SimpleNamespace
+
+    from pet.config import Config
+    from pet.modern_settings_dialog import ModernSettingsDialog
+    from pet.settings_slot_config import route_settings_config
+    from pet.sprite_sound import SpriteSoundPlayer
 
     app = QApplication.instance() or QApplication([])
     # #271：主宠（空身份）的设置会话按 slot0 分流，点击音效是每宠键、真值在
-    # config-slot-0.json。运行期那份配置面因此也是路由视图（PetWindow 读的就是它），
-    # 否则设置窗写档案、窗口读主配置，即时生效变成空话。初值同样要落盘再开窗：
-    # 路由视图的读源只取盘。
-    from pet.settings_slot_config import route_settings_config
-
+    # config-slot-0.json。运行期播放器读的就是这份路由视图，否则设置窗写档案、
+    # 播放器读主配置，即时生效变成空话。初值同样要落盘再开窗：读源只取盘。
     config = route_settings_config(Config(base=tmp_path, instance_id="slot-0"))
     config.set("click_sound_enabled", True)
     assert config.save() is True
 
-    win = PetWindow.__new__(PetWindow)
-    win.cfg = config
+    player = SpriteSoundPlayer(config, clock=lambda: 1000.0)
+    played = []
+    monkeypatch.setattr(
+        player, "_submit",
+        lambda path, volume, gate, cfg=None: played.append((path, volume)))
 
-    # 初始状态下属性读取 cfg 为 True
-    assert win.click_sound_enabled is True
+    # 初始状态：点击音效开启
+    player.on_click()
+    assert len(played) == 1
 
     # 模拟设置对话框即时关闭
     monkeypatch.setattr("pet.modern_settings_dialog.autostart_mod.is_enabled", lambda: False)
     dialog = ModernSettingsDialog(config, include_ai=False)
     assert dialog.click_sound_check.isChecked() is True
 
-    played = []
-    monkeypatch.setattr("pet.window.play_sound", lambda *a, **k: played.append(a))
-    monkeypatch.setattr("pet.window.play_press_sound", lambda *a, **k: played.append(a))
-
-    # 关闭点击音效
     dialog.click_sound_check.setChecked(False)
 
-    # 验证即时写回 config 且 PetWindow 读到 False
+    # 验证即时写回 config，运行期播放器读到 False
     assert config.get("click_sound_enabled") is False
-    assert win.click_sound_enabled is False
-
-    # 触发播放点击音效
-    win._play_click_sound()
-    assert played == []
+    player.on_click()
+    assert len(played) == 1, "关闭后点击不得再播放"
 
     dialog.close()
     app.processEvents()
