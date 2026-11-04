@@ -473,8 +473,6 @@ class ModernSettingsDialog(QDialog):
         self.island_hidden_chat_check.setChecked(bool(island_cfg.get("hidden_chat", True)))
         self.island_edge_dock_check = ToggleSwitch(self)
         self.island_edge_dock_check.setChecked(bool(island_cfg.get("edge_dock", True)))
-        self.island_collision_check = ToggleSwitch(self)
-        self.island_collision_check.setChecked(bool(island_cfg.get("collision_enabled", True)))
 
         if include_ai:
             # 延迟 import：no-chat 打包变体 excludes=['pet.chat']，顶层导入会在
@@ -622,12 +620,6 @@ class ModernSettingsDialog(QDialog):
                         "拖到屏幕任意边缘（上下左右）收成细条，鼠标靠近自动滑出；顶部被占时可停靠侧边。",
                         self.island_edge_dock_check,
                     ),
-                    SettingRow(
-                        "dynamic_island_collision",
-                        "果冻墙（参与碰撞）",
-                        "岛注册为静态碰撞体：肥鱼被甩到岛上会弹开，岛原地果冻摆动。岛的位置不会被撞动。",
-                        self.island_collision_check,
-                    ),
                 ],
                 island_content,
             )
@@ -698,31 +690,6 @@ class ModernSettingsDialog(QDialog):
                 behavior_content,
             )
         )
-        behavior_layout.addWidget(
-            SettingsSection(
-                "多开碰撞",
-                [
-                    SettingRow(
-                        "collision_enabled",
-                        "碰撞开关",
-                        "多开桌宠之间发生碰撞物理互动。开启鼠标穿透的桌宠仍会参与碰撞，锁定位置的桌宠作为固定障碍。",
-                        self.collision_enabled_check,
-                    ),
-                    SettingRow("collision_restitution", "撞后弹力", "碰撞反弹的能量保留程度（0~1.00，默认 0.82）。", self.collision_restitution_spin),
-                    SettingRow("collision_friction", "摩擦系数", "擦边碰撞时的切向摩擦阻力（0~0.30，默认 0.08）。", self.collision_friction_spin),
-                    SettingRow("collision_mass_scale", "体重倍率", "桌宠的基础质量加权倍率（0.5~2.0，默认 1.0）。", self.collision_mass_scale_spin),
-                    SettingRow("collision_impulse_cap", "最大撞击力度", "单次碰撞能施加的最大冲量上限（1000~12000，默认 9000）。", self.collision_impulse_cap_spin),
-                    SettingRow("collision_sound_enabled", "碰撞音效", "碰撞时播放音效反馈。", self.collision_sound_check),
-                    SettingRow("collision_sound_volume", "碰撞音量", "调整碰撞音效播放音量。", self.collision_sound_volume_spin),
-                ],
-                behavior_content,
-            )
-        )
-        self.collision_policy_note = QLabel("碰撞参数由当前协调者桌宠的设置决定")
-        self.collision_policy_note.setObjectName("settingHint")
-        self.collision_policy_note.setWordWrap(True)
-        self.collision_policy_note.setContentsMargins(14, 0, 14, 0)
-        behavior_layout.addWidget(self.collision_policy_note)
         # 「点击反馈」与「自言自语」两组归「互动」域（settings_interaction 构建，
         # 行数预算原因；组名与顺序的既有契约见 tests/test_menu_layout.py）。
         # Agent 联动：音效设置
@@ -957,8 +924,6 @@ class ModernSettingsDialog(QDialog):
         self.island_info_mode_select.currentIndexChanged.connect(self._update_island_custom_text)
         self.network_info_menu_check.toggled.connect(self._sync_menu_action_states)
         self.quick_launch_editor.changed.connect(self._sync_menu_action_states)
-        self.collision_enabled_check.toggled.connect(self._update_collision_controls)
-        self.collision_sound_check.toggled.connect(self._update_collision_sound_controls)
         if hasattr(self, "pro_enabled_check"):
             self.pro_enabled_check.toggled.connect(self._update_proactive_controls)
             self.pro_idle_check.toggled.connect(self._update_proactive_idle_controls)
@@ -967,7 +932,6 @@ class ModernSettingsDialog(QDialog):
         self._update_translucency_controls(self.menu_translucent_check.isChecked())
         self._update_island_controls(self.island_enabled_check.isChecked())
         self._sync_menu_action_states()
-        self._update_collision_controls(self.collision_enabled_check.isChecked())
         if hasattr(self, "pro_enabled_check"):
             self._update_proactive_controls(self.pro_enabled_check.isChecked())
         self._update_spawn_size_controls(self.spawn_inherit_size_check.isChecked())
@@ -1275,28 +1239,6 @@ class ModernSettingsDialog(QDialog):
 
     def _update_island_custom_text(self, _index: int | None = None) -> None:
         settings_pet_controls._update_island_custom_text(self, _index)
-
-    def _update_collision_controls(self, enabled: bool) -> None:
-        self._set_setting_rows_visible(
-            (
-                "collision_sound_enabled",
-                "collision_restitution",
-                "collision_friction",
-                "collision_mass_scale",
-                "collision_impulse_cap",
-                "collision_sound_volume",
-            ),
-            enabled,
-            dependency="collision_enabled",
-        )
-        self._update_collision_sound_controls(self.collision_sound_check.isChecked())
-
-    def _update_collision_sound_controls(self, enabled: bool) -> None:
-        self._set_setting_rows_visible(
-            ("collision_sound_volume",),
-            enabled,
-            dependency="collision_sound_enabled",
-        )
 
     def _update_proactive_controls(self, enabled: bool) -> None:
         self._set_setting_rows_visible(
@@ -1682,16 +1624,6 @@ class ModernSettingsDialog(QDialog):
                 # 「多开」分组已随拓扑收口 Phase A 隐藏（见上方注释）
             ]
         )
-        # 碰撞音效 2 行按 2026-09-17 定稿口径留在「桌宠」：开关紧跟碰撞开关，
-        # 音量随物理参数进「碰撞参数（高级）」。
-        collision_primary = claim("collision_enabled", "collision_sound_enabled")
-        collision_advanced = claim(
-            "collision_restitution",
-            "collision_friction",
-            "collision_mass_scale",
-            "collision_impulse_cap",
-            "collision_sound_volume",
-        )
         # 「桌宠」域（2026-10-08 第二刀）：域内是两个**互斥任务**——「它长什么样」
         # 与「它怎么动 / 怎么撞」，页内切成两个标签，首屏只管一个任务。
         # 侧栏 10 域是外部契约（深链/搜索跳域语义不变）；搜索命中另一标签的行时由
@@ -1707,16 +1639,14 @@ class ModernSettingsDialog(QDialog):
             ),
         )
         pet.addTab(
-            "motion_collision",
-            "动作与碰撞",
+            "motion",
+            "动作",
             page_content(
                 [
                     ("动画与移动", claim("playback_speed", "animation_gap", "no_move")),
                     ("拖拽与弹射", claim("drag_physics", "drop_gravity", "throw_strength", "lock_position", "shift_drag")),
                     ("边缘探头", claim("edge_probe")),
                     ("生小肥鱼", claim("spawn_inherit_size", "spawn_scale", "clear_spawned_pets")),
-                    ("多开碰撞", collision_primary),
-                    ("碰撞参数（高级）", collision_advanced, True),
                 ]
             ),
         )
@@ -2091,13 +2021,6 @@ class ModernSettingsDialog(QDialog):
         self.config.set("drag_physics", self.drag_physics_check.isChecked())
         self.config.set("drop_gravity", self.drop_gravity_check.isChecked())
         self.config.set("throw_strength", str(self.throw_strength_select.currentData() or "standard"))
-        self.config.set("collision_enabled", self.collision_enabled_check.isChecked())
-        self.config.set("collision_restitution", self.collision_restitution_spin.value())
-        self.config.set("collision_friction", self.collision_friction_spin.value())
-        self.config.set("collision_mass_scale", self.collision_mass_scale_spin.value())
-        self.config.set("collision_impulse_cap", self.collision_impulse_cap_spin.value())
-        self.config.set("collision_sound_enabled", self.collision_sound_check.isChecked())
-        self.config.set("collision_sound_volume", float(self.collision_sound_volume_spin.value()) / 100.0)
         self.config.set("lock_position", self.lock_position_check.isChecked())
         self.config.set("shift_drag", self.shift_drag_check.isChecked())
         self.config.set("pet_opacity", int(self.pet_opacity_spin.value()))
@@ -2138,7 +2061,6 @@ class ModernSettingsDialog(QDialog):
                 "hidden_chat": self.island_hidden_chat_check.isChecked(),
                 "event_effects": self.island_event_effects_check.isChecked(),
                 "edge_dock": self.island_edge_dock_check.isChecked(),
-                "collision_enabled": self.island_collision_check.isChecked(),
                 # 拖拽落点写入的停靠边与位置：设置页不回写，原样保留。
                 "dock_edge": existing_island.get("dock_edge", "none"),
                 "x": existing_island.get("x"),

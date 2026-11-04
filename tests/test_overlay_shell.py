@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Phase 4.1a overlay 产品壳 offscreen 单测（QT_QPA_PLATFORM=offscreen 可跑）。
 
-覆盖：OverlayShell 构建期 dpr/bounds/默认右下角落位；tick 顺序协议（行为→碰撞→物理，装桩记录调用序）；start/stop 幂等；
+覆盖：OverlayShell 构建期 dpr/bounds/默认右下角落位；tick 顺序协议（行为→物理，装桩记录调用序）；start/stop 幂等；
 音效预热接线（首次可见前预热一次、开关关闭零调用）；geometryChanged 的 rx/ry
 比例迁移；屏拔除的 overlay 重建与拖拽收尾；会话结束与退出收口；app.py 拓扑
 启动只构造 OverlayShell。
@@ -219,13 +219,12 @@ def test_shell_assembles_process_level_tick_driver():
     assert driver.overlays == [shell.overlay]
     assert driver.hosts == [host]                       # 宿主即仿真分组的单位
     assert host.behavior is shell.behavior
-    assert host.collision is shell.collision
     assert host.physics is shell.physics
     # 产品 overlay 不再覆写兼容钩子（仿真段唯一入口 = 驱动器 tick_sim）
     assert "before_sprites_advance" not in type(shell.overlay).__dict__
 
 
-def test_tick_order_behavior_collision_physics():
+def test_tick_order_behavior_physics():
     shell, _, _ = _make_shell()
     calls = []
 
@@ -239,11 +238,10 @@ def test_tick_order_behavior_collision_physics():
     # M-2 后控制器归宿主（多屏逐屏一份）：替换点从 shell 属性面移到宿主装配点
     host = shell._main_host
     host.behavior = Recorder("behavior")
-    host.collision = Recorder("collision")
     host.physics = Recorder("physics")
     shell.overlay._on_tick(dt=0.016)  # 同步直调，不跑真 QTimer
 
-    assert [c[0] for c in calls] == ["behavior", "collision", "physics"]
+    assert [c[0] for c in calls] == ["behavior", "physics"]
     for _, sprites, dt in calls:
         assert sprites == [shell.sprite]
         assert dt == 0.016
@@ -259,7 +257,7 @@ def test_start_stop_idempotent():
             calls.append(1)
 
     host = shell._main_host
-    host.behavior = host.collision = host.physics = Nop()
+    host.behavior = host.physics = Nop()
 
     assert not shell.overlay._timer.isActive()
     shell.start()
@@ -316,9 +314,8 @@ def test_start_warms_sound_before_overlay_visible(tmp_path, monkeypatch):
 
 
 def test_start_skips_sound_warm_when_both_switches_off(monkeypatch):
-    """两开关都关：绝不预热（同 legacy 的 OR 闸门），不无谓拉起音频后端。"""
-    config = FakeConfig(
-        {"click_sound_enabled": False, "collision_sound_enabled": False})
+    """点击音效关：绝不预热，不无谓拉起音频后端。"""
+    config = FakeConfig({"click_sound_enabled": False})
     shell, _, _ = _make_shell(instance=FakeInstance(config))
     calls = []
     _warm_spy(monkeypatch, calls)
@@ -344,25 +341,6 @@ def test_three_in_process_pets_warm_sound_once(monkeypatch):
     shell.spawn_pet()
 
     assert len(shell._spawned) == 2  # 前提：三宠确实同进程存在
-    assert len(calls) == 1
-
-
-def test_stop_start_does_not_repeat_sound_warm(monkeypatch):
-    """stop→start（重 show）不重复预热：池是进程级，重复预热纯浪费。
-
-    配置顺带走「只开碰撞音效」分支（OR 闸门的另一半）：点击音效关时也必须
-    预热，否则碰碰车场景的碰撞音效仍在首次发声付冷启动。
-    """
-    shell, _, _ = _make_shell(instance=FakeInstance(
-        FakeConfig({"click_sound_enabled": False,
-                    "collision_sound_enabled": True})))
-    calls = []
-    _warm_spy(monkeypatch, calls)
-
-    shell.start()
-    shell.stop()
-    shell.start()
-
     assert len(calls) == 1
 
 
@@ -571,16 +549,13 @@ def test_overlay_topology_hub_respects_shared_decode_off(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- 边缘探头壳层接线
 def test_shell_wires_edge_probe_world():
     """edge_probe 接线：世界挂**本屏宿主**的 extras（tick 尾段）+ overlay 事件钩子 +
-    碰撞真撞击监听 + sprite 移除注销 + 几何变化 bounds 同步。"""
+    sprite 移除注销 + 几何变化 bounds 同步。"""
     shell, screen, _ = _make_shell()
     host = shell._main_host
     probe = shell._probe
     assert probe is not None
     assert probe in host.extras
     assert shell.overlay.edge_probe is probe
-    # 碰撞监听已挂（真撞击链里有 probe 处理器；经宿主世界分派）
-    assert any(cb.__name__ == "_on_collision_probe"
-               for cb in host.collision._listeners)
     # 几何变化 → probe bounds 同步（窗口 = 可用区并集）
     from PySide6.QtCore import QRect
     screen.set_rects((0, 0, 1280, 720), (0, 0, 1280, 680))
@@ -588,24 +563,6 @@ def test_shell_wires_edge_probe_world():
     assert probe.bounds == QRect(0, 0, 1280, 680)
     # sprite 移除监听已挂 probe.forget
     assert shell._probe.forget in shell.overlay._sprite_removed_listeners
-
-
-def test_shell_attach_island_bridge():
-    """岛桥接线：attach_island 幂等可重复调；桥挂进程级 collision 世界；
-    None 摘桥；stop() 收口。"""
-    from tests.test_island_bridge import StubIsland
-    shell, _, _ = _make_shell()
-    island = StubIsland()
-    shell.attach_island(island)
-    bridge = shell.island_bridge
-    assert bridge is not None and bridge.attached
-    shell.attach_island(island)  # 重复调：旧桥收口换新桥，不叠加
-    assert shell.island_bridge is not bridge
-    shell.attach_island(None)
-    assert shell.island_bridge is None
-    shell.attach_island(island)
-    shell._on_about_to_quit()  # 退出收口（stop 只服务已 start 的壳）
-    assert shell.island_bridge is None
 
 
 # ---------------------------------------------------------------- 角色切换：聊天面同步（B07）

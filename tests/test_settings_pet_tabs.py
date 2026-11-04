@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""「桌宠」域页内标签（显示 / 动作与碰撞）的聚焦回归（第二刀，2026-10-08）。
+"""「桌宠」域页内标签（显示 / 动作）的聚焦回归（第二刀，2026-10-08）。
 
 口径来源：``.scratch/SETTINGS-UI-DESIGN-K3-20261007.md`` §二（页内标签的判定规则）
 与第二刀裁决——桌宠域是**两个互斥任务**：「它长什么样」（显示）与
-「它怎么动 / 怎么撞」（动作与碰撞）；高级组永远垫底其所属标签页；侧栏 10 域、
+「它怎么动」（动作）；高级组永远垫底其所属标签页；侧栏 10 域、
 深链与搜索跳域语义不变。
 
 本文件钉住五件事：
@@ -12,7 +12,7 @@
 2. 标签内组序：主视线组在前、高级组垫底；每行的 ``SettingsSection`` 归属唯一；
 3. 每一行都能由标签键路由到，切到所属标签后可见（分页没丢功能）；
 4. 搜索命中另一标签的行时自动切标签 + 展开高级组，命中行**实际可见**
-   （标签 1：桌宠大小；标签 2：碰撞开关 / 碰撞音量）；
+   （标签 1：桌宠大小；标签 2：播放速率）；
 5. 保存 round trip 不变——分页是纯呈现层改动，不碰配置键、默认值与保存链。
 """
 
@@ -26,12 +26,12 @@ EXPECTED_SIDEBAR = [
     "常规", "桌宠", "互动", "菜单", "桌面组件", "AI 与对话", "自动化与联动",
 ]
 #: 标签键给代码（稳定），标签名给用户（可读）；顺序 = 使用顺序。
-EXPECTED_TABS = (("display", "显示"), ("motion_collision", "动作与碰撞"))
+EXPECTED_TABS = (("display", "显示"), ("motion", "动作"))
 
 #: 标签 1 的主视线组序。
 TAB1_PRIMARY = ("显示",)
-#: 标签 2 的组序：主视线 5 组 + 垫底的「碰撞参数（高级）」。
-TAB2_SECTIONS = ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼", "多开碰撞", "碰撞参数（高级）")
+#: 标签 2 的组序。
+TAB2_SECTIONS = ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼")
 
 TAB1_ROWS = (
     "scale", "bubble_text_scale", "pet_opacity",
@@ -42,12 +42,8 @@ TAB2_ROWS = (
     "drag_physics", "drop_gravity", "throw_strength",
     "lock_position", "shift_drag", "edge_probe",
     "spawn_inherit_size", "spawn_scale", "clear_spawned_pets",
-    "collision_enabled", "collision_sound_enabled",
 )
-TAB2_ADVANCED_ROWS = (
-    "collision_restitution", "collision_friction", "collision_mass_scale",
-    "collision_impulse_cap", "collision_sound_volume",
-)
+TAB2_ADVANCED_ROWS = ()
 def _qapp():
     from PySide6.QtWidgets import QApplication
 
@@ -148,16 +144,12 @@ def test_group_order_inside_each_tab_puts_the_advanced_group_last(dialog):
     tabs = _pet_tabs(dialog)
     expected = {
         "display": TAB1_PRIMARY,
-        "motion_collision": TAB2_SECTIONS,
+        "motion": TAB2_SECTIONS,
     }
     for tab_key, titles in expected.items():
         sections = _sections_of_tab(tabs, tab_key)
         assert [_section_title(section) for section in sections] == list(titles)
-        if tab_key == "motion_collision":
-            assert all(section.advanced is False for section in sections[:-1])
-            assert sections[-1].advanced is True, "高级组必须垫底其所属标签页"
-        else:
-            assert all(section.advanced is False for section in sections)
+        assert all(section.advanced is False for section in sections)
 
     # 归属唯一：每个桌宠行的 SettingsSection 祖先有且只有一个（不会一组挂两处）。
     from pet.modern_settings_dialog import SettingsSection
@@ -182,13 +174,13 @@ def test_every_pet_row_routes_to_its_tab_and_is_reachable(dialog):
     routing = {}
     routing.update({key: "display" for key in TAB1_ROWS})
     routing.update({key: "display" for key in TAB1_ADVANCED_ROWS})
-    routing.update({key: "motion_collision" for key in TAB2_ROWS})
-    routing.update({key: "motion_collision" for key in TAB2_ADVANCED_ROWS})
+    routing.update({key: "motion" for key in TAB2_ROWS})
+    routing.update({key: "motion" for key in TAB2_ADVANCED_ROWS})
 
     page = _pet_page(dialog)
     for tab_key, keys in (
         ("display", TAB1_ROWS + TAB1_ADVANCED_ROWS),
-        ("motion_collision", TAB2_ROWS + TAB2_ADVANCED_ROWS),
+        ("motion", TAB2_ROWS + TAB2_ADVANCED_ROWS),
     ):
         tabs.setCurrentKey(tab_key)
         _qapp().processEvents()
@@ -207,12 +199,12 @@ def test_rows_of_the_other_tab_are_out_of_view_but_not_destroyed(dialog):
     """另一标签的行只是不可见，对象与控件都还在——整理没有删功能/没有动保存链。"""
     tabs = _pet_tabs(dialog)
     tabs.setCurrentKey("display")
-    hidden_row = _row(dialog, "collision_enabled")
+    hidden_row = _row(dialog, "playback_speed")
     assert hidden_row.isVisibleTo(tabs) is False
     assert hidden_row.isHidden() is False, "行只是不在当前标签页，不是被隐藏/删除"
     assert hidden_row.control is not None, "控件对象必须仍在（保存链依赖它）"
 
-    tabs.setCurrentKey("motion_collision")
+    tabs.setCurrentKey("motion")
     assert hidden_row.isVisibleTo(tabs) is True
 
 
@@ -229,14 +221,14 @@ def _search(dialog, query: str):
 
 
 def test_search_jumps_to_the_tab_that_owns_the_hit(dialog):
-    """搜「碰撞开关」（标签 2 的行）→ 自动切到动作与碰撞标签，命中行可见。"""
+    """搜「播放速率」（标签 2 的行）→ 自动切到动作标签，命中行可见。"""
     tabs = _pet_tabs(dialog)
     assert tabs.currentKey() == "display"
 
-    row = _search(dialog, "碰撞开关")
-    assert _row_key(row) == "collision_enabled"
+    row = _search(dialog, "播放速率")
+    assert _row_key(row) == "playback_speed"
     assert dialog.sidebar.currentItem().text() == "桌宠"
-    assert tabs.currentKey() == "motion_collision"
+    assert tabs.currentKey() == "motion"
     assert row.isVisibleTo(_pet_page(dialog)) is True
 
 
@@ -249,39 +241,24 @@ def test_search_on_tab_one_hits_stay_on_tab_one(dialog):
     ]
 
     for query, key in queries:
-        tabs.setCurrentKey("motion_collision")  # 先离开标签 1，验证真的切回来
+        tabs.setCurrentKey("motion")  # 先离开标签 1，验证真的切回来
         row = _search(dialog, query)
         assert _row_key(row) == key, f"「{query}」应命中 {key}"
         assert tabs.currentKey() == "display", f"「{query}」命中标签 1 的行必须切回标签 1"
         assert row.isVisibleTo(_pet_page(dialog)) is True, f"「{query}」命中的行必须实际可见"
 
 
-def test_search_expands_the_pre_existing_collision_advanced_group(dialog):
-    """既有高级组（碰撞参数）回归：搜「碰撞音量」→ 切标签 2 + 展开 + 行可见。"""
-    tabs = _pet_tabs(dialog)
-    row = _search(dialog, "碰撞音量")
-    assert _row_key(row) == "collision_sound_volume"
-    assert tabs.currentKey() == "motion_collision"
-    section = _section_of(row)
-    assert section.advanced is True
-    assert _section_title(section) == "碰撞参数（高级）"
-    assert section.toggle.isChecked() is True, "命中折叠组内的行必须自动展开"
-    assert row.isVisibleTo(_pet_page(dialog)) is True
-
-
 def test_pet_settings_save_round_trip_is_unchanged(dialog, tmp_path):
     """保存 round trip 不变：分页只改呈现，配置键/默认值/保存链一字未动。"""
     from pet.config import Config
 
-    _row(dialog, "collision_enabled").control.setChecked(False)
     _row(dialog, "drag_physics").control.setChecked(True)
 
     dialog._save()
     _qapp().processEvents()
 
-    # 每宠键（碰撞/拖拽）真值在 slot0 档案。
+    # 每宠键（拖拽）真值在 slot0 档案。
     from pet.settings_slot_config import route_settings_config
 
     saved = route_settings_config(Config(base=tmp_path, instance_id="slot-0"))
-    assert saved.get("collision_enabled") is False
     assert saved.get("drag_physics") is True

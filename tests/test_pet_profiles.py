@@ -426,7 +426,7 @@ def _global_with_per_pet(config_dir: Path) -> dict:
     data = {
         "version": 4,
         "rx": 0.25, "ry": 0.75, "screen_name": "DP-1", "facing": "right",
-        "scale": 1.4, "character": "cat", "collision_enabled": False,
+        "scale": 1.4, "character": "cat",
         "self_talk_enabled": True, "user_customized": False,
         "pet_opacity": 80, "on_top": False, "no_move": True,
         "chat": {"providers": {}}, "agent_link": {"enabled": True},
@@ -445,7 +445,7 @@ def test_slot0_migration_extracts_per_pet_keys_and_geometry(tmp_path):
     assert result.profile_path == pp.slot_profile_path(tmp_path, 0)
     target = json.loads(result.profile_path.read_text(encoding="utf-8"))
     for key in ("rx", "ry", "screen_name", "facing", "scale", "character",
-                "collision_enabled", "self_talk_enabled"):
+                "self_talk_enabled"):
         assert target[key] == source[key], key
     assert target["version"] == pp.PROFILE_FILE_VERSION
     assert target["user_customized"] is True  # 档案已含用户真值，落种刷新不得覆盖
@@ -872,27 +872,12 @@ def test_per_pet_key_set_matches_existing_slot_routing():
     （旧副本仍在 ``overlay_spawn_state``；接线批把单一来源换成 ``pet_profiles``
     后本用例仍成立——它锁的是"两边不许漂移"，不是"副本必须留在这里"。）
     """
-    assert pp.PER_PET_SETTING_KEYS == ovs.PER_SLOT_SETTING_KEYS | {"collision_enabled"}
+    assert pp.PER_PET_SETTING_KEYS == ovs.PER_SLOT_SETTING_KEYS
     assert pp.PER_PET_KEYS == ssc.SLOT_ROUTED_KEYS
     assert pp.SLOT_LOCAL_KEYS == ssc.SLOT_LOCAL_KEYS
     assert pp.POSITION_KEYS == ("rx", "ry", "screen_name")
     assert pp.PER_PET_PREFERENCE_KEYS == pp.PER_PET_SETTING_KEYS | {"facing"}
     assert pp.PER_PET_KEYS == pp.PER_PET_PREFERENCE_KEYS | set(pp.POSITION_KEYS)
-
-
-def test_deferred_per_pet_keys_are_recorded_not_silently_decided():
-    """规范 §五 的"物理/碰撞"里，碰撞参数今天仍是**全局**键（唯一读点在主配置）。
-
-    本批不把它们偷偷塞进每宠集（那会立刻造出第二份有效真值），只登记为待接线批
-    裁决的键；这条用例把"登记过"钉住，防止它变成一句空口承诺。
-    """
-    assert pp.DEFERRED_PER_PET_KEYS == frozenset({
-        "collision_restitution", "collision_friction",
-        "collision_mass_scale", "collision_impulse_cap"})
-    assert pp.DEFERRED_PER_PET_KEYS.isdisjoint(pp.PER_PET_KEYS)
-    defaults = _defaults()
-    for key in pp.DEFERRED_PER_PET_KEYS:
-        assert key in defaults, f"待裁决键必须是现存全局键: {key}"
 
 
 def test_profile_document_version_matches_config_default_version():
@@ -902,14 +887,14 @@ def test_profile_document_version_matches_config_default_version():
 # ---------------------------------------------------------------- 档案写：设置键
 def test_write_profile_settings_merges_and_preserves_other_keys(tmp_path):
     path = pp.slot_profile_path(tmp_path, 0)
-    _dump(path, {"version": 4, "character": "cat", "collision_enabled": True,
+    _dump(path, {"version": 4, "character": "cat", "self_talk_enabled": True,
                  "user_customized": False})
     result = pp.write_profile_settings(tmp_path, 0, {"scale": 0.8})
     assert result.status == "ok"
     assert result.changed == ("scale",)
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["scale"] == 0.8
-    assert data["character"] == "cat" and data["collision_enabled"] is True
+    assert data["character"] == "cat" and data["self_talk_enabled"] is True
     assert data["version"] == 4
     assert list(tmp_path.glob("*.tmp")) == []
 

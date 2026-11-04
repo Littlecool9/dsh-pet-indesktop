@@ -42,7 +42,7 @@ _FORBIDDEN_TOKENS = ("SMTC", "UDP", "223.5.5.5", "网卡字节计数器", "甩�
 #: 标签 1 的高级组标题随平台上有没有「标题格式」行动态取（用例里拼）。
 _PET_TAB_SECTIONS = {
     "display": ("显示",),
-    "motion_collision": ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼", "多开碰撞"),
+    "motion": ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼"),
 }
 
 
@@ -226,8 +226,7 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
             assert len(ancestors) == 1, f"{key} 的 SettingsSection 祖先必须唯一"
 
         # 常用开关一律留在主视线（未被误藏）。
-        common = ["autostart", "drag_physics", "collision_enabled",
-                  "agent_sound_enabled"]
+        common = ["autostart", "drag_physics", "agent_sound_enabled"]
         for key in common:
             assert _section_of(dialog, key).advanced is False, f"{key} 是常用开关，不得收进高级组"
     finally:
@@ -237,29 +236,21 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
 def test_v2_pet_domain_group_order_is_per_tab_with_advanced_last(tmp_path, monkeypatch):
     """桌宠域页内标签（第二刀）的组序：每组只属于一个标签，高级组垫底其标签页。
 
-    第一刀钉的是域级组序；第二刀把域拆成「显示 / 动作与碰撞」两个标签，组序
-    断言下移到标签内——覆盖不削弱：主视线组一个不少、相对顺序不变，动作与
-    碰撞标签的高级组仍垫底。
+    第一刀钉的是域级组序；第二刀把域拆成「显示 / 动作」两个标签，组序断言
+    下移到标签内——覆盖不削弱：主视线组一个不少、相对顺序不变。
     """
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
         expected = {
-            "display": (False, _PET_TAB_SECTIONS["display"]),
-            "motion_collision": (
-                True,
-                _PET_TAB_SECTIONS["motion_collision"] + ("碰撞参数（高级）",),
-            ),
+            "display": _PET_TAB_SECTIONS["display"],
+            "motion": _PET_TAB_SECTIONS["motion"],
         }
-        for tab_key, (advanced_last, titles) in expected.items():
+        for tab_key, titles in expected.items():
             _page_widget, sections = _page_sections(dialog, "桌宠", tab_key)
             assert [_section_title(section) for section in sections] == list(titles), (
                 f"标签 {tab_key} 的组序必须与裁决一致"
             )
-            if advanced_last:
-                assert all(section.advanced is False for section in sections[:-1])
-                assert sections[-1].advanced is True, "高级组必须垫底其所属标签页"
-            else:
-                assert all(section.advanced is False for section in sections)
+            assert all(section.advanced is False for section in sections)
     finally:
         dialog.close()
 
@@ -412,11 +403,10 @@ def test_v4_search_expands_new_advanced_groups_and_reveals_the_row(tmp_path, mon
 
 
 def test_v4_search_expands_pre_existing_advanced_groups(tmp_path, monkeypatch):
-    """既有 3 个高级组（碰撞参数 / 生成参数 / 高级配色）同样接入自动展开。"""
+    """既有高级组（生成参数 / 高级配色）同样接入自动展开。"""
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        for query, key in (("碰撞音量", "collision_sound_volume"),
-                           ("超时", "timeout"),
+        for query, key in (("超时", "timeout"),
                            ("背景色", "light_background")):
             row = _search_until(dialog, query, key)
             section = _section_of(dialog, key)

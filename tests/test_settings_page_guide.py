@@ -359,7 +359,7 @@ def _tab_layer_height(scroll: QScrollArea) -> int:
     **量落版后的实测几何**（``tab_bar.height()`` + 容器布局自己的 ``spacing()``），不抄
     产品那句口径、也不用 hint 相减：视口是**整块滚动内容**（标签容器）的视口，
     漏掉这一层就会在 ``页高 <= 视口 < 页高 + 层高`` 这一小段上说"装得下"（实测 1100 宽、
-    桌宠／动作与碰撞：层高 52 = 标签栏 40 + 间距 12）。hint 相减（容器最小高 − 页最小高）
+    桌宠／动作：层高 52 = 标签栏 40 + 间距 12）。hint 相减（容器最小高 − 页最小高）
     在"刚改过留白、布局还没落定"的一拍会被缓存值污染（实测量到 1336、真值 52），故取实测。
     """
     tabs = settings_page_guide.tab_container(scroll.widget())
@@ -731,13 +731,13 @@ def test_anchor_bar_holds_across_jump_resize_and_domain_navigation(tmp_path, mon
 
 
 # ------------------------------------------------------- 页内标签域：整块内容的判据
-#: 页内标签域那条带用哪个标签页量：桌宠／动作与碰撞 6 个区，三平台都够
+#: 页内标签域那条带用哪个标签页量：桌宠／动作 4 个区，三平台都够
 #: （同域的 ``display`` 只有 1 个区，跳转条恒藏，量不出带；见
 #: ``test_anchor_bar_rebuilds_when_the_in_page_tab_changes``）。
 TAB_BAND_DOMAIN = "桌宠"
-TAB_BAND_KEY = "motion_collision"
+TAB_BAND_KEY = "motion"
 #: 带内用来验「一次点击顶对齐」的普通分区（不用先展开，位置又在页尾附近）。
-TAB_BAND_TARGET = "多开碰撞"
+TAB_BAND_TARGET = "生小肥鱼"
 
 
 def _tabs_of(dialog, domain: str) -> SettingsTabContainer:
@@ -787,7 +787,7 @@ def test_tab_page_bar_counts_the_tab_layer_not_just_the_page(tmp_path, monkeypat
 
     只量当前标签页会漏掉标签容器上面那层「标签栏 + 间距」，于是 ``标签页高 <= 视口 <
     整块内容高`` 这一小段答成"装得下"：跳转条收起来，而用户明明要滚才看得完（实测 1100 宽、
-    桌宠／动作与碰撞：标签页 1144、层高 52、整块 1196，窗口高 1222…1278）。
+    桌宠／动作：标签页 1144、层高 52、整块 1196，窗口高 1222…1278）。
 
     两种到达方向（从装得下的大窗缩进来 / 从装不下的小窗拉进来）都要落在"摆着"，
     换标签再换回来也不许把答案带走。
@@ -833,7 +833,7 @@ def test_tab_page_last_group_can_be_top_aligned_inside_that_band(tmp_path, monke
     """带内点页尾那几组的 chip 也要一次顶对齐：页尾留白同样按整块内容答「装不装得下」。
 
     只量标签页时留白在这一段是 0，滚动范围只剩几十像素：跳转条摆着、点下去却顶不到
-    y=8（实测 1100 宽、桌宠／动作与碰撞、窗口高 1264：点「多开碰撞」只滚到 52，目标 979）。
+    y=8（实测 1100 宽、桌宠／动作、窗口高 1264：点「生小肥鱼」只滚到 52，目标 979）。
     """
     start, _page_height, layer = _tab_band(tmp_path, monkeypatch)
     dialog = _dialog(tmp_path, monkeypatch)
@@ -915,11 +915,11 @@ def test_clicking_a_chip_top_aligns_the_section(tmp_path, monkeypatch):
 def _advanced_group_targets(dialog) -> list[tuple[str, str | None, str]]:
     """「默认收起的高级组」目标：``(域, 标签键, 组标题)``。
 
-    桌宠域的「碰撞参数（高级）」三平台都有，是本用例的常驻路径；主动识屏的细调组只在
+    AI 页的「生成参数（高级）」三平台都有，是本用例的常驻路径；主动识屏的细调组只在
     Windows 构造（``settings_pet_controls`` 的平台闸门），有就一并验——展开后滚动
     是同一条代码路径，覆盖不削弱。
     """
-    targets = [("桌宠", "motion_collision", "碰撞参数（高级）")]
+    targets = [("AI 与对话", None, "生成参数（高级）")]
     if _has_proactive(dialog):
         targets.append(("自动化与联动", None, "主动识屏 · 细调（高级）"))
     return targets
@@ -991,9 +991,8 @@ def test_the_last_group_of_a_page_can_be_top_aligned_in_one_click(tmp_path, monk
     """页尾那一组也要一次点击顶到 y=8（普通组与收起的高级组各一条）。
 
     回归（终审问题 1）：滚动范围的尽头是「内容底边贴视口底边」，页尾那一组最多滚到
-    ``视口高 - 该组高``——900×700 实测「碰撞参数（高级）」只能到 y=255（desired 1189 >
-    maximum 942）、「余额与服务状态」只能到 y=191。展开时序没问题，是范围不够；
-    内容末尾那块留白就是补这个差额的。
+    ``视口高 - 该组高``——900×700 实测页尾那组只能到半途（desired 超 maximum）。
+    展开时序没问题，是范围不够；内容末尾那块留白就是补这个差额的。
     """
     dialog = _dialog(tmp_path, monkeypatch)
     try:
@@ -1003,7 +1002,7 @@ def test_the_last_group_of_a_page_can_be_top_aligned_in_one_click(tmp_path, monk
             app.processEvents()
             for domain, tab_key, title in (
                 ("AI 与对话", None, "余额与服务状态"),
-                ("桌宠", "motion_collision", "碰撞参数（高级）"),
+                ("桌宠", "motion", "生小肥鱼"),
             ):
                 _page_widget, bar = _select(dialog, domain)
                 scroll = _page(dialog, domain).findChild(QScrollArea, "settingsScroll")
@@ -1105,17 +1104,17 @@ def test_anchor_bar_rebuilds_when_the_in_page_tab_changes(tmp_path, monkeypatch)
         app.processEvents()
         page, bar = _select(dialog, "桌宠")
         tabs = page.findChild(SettingsTabContainer)
-        assert tabs.keys() == ("display", "motion_collision")
+        assert tabs.keys() == ("display", "motion")
 
         assert tabs.currentKey() == "display"
         assert [chip.text() for chip in _chips(bar)] == ["显示"]
         assert bar.isHidden() is True, "「显示」只有 1 个区"
 
-        tabs.setCurrentKey("motion_collision")
+        tabs.setCurrentKey("motion")
         app.processEvents()
         assert bar.isHidden() is False
         assert [chip.text() for chip in _chips(bar)] == [
-            "动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼", "多开碰撞", "碰撞参数（高级）"]
+            "动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼"]
 
         tabs.setCurrentKey("display")
         app.processEvents()
@@ -1226,7 +1225,7 @@ def test_advanced_group_shows_its_description_while_collapsed(tmp_path, monkeypa
 
 
 # --------------------------------------------------------- 行标题重写（2026-10-08）
-#: 13 行改写后的定稿标题（行键一个都没动，只改措辞）。
+#: 改写后的定稿标题（行键一个都没动，只改措辞）。
 #: 2026-10-08：「菜单版本（新版 / 旧版）」随旧版菜单退役整行删除（不是改名），
 #: 故从本表移除——它的旧词别名也一并删除，见 OLD_WORDS 的注释。
 REWRITTEN_ROW_TITLES = {
@@ -1236,9 +1235,6 @@ REWRITTEN_ROW_TITLES = {
     "proactive_min_interval": "两次识屏最短间隔（秒）",
     "proactive_free": "识屏用单独的看图模型",
     "proactive_memory_clear": "清空陪伴记忆",
-    "collision_mass_scale": "体重倍率",
-    "collision_impulse_cap": "最大撞击力度",
-    "collision_restitution": "撞后弹力",
     "dynamic_island_info": "显示中间信息栏",
     "dynamic_island_info_mode": "信息栏显示什么",
     "balance_tier_mode": "高峰 / 空闲时段提示",
@@ -1260,8 +1256,6 @@ OLD_WORDS = {
     "冷却": "proactive_cooldown",
     "最小请求": "proactive_min_interval",
     "视觉配置": "proactive_free",
-    "质量倍率": "collision_mass_scale",
-    "弹性": "collision_restitution",
     "信息槽": "dynamic_island_info",
     "峰谷": "balance_tier_mode",
     "音效联动": "agent_sound_enabled",
@@ -1269,7 +1263,7 @@ OLD_WORDS = {
 
 
 def test_rewritten_row_titles_match_the_agreed_wording(tmp_path, monkeypatch):
-    """13 行标题按定稿措辞呈现（只改措辞，行键一个不动）。"""
+    """改写后的标题按定稿措辞呈现（只改措辞，行键一个不动）。"""
     dialog = _dialog(tmp_path, monkeypatch)
     try:
         for key, title in REWRITTEN_ROW_TITLES.items():

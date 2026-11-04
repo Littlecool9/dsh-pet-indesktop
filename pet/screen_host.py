@@ -25,7 +25,6 @@ from __future__ import annotations
 from PySide6.QtCore import QRect, QRectF
 
 from .sprite_behavior import BehaviorController
-from .sprite_collision import SpriteCollisionWorld
 from .sprite_physics import ThrowPhysicsController
 
 
@@ -39,9 +38,8 @@ class ScreenHost:
         self.bounds = QRect(bounds)
         # ((screen, QRect) ...)：活动区矩形集合 + 它属于哪块屏，几何同步按屏对齐
         self.activity: tuple = ()
-        # 仿真：行为（漫游/落位边界）→ 碰撞（全桌成员）→ 抛掷物理（窗口边界）
+        # 仿真：行为（漫游/落位边界）→ 抛掷物理（窗口边界）
         self.behavior = BehaviorController(self.bounds)
-        self.collision = SpriteCollisionWorld()
         self.physics = ThrowPhysicsController(self.bounds)
         # 附加仿真控制器（tick 尾段，顺序即列表序）
         self.extras: list = []
@@ -56,10 +54,9 @@ class ScreenHost:
         return list(self.overlay.sprites)
 
     def tick(self, dt: float) -> None:
-        """一轮仿真：行为 → 碰撞 → 物理 → 附加控制器（顺序协议同 M-2）。"""
+        """一轮仿真：行为 → 物理 → 附加控制器（顺序协议同 M-2）。"""
         sprites = list(self.overlay.sprites)
         self.behavior.tick(sprites, dt)
-        self.collision.tick(sprites, dt)
         self.physics.tick(sprites, dt)
         for ctrl in list(self.extras):
             ctrl.tick(sprites, dt)

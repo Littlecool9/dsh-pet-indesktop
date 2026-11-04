@@ -5,8 +5,8 @@
 ``WindowDoesNotAcceptFocus``（= WS_EX_NOACTIVATE），**从不被激活**；而 Windows
 的 topmost 带内先后由"谁最近被激活/显示"决定——任何被激活的 topmost 窗
 （本进程聊天窗/设置窗/岛对话气泡，或第三方置顶工具）都会盖在岛上面，岛自己
-没有任何机制再顶回去（grep pet/ 全树：dynamic_island / island_bridge /
-overlay_window / platform_win 里既无 ``raise_()`` 也无 ``SetWindowPos``）。
+没有任何机制再顶回去（grep pet/ 全树：dynamic_island / overlay_window /
+platform_win 里既无 ``raise_()`` 也无 ``SetWindowPos``）。
 
 修法 = 恢复 6ebfd2b 的 Windows 置顶保活口径（原生 ``SetWindowPos`` 重申 +
 事件驱动），落在 platform_win 抽象与岛侧：

@@ -457,10 +457,9 @@ def test_slot_compat_launch_main_config_is_that_process_main(tmp_path, monkeypat
 def test_routed_keys_cover_the_runtime_per_slot_read_surface(tmp_path):
     """分流键集必须覆盖运行期的逐宠取源面，且键集全仓单一来源。
 
-    ``_SpriteConfig.get`` 的 per-slot 读点有两处：``PER_SLOT_SETTING_KEYS`` 分支，
-    以及紧随其后 ``collision_enabled`` 的专属分支（``read_slot_collision_enabled``
-    读这只宠的 slot 文件）。两处的键都必须分流到 slot 文件，否则子宠页改它等于没改
-    （写进主配置既改不动这只宠，又会顺手改掉别的宠的继承值）。
+    ``_SpriteConfig.get`` 的 per-slot 读点即 ``PER_SLOT_SETTING_KEYS`` 分支。这些
+    键都必须分流到 slot 文件，否则子宠页改它等于没改（写进主配置既改不动这只宠，
+    又会顺手改掉别的宠的继承值）。
     """
     from pet import overlay_shell, overlay_spawn_state as spawn_state_mod
 
@@ -468,7 +467,6 @@ def test_routed_keys_cover_the_runtime_per_slot_read_surface(tmp_path):
         "PER_SLOT_SETTING_KEYS 必须全仓单一来源（设置在轻模块、壳侧引用）"
     )
     assert overlay_shell.PER_SLOT_SETTING_KEYS <= settings_slot_config.SLOT_ROUTED_KEYS
-    assert "collision_enabled" in settings_slot_config.SLOT_ROUTED_KEYS
     assert "user_customized" in settings_slot_config.SLOT_LOCAL_KEYS
     for main_only in ("pet_opacity", "network_info_menu_enabled", "edge_probe_enabled",
                       "dynamic_island", "context_menu_appearance"):

@@ -62,15 +62,6 @@ def normalize_quiet_minutes(value) -> int:
 
 
 DEFAULT_DIALOGUE_PHRASES = {}
-DEFAULT_COLLISION_SETTINGS = {
-    "collision_enabled": True,
-    "collision_restitution": 0.82,
-    "collision_friction": 0.08,
-    "collision_mass_scale": 1.0,
-    "collision_impulse_cap": 9000.0,
-    "collision_sound_enabled": True,
-    "collision_sound_volume": 0.70,
-}
 SELF_TALK_BUBBLE_STYLES = {
     "classic_top",
     "paper_left",
@@ -541,7 +532,6 @@ def _default_dynamic_island_data() -> dict:
         "event_effects": True,  # 事件动效：AI 回复/余额刷新/峰谷切换弹跳
         "edge_dock": True,  # 拖到屏幕边缘收成细条，鼠标靠近滑出
         "dock_edge": "none",  # none / top / bottom / left / right（拖拽落点写入）
-        "collision_enabled": True,  # 果冻墙：岛注册为静态碰撞体，肥鱼撞到会弹开
         "x": None,
         "y": None,
     }
@@ -611,7 +601,7 @@ def _clean_dynamic_island_data(value) -> dict:
     result["click_action"] = click_action if click_action in {"expand", "toggle_pet"} else "expand"
     # 布尔键必须用 _bool_or_default：bool("false") is True，字符串/None
     # 会被误翻（同文件既有规则）；int 0/1 是旧配置的合法布尔编码，先归一
-    for _key in ("event_effects", "edge_dock", "collision_enabled", "hidden_chat"):
+    for _key in ("event_effects", "edge_dock", "hidden_chat"):
         _v = result[_key]
         if isinstance(_v, int) and not isinstance(_v, bool):
             _v = bool(_v)
@@ -664,22 +654,6 @@ def _clean_island_metrics(value) -> list:
         if item not in cleaned:  # 去重保首次序 = 保用户优先级
             cleaned.append(item)
     return cleaned
-
-
-def _clean_collision_data(value: dict) -> dict:
-    """归一化碰撞设置：collision_* 一组 7 键。
-
-    从 Config._normalize_pet_settings 原样上提为模块级纯函数；清洗逻辑本体一行未改。
-    """
-    result = dict(value)
-    result["collision_enabled"] = _bool_or_default(value.get("collision_enabled"), True)
-    result["collision_restitution"] = _float_or_default(value.get("collision_restitution"), 0.82, 0.0, 1.0)
-    result["collision_friction"] = _float_or_default(value.get("collision_friction"), 0.08, 0.0, 0.30)
-    result["collision_mass_scale"] = _float_or_default(value.get("collision_mass_scale"), 1.0, 0.5, 2.0)
-    result["collision_impulse_cap"] = _float_or_default(value.get("collision_impulse_cap"), 9000.0, 1000.0, 12000.0)
-    result["collision_sound_enabled"] = bool(value.get("collision_sound_enabled", True))
-    result["collision_sound_volume"] = _float_or_default(value.get("collision_sound_volume"), 0.70, 0.0, 1.0)
-    return result
 
 
 #: os.replace 的瞬时共享冲突判定用 WinError：ERROR_ACCESS_DENIED(5) 与
@@ -827,9 +801,6 @@ def _normalize_pet_profile_values(data: dict) -> None:
     data["click_sound_volume"] = _float_or_default(data.get("click_sound_volume"), 0.70, 0.0, 1.0)
     data["throw_strength"] = physics_mod.normalize_throw_strength(str(data.get("throw_strength") or "standard"))
     data["drop_gravity"] = _bool_or_default(data.get("drop_gravity"), False)
-    collision = _clean_collision_data(data)
-    for key in ("collision_enabled", "collision_sound_enabled", "collision_sound_volume"):
-        data[key] = collision[key]
     recycle = _float_or_default(data.get("ffmpeg_recycle_minutes"), 10, 0, 120)
     data["ffmpeg_recycle_minutes"] = 0 if recycle <= 0 else int(max(2.0, recycle))
 
@@ -983,7 +954,6 @@ class Config:
             "hotkey_open_chat": "",
             "hotkey_look_screen": "",
             "hotkey_screen_capture": "",
-            **DEFAULT_COLLISION_SETTINGS,
             "media_prewarm": "balanced",  # full / balanced / minimal 素材首帧预热力度
             # 批10-A3：默认 32→8MB。预测式预热（批10-A1）落地后，首帧 LRU 只需
             # 装「瞬时交互核 pinned（click/turn/drag）+ 1-2 个预测位」；idle/move
@@ -1185,13 +1155,6 @@ class Config:
             "dynamic_island",
             "island_metrics",
             "network_info_menu_enabled",
-            "collision_enabled",
-            "collision_restitution",
-            "collision_friction",
-            "collision_mass_scale",
-            "collision_impulse_cap",
-            "collision_sound_enabled",
-            "collision_sound_volume",
             "media_prewarm",
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
@@ -1577,7 +1540,6 @@ class Config:
         self.data["experimental_shared_decode"] = _bool_or_default(self.data.get("experimental_shared_decode"), True)
         # 设置页进程隔离：同规防字符串布尔误开；默认开（关掉 = 回退进程内设置页）。
         self.data["settings_process_isolation"] = _bool_or_default(self.data.get("settings_process_isolation"), True)
-        self.data.update(_clean_collision_data(self.data))
 
     def get(self, key, default=None):
         return self.data.get(key, default)
@@ -1633,8 +1595,6 @@ class Config:
             "click_sound_enabled",
             "click_sound_pack",
             "click_sound_volume",
-            "collision_sound_enabled",
-            "collision_sound_volume",
             "throw_strength",
             "drop_gravity",
             "agent_link",

@@ -16,8 +16,7 @@ def _qapp() -> QApplication:
 
 def _disabled_config(tmp_path):
     cfg = Config(base=tmp_path)
-    cfg.set("collision_enabled", False)
-    cfg.set("decode_broker_enabled", True)  # 依赖碰撞通道，碰撞关时仍不应创建 broker
+    cfg.set("decode_broker_enabled", True)
     cfg.set("todo_reminder_enabled", False)
     cfg.set("click_sound_enabled", False)
     island = dict(cfg.get("dynamic_island", {}))
@@ -33,9 +32,8 @@ def test_petapp_disabled_optional_services_not_constructed(tmp_path):
     app = _qapp()
     cfg = _disabled_config(tmp_path)
     shell = AppShell(app, cfg, enable_chat=False)
-    # 本分支架构差异：碰撞会话为每窗自持（批5.2 P1-1，恒建），broker 已由
-    # 进程内 fan-out hub 取代（批5.3）；上游断言的 collision/broker 门控不适用。
-    # todo 服务走 Phase 1 懒门控（挂 AppShell 进程级）。
+    # broker 已由进程内 fan-out hub 取代（批5.3）；todo 服务走 Phase 1
+    # 懒门控（挂 AppShell 进程级）。
     assert shell.todo_service is None
 
 
@@ -46,9 +44,7 @@ def test_petapp_enabled_default_services_still_constructed(tmp_path):
     app = _qapp()
     shell = AppShell(app, Config(tmp_path), enable_chat=False)
     assert shell.todo_service is not None
-    # 4.4a：碰撞 IPC 会话已随多进程多宠退役层停用（多宠碰撞归 sprite 世界）；
     # 共享解码 hub 仍为进程级（默认 enabled 取决于 flag/拓扑）。
-    assert not hasattr(shell.instance, "collision_ipc")
     assert shell._decode_hub is not None
 
 

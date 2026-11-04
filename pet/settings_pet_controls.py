@@ -247,37 +247,6 @@ def build_pet_controls(host) -> None:
     current_strength = str(host.config.get("throw_strength", "standard") or "standard")
     host.throw_strength_select.setCurrentData(current_strength if current_strength in {"gentle", "standard", "strong", "crazy"} else "standard")
 
-    # 多开碰撞设置
-    host.collision_enabled_check = ToggleSwitch(host)
-    host.collision_enabled_check.setChecked(bool(host.config.get("collision_enabled", True)))
-    host.collision_restitution_spin = BrowserDoubleSpinBox(host)
-    host.collision_restitution_spin.setRange(0.0, 1.0)
-    host.collision_restitution_spin.setSingleStep(0.05)
-    host.collision_restitution_spin.setDecimals(2)
-    host.collision_restitution_spin.setValue(float(_float_or_default(host.config.get("collision_restitution", 0.82), 0.82, 0.0, 1.0)))
-    host.collision_friction_spin = BrowserDoubleSpinBox(host)
-    host.collision_friction_spin.setRange(0.0, 0.30)
-    host.collision_friction_spin.setSingleStep(0.01)
-    host.collision_friction_spin.setDecimals(2)
-    host.collision_friction_spin.setValue(float(_float_or_default(host.config.get("collision_friction", 0.08), 0.08, 0.0, 0.30)))
-    host.collision_mass_scale_spin = BrowserDoubleSpinBox(host)
-    host.collision_mass_scale_spin.setRange(0.5, 2.0)
-    host.collision_mass_scale_spin.setSingleStep(0.1)
-    host.collision_mass_scale_spin.setDecimals(2)
-    host.collision_mass_scale_spin.setValue(float(_float_or_default(host.config.get("collision_mass_scale", 1.0), 1.0, 0.5, 2.0)))
-    host.collision_impulse_cap_spin = BrowserDoubleSpinBox(host)
-    host.collision_impulse_cap_spin.setRange(1000.0, 12000.0)
-    host.collision_impulse_cap_spin.setSingleStep(500.0)
-    host.collision_impulse_cap_spin.setDecimals(0)
-    host.collision_impulse_cap_spin.setValue(float(_float_or_default(host.config.get("collision_impulse_cap", 9000.0), 9000.0, 1000.0, 12000.0)))
-    host.collision_sound_check = ToggleSwitch(host)
-    host.collision_sound_check.setChecked(bool(host.config.get("collision_sound_enabled", True)))
-    host.collision_sound_volume_spin = BrowserSpinBox(host)
-    host.collision_sound_volume_spin.setRange(0, 100)
-    host.collision_sound_volume_spin.setSuffix(" %")
-    collision_sound_vol = float(host.config.get("collision_sound_volume", 0.70))
-    host.collision_sound_volume_spin.setValue(int(round(collision_sound_vol * 100)))
-
     host.lock_position_check = ToggleSwitch(host)
     host.lock_position_check.setChecked(bool(host.config.get("lock_position", False)))
     host.shift_drag_check = ToggleSwitch(host)
@@ -633,7 +602,7 @@ def _update_island_controls(host, enabled: bool) -> None:
         "dynamic_island_icon_value",
         "dynamic_island_custom_text", "dynamic_island_click_action",
         "dynamic_island_event_effects", "dynamic_island_edge_dock",
-        "dynamic_island_collision", "dynamic_island_hidden_chat",
+        "dynamic_island_hidden_chat",
     ), enabled, dependency="island_enabled")
     _update_island_icon_controls(host, host.island_icon_check.isChecked())
     _update_island_info_controls(host, host.island_info_check.isChecked())

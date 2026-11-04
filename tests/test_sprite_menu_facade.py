@@ -834,7 +834,7 @@ def test_menu_exit_this_for_main_pet_is_gated(tmp_path, monkeypatch):
 
 def test_failed_child_write_does_not_apply_or_reflow(tmp_path):
     from pet import pet_profiles
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     try:
@@ -862,7 +862,7 @@ def test_failed_child_write_does_not_apply_or_reflow(tmp_path):
 def test_child_lock_timeout_keeps_runtime_and_reports_failure(tmp_path, monkeypatch):
     from contextlib import contextmanager
     from pet import config_write_lock as cwl
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, _ = toggle._make_slot_shell(tmp_path)
     try:
@@ -903,7 +903,7 @@ def test_main_save_false_rolls_back_config_and_runtime(tmp_path, monkeypatch):
 
 def test_service_callbacks_hand_the_initiating_sprite_presenter(tmp_path):
     """手动余额回调要带**发起 sprite** 的代次呈现器，而不是整个壳。"""
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     try:
@@ -931,7 +931,7 @@ def test_service_callbacks_hand_the_initiating_sprite_presenter(tmp_path):
 
 def test_service_presenter_routes_the_bubble_to_the_initiating_sprite(tmp_path, monkeypatch):
     """结果真的落在发起那一只身上：子宠走它自己的气泡面，主宠走壳的完整门。"""
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     try:
@@ -957,7 +957,7 @@ def test_service_presenter_routes_the_bubble_to_the_initiating_sprite(tmp_path, 
 
 def test_service_presenter_cancels_only_the_presentation_after_close(tmp_path):
     """请求在飞时关掉发起宠：迟到结果只取消呈现，不投给别宠、也不报成功。"""
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     try:
@@ -978,7 +978,7 @@ def test_service_presenter_cancels_only_the_presentation_after_close(tmp_path):
 
 def test_service_presenter_treats_a_reborn_slot_as_another_pet(tmp_path):
     """同一槽重建出来的是**另一只**：旧呈现器不许把结果投给新住客。"""
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     try:
@@ -1007,7 +1007,7 @@ def test_service_presenter_respects_the_per_sprite_bubble_gate(tmp_path, monkeyp
     那一只、以及设置页打开期间的抑制位，都会照样冒泡（2026-10-10 终审 F04，方法级实证
     blocked=True / shown=True）。门禁是 **per-sprite** 的：飞的不是这一只时，别的宠照常。
     """
-    from tests import test_overlay_collision_toggle as toggle
+    from tests.helpers import overlay_shell as toggle
 
     shell, cfg = toggle._make_slot_shell(tmp_path)
     try:

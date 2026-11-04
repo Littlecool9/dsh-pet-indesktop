@@ -413,12 +413,9 @@ class PetInstance:
         self._pending_dialog_opens: set[str] = set()
         # E2（REVIEW_batch51）：enable_chat 单源在 AppShell（进程级），本类只读转发。
         self.enable_chat = bool(enable_chat)
-        # 4.4a 停用多进程多宠退役层：本窗不再自持碰撞 IPC 会话——多宠碰撞由
-        # overlay 拓扑的 SpriteCollisionWorld（进程内统一世界）承载；legacy
-        # 拓扑退化为单宠/进程内多窗渲染面，不再跨进程交换冲量。
         # 批5.3：进程级共享解码 hub（AppShell 持有，各窗共用同一份）。此前
-        # broker 是每窗一个 shm facade；现换成进程级 DecodeFanoutHub（fan-out
-        # 与碰撞角色解耦，不骑 QLocal），窗口调用点/参数名零改。
+        # broker 是每窗一个 shm facade；现换成进程级 DecodeFanoutHub，窗口调用点/
+        # 参数名零改。
         self.broker_facade = getattr(self.shell, '_decode_hub', None)
 
     @property
@@ -843,12 +840,12 @@ class PetInstance:
         )
 
 class AppShell:
-    """进程级外壳 —— 托盘、灵动岛、余额、系统通知、碰撞会话、broker。
+    """进程级外壳 —— 托盘、灵动岛、余额、系统通知、broker。
 
     批5.1（纯重构）拆自原 PetApp 的「进程级」半边，行为逐位不变；批5.2
     spike 扩成多窗集合（``self.instances``），``self.instance`` 仍是主窗
     （列表头）。aboutToQuit 收口在 ``_on_about_to_quit``，含窗级/进程级
-    资源的分段释放（窗级字段与进程级 broker/碰撞/permanent writer 分开，
+    资源的分段释放（窗级字段与进程级 broker/permanent writer 分开，
     见 §2.2-E2 / R5）。
     """
 
@@ -875,7 +872,6 @@ class AppShell:
         self._notification_click_callback = None
         self._toast_windows: list[DesktopNotification] = []
         self.island = None
-        self.island_collision = None  # 果冻墙：岛的静态碰撞体（island_collision.py）
         self.island_chat = None  # 岛对话气泡：桌宠隐藏时的交互面（island_chat.py）
         self._spawned_pet_count = 0
         self._balance_busy = False
@@ -1944,8 +1940,8 @@ class AppShell:
         触发时读取当前窗口（经 ``self.instance.win``），避免调用已延迟销毁
         的旧窗口。
 
-        R5 切分：**窗级**项（位置/预热/Agent/各窗会话保存/slot 锁/每窗自持的
-        碰撞会话）逐窗收口；批5.3 起共享解码 hub 为进程级（shutdown 为 no-op），
+        R5 切分：**窗级**项（位置/预热/Agent/各窗会话保存/slot 锁）逐窗收口；
+        批5.3 起共享解码 hub 为进程级（shutdown 为 no-op），
         **进程级**收口仅剩 hub ``stop_all()`` 与 ``close_all_writers(permanent=True)``
         各停一次——多窗下任一窗退出不许停进程级资源，只有「全部退出」才收口
         （这也是「退出这只」与「全部退出」的核心差异）。
@@ -2006,13 +2002,6 @@ class AppShell:
                 inst.broker_facade.shutdown()
             except Exception:
                 logging.exception("退出时关闭 broker facade 失败")
-        # 果冻墙：岛的静态碰撞体随「全部退出」收口（主动 leave 即时移出碰撞世界）
-        body = getattr(self, "island_collision", None)
-        if body is not None:
-            try:
-                body.stop()
-            except Exception:
-                logging.exception("退出时停止灵动岛碰撞体失败")
         # 进程级全局订阅注销：类级 list 长期持有本 shell 强引用，不注销会
         # 阻碍 GC（no-chat 变体无 ChatService，导入守卫与注册处同口径）
         try:
@@ -2091,7 +2080,7 @@ class AppShell:
           timeout 连接从 Qt C++ 侧强引用住整个对象图，Python gc 回收不掉）；
         - 共享子系统经 ``SharedSubsystems._shutdown_live_for_tests`` 收口；
         - 断开 shell → app 的 aboutToQuit 连接并释放反向引用；
-        - 停灵动岛碰撞体定时器并注销全局聊天订阅（同生产收口口径）；
+        - 注销全局聊天订阅（同生产收口口径）；
 
         不做 ``_on_about_to_quit`` 的退出语义（保存位置/永久关闭写盘 worker）：
         那是「全部退出」，测试收口不得触发。
@@ -2127,14 +2116,6 @@ class AppShell:
                     except (RuntimeError, TypeError):
                         pass
                     shell._on_about_to_quit_connected = False
-                # 灵动岛碰撞体 30Hz 定时器与全局聊天订阅（同生产收口口径，
-                # 不停会在后续测试里打异常循环/阻碍 GC）
-                body = getattr(shell, "island_collision", None)
-                if body is not None:
-                    try:
-                        body.stop()
-                    except Exception:
-                        logging.debug("测试收口灵动岛碰撞体失败", exc_info=True)
                 # 设置页进程隔离：watcher/定时器同属"无主 Qt 对象"一族，收口
                 #（不停会让后续测试凭空多一条 3s 轮询，并阻碍对象图回收）。
                 teardown_watcher = getattr(shell, "_teardown_config_watcher", None)
@@ -2224,17 +2205,6 @@ class AppShell:
         if not enabled:
             if getattr(self, "island", None) is not None:
                 self.island.hide()
-            # 4.3：overlay 拓扑摘岛桥（岛停用即撤墙）
-            overlay_shell = getattr(self, "_overlay_shell", None)
-            if overlay_shell is not None:
-                overlay_shell.attach_island(None)
-            body = getattr(self, "island_collision", None)
-            if body is not None and body.has_local_island:
-                body.stop()
-            # 本进程无岛 ≠ 岛上没有墙：多进程下 slot 配置只对主进程开岛
-            # （子宠进程 enabled=False），但岛在别的进程真实存在——远端
-            # 硬墙照样要挂（几何经碰撞快照回喂），否则子肥鱼直接穿岛。
-            self._sync_island_collision(island_cfg)
             return
         if getattr(self, "island", None) is None:
             from .dynamic_island import DynamicIsland
@@ -2276,71 +2246,6 @@ class AppShell:
         # 批5.2a：灵动岛按**聚合**可见态同步（任一窗可见 = 可见），替代只看主窗。
         self.island.set_pet_visible(self._aggregate_pet_visible())
         self.island.show()
-        # 4.3：overlay 拓扑下岛墙由 sprite 碰撞世界的岛桥接管（attach 幂等）。
-        # 岛自己的 collision_enabled 门只能在这里判：旧 body 路径
-        # （_sync_island_collision）读到该键后走 overlay 分支直接 return，键值被
-        # 丢弃，到达桥的唯一通道是本调用点。关着时按岛桥的文档化口径传 None
-        # （attach_island(None) = 摘桥）——不建桥，岛 hide/show 也不会复活墙；
-        # 键缺失/非 dict 一律按 True（与 _sync_island_collision 的清洗口径一致）。
-        overlay_shell = getattr(self, "_overlay_shell", None)
-        if overlay_shell is not None:
-            wall_enabled = bool(island_cfg.get("collision_enabled", True)) \
-                if isinstance(island_cfg, dict) else True
-            overlay_shell.attach_island(self.island if wall_enabled else None)
-        self._sync_island_collision(island_cfg)
-
-    def _sync_island_collision(self, island_cfg) -> None:
-        """果冻墙：按配置创建/启停岛的碰撞体（island_collision.py）。
-
-        本进程直连硬墙：岛作为屏幕边界式位置墙，在统一位置出口
-        move_window_towwards 里逐次钳制——身体框任何移动都进不了岛区，
-        杜绝采样间隙导致的穿透抽搐；岛被拖到桌宠身上由 on_geometry_changed
-        事件驱动推出。
-        4.4a：跨进程几何发布/远端复制（attach_publisher / on_remote_snapshot）
-        随多进程多宠退役层停用——岛上桌宠的碰撞反馈只在本进程结算。
-        """
-        enabled = bool(island_cfg.get("collision_enabled", True)) \
-            if isinstance(island_cfg, dict) else True
-        # 4.3：overlay 拓扑下旧果冻墙整体让路——墙已由 sprite 碰撞世界的
-        # 岛桥（pet/island_bridge.py，attach_island 接线）接管；旧 body 的
-        # pets_provider 只认 PetWindow（overlay 无窗），且 on_geometry_changed
-        # 是单槽，被它抢占后岛桥几何断更
-        if getattr(self, "_overlay_shell", None) is not None:
-            return
-        body = getattr(self, "island_collision", None)
-        if not enabled:
-            if body is not None:
-                body.stop()
-            return
-        # 岛本身没启用（``self.island is None``）时不该建碰撞体：墙的每一个判据
-        # 都要问岛（可见性/几何/模式），没有岛就只有"永远不生效"这一种结果，
-        # 却会给每只宠挂上 ``_island_clamp_body`` 钩子——历史上那条钩子里的
-        # 判空缺失曾让移动整体静默失效（issue #311）。
-        if getattr(self, "island", None) is None:
-            body = getattr(self, "island_collision", None)
-            if body is not None:
-                body.stop()
-            return
-        if body is None:
-            from .island_collision import IslandCollisionBody
-
-            body = IslandCollisionBody(
-                self.island, self.config,
-                pets_provider=lambda: [
-                    inst.win for inst in self._instances if inst.win is not None
-                ])
-            self.island_collision = body
-            if self.island is not None:
-                self.island.on_geometry_changed = body.submit
-                self.island.on_pet_visibility_changed = body.set_own_pet_visible
-        # 4.4a：岛几何的跨进程发布通道（attach_publisher / detach_publisher）
-        # 随多进程多宠退役层停用——本进程直连硬墙不再向碰撞世界注册静态成员。
-        try:
-            body.start()
-        except Exception:
-            # 岛对象异常（如测试桩无 geometry）时碰撞体降级为不启用，
-            # 不影响灵动岛本体功能。
-            logging.exception("启动灵动岛碰撞体失败")
 
     def _open_chat_from_island(self) -> None:
         if not getattr(self, "enable_chat", True):

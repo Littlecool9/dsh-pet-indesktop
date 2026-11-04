@@ -275,42 +275,6 @@ def test_move_sprite_to_screen_moves_only_that_pet(tmp_path, monkeypatch):
         _cleanup(shell)
 
 
-def test_two_pets_a_screen_apart_never_collide(tmp_path, monkeypatch):
-    """相隔一整块屏的两只不撞；摆到同一处仍要撞（有牙对照）。
-
-    单窗把全部宠放进同一个世界，局部坐标就是窗口全局坐标——要紧的是它们在同一套
-    坐标里算距离，而不是像旧多窗拓扑那样按屏各算一份。
-    """
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.move_sprite_to_screen(child, b)
-        main = shell.sprite
-
-        # 两只各自站在自己那块屏的同一屏内坐标上（真机相距 1920px）
-        main.set_pos(QPointF(400, 300))
-        child.set_pos(QPointF(400 + 1920, 300))
-        assert shell.hosts() == [shell._main_host], "单窗：一个世界"
-
-        events = []
-        shell.collision.add_collision_listener(events.append)
-        shell.collision._prev_circles = {}
-        shell.driver.tick_sim(1 / 60.0)
-        assert events == [], "相隔一整块屏不是接触"
-
-        # 对照（有牙）：摆到同一处就必须结算（先清扫掠快照，别把瞬移当掠过）
-        child.set_pos(QPointF(main.pos))
-        events.clear()
-        shell.collision._prev_circles = {}
-        shell.collision.tick([main, child], 1 / 60.0)
-        assert main.pos != QPointF(400, 300) or child.pos != QPointF(400, 300)
-    finally:
-        _cleanup(shell)
-
-
 # ---------------------------------------------------------------- 跨屏拖拽
 def test_drag_across_screens_moves_only_the_dragged_pet(tmp_path, monkeypatch):
     """拖过缝：被拖的那只走到副屏，别的宠与窗口几何一分不动（#303 主症）。
@@ -752,66 +716,6 @@ def test_bubble_anchor_uses_the_window_origin(tmp_path, monkeypatch):
         assert follower.anchor() == expected
         assert shell.bubble_anchor_rect_for(getattr(follower, "bubble", None)) == expected
     finally:
-        _cleanup(shell)
-
-
-def test_island_wall_binds_to_the_single_world(tmp_path, monkeypatch):
-    """岛只有一座：墙挂在唯一合成窗的世界里（岛的局部坐标与全部宠同源）。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        shell.spawn_pet()
-        child = shell._spawned[0]
-        shell.move_sprite_to_screen(child, b)
-
-        class _Island:
-            def __init__(self, screen):
-                self._screen = screen
-
-            def _current_screen(self):
-                return self._screen
-
-        shell.attach_island(_Island(b))
-
-        assert shell.island_bridge is not None
-        assert shell._island_host is shell._main_host
-        assert shell.island_bridge.core._world is shell.collision  # noqa: SLF001
-        # 岛换到另一块屏：仍是同一个世界（不复制墙、不换宿主）
-        bridge = shell.island_bridge
-        shell.attach_island(_Island(a))
-        assert shell._island_host is shell._main_host
-        assert shell.island_bridge is not bridge
-        assert shell.island_bridge.core._world is shell.collision  # noqa: SLF001
-    finally:
-        shell.attach_island(None)
-        _cleanup(shell)
-
-
-def test_island_wall_has_a_landing_on_every_screen(tmp_path, monkeypatch):
-    """岛在没有宠的屏上也有落点：单窗铺满整个虚拟桌面，墙立刻挂上。
-
-    旧拓扑要"等那块屏有宠（建出宿主）再挂墙"，因为局部坐标不同源、挂错等于在
-    另一块屏上凭空多一堵墙；单窗下只有一套坐标，这条等待条件消失。
-    """
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a)
-    try:
-        class _Island:
-            def __init__(self, screen):
-                self._screen = screen
-
-            def _current_screen(self):
-                return self._screen
-
-        shell.attach_island(_Island(b))
-
-        assert shell.island_bridge is not None
-        assert shell.island_bridge.attached is True
-        assert shell._island_host is shell._main_host
-    finally:
-        shell.attach_island(None)
         _cleanup(shell)
 
 
@@ -1327,28 +1231,6 @@ def test_collapsing_back_to_single_window_keeps_pets_on_their_screen(
             shell.overlay.geometry().topLeft()) + center) is b, (
             "合窗后这只必须还在副屏那块屏的范围内")
     finally:
-        _cleanup(shell)
-
-
-def test_topology_flip_rebinds_the_island_wall(tmp_path, monkeypatch):
-    """宿主集合重排后岛墙要重绑（岛自己没有几何事件，不会自己发现宿主变了）。"""
-    from tests.test_island_multiscreen_hosts import ISLAND_MEMBER, _Island
-
-    shell, a, b = _mixed_dpr_shell(tmp_path, monkeypatch)
-    try:
-        host_b = shell.host_for_screen(b)
-        island = _Island(b, QRect(2300, 100, 400, 80))
-        shell.attach_island(island)
-        assert shell._island_host is host_b, "前提：墙绑在副屏宿主"
-
-        a.set_rects((0, 0, 1920, 1080), (0, 0, 1920, 1040), dpr=1.0)
-        b.set_rects((1920, 0, 1920, 1080), (1920, 0, 1920, 1040), dpr=1.0)
-        shell._feed_screen_dpr()
-
-        assert shell._island_host is shell._main_host, "重排后墙必须重绑到存活宿主"
-        assert ISLAND_MEMBER in shell.collision._static_members  # noqa: SLF001
-    finally:
-        shell.attach_island(None)
         _cleanup(shell)
 
 

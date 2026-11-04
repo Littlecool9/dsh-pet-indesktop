@@ -161,9 +161,8 @@ class TickDriver(QObject):
         #（兼容分支走 overlay 钩子）。多屏产品装配不挂这里——每块屏的控制器
         # 归它的宿主（``hosts`` / ``ScreenHost``），见 ``tick_sim``。
         self.behavior = None
-        self.collision = None
         self.physics = None
-        # 附加仿真控制器（如边缘探头）：tick_sim 尾段、三主控制器之后运行
+        # 附加仿真控制器（如边缘探头）：tick_sim 尾段、主控制器之后运行
         # ——姿态类控制器是最终写入口，不能被后续控制器覆盖
         self._extras: list = []
         # 全部 overlay advance 之后的一次性钩子（跨屏路由；见 advance_overlays）
@@ -190,16 +189,13 @@ class TickDriver(QObject):
         self._timer.timeout.connect(self.on_tick)
 
     # ---------------------------------------------------------------- 装配
-    def set_controllers(self, behavior=None, collision=None,
-                        physics=None) -> None:
-        """挂上**单世界**装配的三控制器（T1；多屏产品装配用宿主，见 ``tick_sim``）。
+    def set_controllers(self, behavior=None, physics=None) -> None:
+        """挂上**单世界**装配的控制器（T1；多屏产品装配用宿主，见 ``tick_sim``）。
 
         只覆盖显式传入的项（``None`` = 保持原值），便于测试只替换其中几个。
         """
         if behavior is not None:
             self.behavior = behavior
-        if collision is not None:
-            self.collision = collision
         if physics is not None:
             self.physics = physics
 
@@ -607,10 +603,10 @@ class TickDriver(QObject):
         附加控制器（``_extras``，如联动链）是壳级、与几何无关的，
         仍拿全部 sprite 跑一次。
 
-        没有宿主时成员 = 全部已挂载 overlay 的 sprites 聚合；三控制器由驱动器
+        没有宿主时成员 = 全部已挂载 overlay 的 sprites 聚合；控制器由驱动器
         持有，不再经主 overlay 的 ``before_sprites_advance`` 钩子。
 
-        兼容期（deprecation）：三控制器都没挂且没有带宿主的成员时（裸 overlay /
+        兼容期（deprecation）：控制器都没挂且没有带宿主的成员时（裸 overlay /
         demo 装配），仿真段退回 ``overlay.before_sprites_advance(dt)`` 钩子，保证
         旧装配可用；产品壳走宿主分组，不会走这条分支。
         """
@@ -621,15 +617,13 @@ class TickDriver(QObject):
             for ctrl in self._extras:
                 ctrl.tick(self._all_sprites(), dt)
             return
-        if self.behavior is None and self.collision is None and self.physics is None:
+        if self.behavior is None and self.physics is None:
             for overlay in list(self._overlays):
                 overlay.before_sprites_advance(dt)
             return
         sprites = self._all_sprites()
         if self.behavior is not None:
             self.behavior.tick(sprites, dt)
-        if self.collision is not None:
-            self.collision.tick(sprites, dt)
         if self.physics is not None:
             self.physics.tick(sprites, dt)
         for ctrl in self._extras:

@@ -212,7 +212,6 @@ def _make_shell(tmp_path: Path, **island_cfg) -> AppShell:
     shell = AppShell.__new__(AppShell)
     shell.config = cfg
     shell.island = None
-    shell.island_collision = None
     shell.island_chat = None
     shell.instance = None
     shell._instances = []
@@ -220,22 +219,16 @@ def _make_shell(tmp_path: Path, **island_cfg) -> AppShell:
 
 
 def _teardown_shell(shell) -> None:
-    try:
-        body = getattr(shell, "island_collision", None)
-        if body is not None:
-            body.stop()
-    finally:
-        island = getattr(shell, "island", None)
-        if island is not None:
-            island.hide()
-            island.deleteLater()
-        bubble = getattr(shell, "island_chat", None)
-        if bubble is not None:
-            bubble.close()
-            bubble.deleteLater()
-        ChatService.unregister_global_finished(shell._on_global_chat_finished)
-        # 4.4b：collision_ipc 会话已随退役层删除，无需再收口
-        QApplication.processEvents()
+    island = getattr(shell, "island", None)
+    if island is not None:
+        island.hide()
+        island.deleteLater()
+    bubble = getattr(shell, "island_chat", None)
+    if bubble is not None:
+        bubble.close()
+        bubble.deleteLater()
+    ChatService.unregister_global_finished(shell._on_global_chat_finished)
+    QApplication.processEvents()
 
 
 def test_island_chat_availability_gates(tmp_path):

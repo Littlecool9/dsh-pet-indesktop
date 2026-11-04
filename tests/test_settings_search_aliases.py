@@ -3,7 +3,7 @@
 
 背景（第一刀遗留）：搜索索引原本只有「行 label + hint + objectName」，所以
 
-- 搜**折叠组标题**（「启动项（高级）」「碰撞参数（高级）」「网络延迟检测（高级）」…）
+- 搜**折叠组标题**（「启动项（高级）」「网络延迟检测（高级）」…）
   0 命中——组的名字在索引之外；
 - 搜**用户口语**（「网速」「开机启动」「密钥」「壁纸」…）0 命中——行文案用的是另一套词。
 
@@ -37,17 +37,8 @@ from pet.settings_widgets import SettingsTabContainer
 
 app = QApplication.instance() or QApplication([])
 
-#: 桌宠域两个页内标签（第二刀）的键；「碰撞参数（高级）」属于第 2 个标签。
-_TAB_MOTION = "motion_collision"
-
-#: 「碰撞参数（高级）」组内的 5 行（第三刀的口径：音量随物理参数进这一组）。
-_COLLISION_ADVANCED_ROWS = (
-    "settingRow_collision_restitution",
-    "settingRow_collision_friction",
-    "settingRow_collision_mass_scale",
-    "settingRow_collision_impulse_cap",
-    "settingRow_collision_sound_volume",
-)
+#: 桌宠域页内标签键（第二刀）。
+_TAB_MOTION = "motion"
 
 
 def _dialog(tmp_path, monkeypatch):
@@ -133,36 +124,6 @@ def test_group_title_query_returns_every_row_of_the_group(tmp_path, monkeypatch)
             assert row.isVisibleTo(_current_page(dialog)), "命中的行必须真实可见"
             assert dialog.sidebar.currentItem().text() == "常规"
             assert dialog.search_status.text().startswith(f"{presses + 1}/2 · ")
-    finally:
-        dialog.close()
-
-
-def test_collision_group_title_query_switches_to_the_owning_tab(tmp_path, monkeypatch):
-    """搜「碰撞参数」：命中高级组内 5 行、自动切到「动作与碰撞」标签并展开、逐行可达。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        tabs = _tabs_of(_page_of(dialog, "桌宠"))
-        assert tabs is not None and tabs.currentKey() != _TAB_MOTION
-
-        matches = _matches(dialog, "碰撞参数")
-        assert _keys(matches) == list(_COLLISION_ADVANCED_ROWS), (
-            "搜「碰撞参数」= 该高级组全部行，一行不多一行不少"
-        )
-
-        seen = set()
-        for _ in range(len(matches)):
-            row = _current_match(dialog)
-            key = row.objectName()[len("settingRow_"):]
-            seen.add(row.objectName())
-            assert row.objectName() in _COLLISION_ADVANCED_ROWS
-            section = _section_of(dialog, key)
-            assert section.advanced is True and section.toggle.isChecked() is True
-            assert dialog.sidebar.currentItem().text() == "桌宠"
-            assert tabs.currentKey() == _TAB_MOTION, "命中另一标签的行必须自动切标签"
-            assert row.isVisibleTo(_current_page(dialog))
-            QTest.keyClick(dialog.search_edit, Qt.Key.Key_Return)
-            app.processEvents()
-        assert seen == set(_COLLISION_ADVANCED_ROWS), "回车遍历要能走到组内每一行"
     finally:
         dialog.close()
 
@@ -392,34 +353,6 @@ def test_no_chat_build_skips_aliases_whose_rows_are_absent(tmp_path, monkeypatch
 
 
 # ------------------------------------------------------------------ ③ 去重与计数
-def test_candidates_from_all_sources_are_deduped(tmp_path, monkeypatch):
-    """组标题/关键词/别名重叠时同一行只算一次（状态行计数与候选数一致）。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        # 「质量倍率」同时命中别名与 hint 里的「质量加权倍率」：同一行只能算一次
-        matches = _matches(dialog, "质量倍率")
-        keys = _keys(matches)
-        assert len(set(keys)) == len(keys), f"候选行重复了：{keys}"
-        assert keys == ["settingRow_collision_mass_scale"]
-        assert dialog.search_status.text().startswith("1/1 · ")
-    finally:
-        dialog.close()
-
-
-def test_alias_hit_is_not_counted_twice_when_the_row_also_matches_by_keyword(
-    tmp_path, monkeypatch
-):
-    """别名目标行同时被关键词命中时，计数不重复。"""
-    dialog = _dialog(tmp_path, monkeypatch)
-    try:
-        matches = _matches(dialog, "质量倍率")
-        keys = _keys(matches)
-        assert keys == ["settingRow_collision_mass_scale"]
-        assert dialog.search_status.text().startswith("1/1 · ")
-    finally:
-        dialog.close()
-
-
 # ------------------------------------------------------------- ④ 空/无义查询不回归
 def test_unknown_query_still_reports_no_match(tmp_path, monkeypatch):
     """真正无义的查询仍是「未找到匹配的设置」，且空查询不显示状态行。"""

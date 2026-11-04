@@ -3,12 +3,11 @@
 from pathlib import Path
 
 from . import pet_profiles as profiles
-from .config import normalize_pet_profile_snapshot
 
 ACTIVE_PETS_FILENAME = profiles.ACTIVE_SET_FILENAME
 ACTIVE_PETS_VERSION = profiles.ACTIVE_SET_VERSION
 MAX_SCAN_SLOTS = profiles.SLOT_MAX
-PER_SLOT_SETTING_KEYS = profiles.PER_PET_SETTING_KEYS - {'collision_enabled'}
+PER_SLOT_SETTING_KEYS = profiles.PER_PET_SETTING_KEYS
 SpawnStateError = profiles.CapacityFullError
 
 
@@ -67,11 +66,6 @@ def read_slot_config(config_dir, slot_id):
 def write_slot_setting(config_dir, slot_id, key, value, *, user_customized=None):
     return profiles.write_profile_settings(config_dir, slot_id, {key: value},
                                           user_customized=user_customized).ok
-
-
-def read_slot_collision_enabled(config_dir, slot_id, *, default=True, fallback=None):
-    return bool(normalize_pet_profile_snapshot(_load_slot_config(config_dir, slot_id)).get(
-        'collision_enabled', default))
 
 
 def write_slot_geometry(config_dir, slot_id, geometry):

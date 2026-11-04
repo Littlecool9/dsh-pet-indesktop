@@ -15,7 +15,7 @@
 
 1. 搬走一只，另一只的位置/边界一个字节不动；
 2. 一张窗、活动区 = 各屏可用区矩形集合（关跨屏时只剩家那块屏）；
-3. 同一屏内局部坐标相同 = 接触；各自屏内局部坐标相同（错开一整块屏）= 零碰撞；
+3. 各屏活动区互不串位；
 4. 主屏切换不搬任何宠；
 5. 拔屏只迁这块屏上的宠，别的屏一个像素不动；
 6. 一次 tick 每只各推进一次（一张窗、一个 timer）；
@@ -152,53 +152,6 @@ def _profile(config_dir, instance_id):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _host_worlds(shell, pets):
-    """这些宠各自宿主上的碰撞世界（一屏一份，按宿主去重）。
-
-    每块屏一个仿真世界正是"不同屏同局部坐标不算接触"的物质基础，故断言必须打在
-    **各宿主自己的**世界上（``shell.collision`` 只是主宿主那一份）。
-    """
-    worlds = []
-    for pet in pets:
-        world = shell.host_for_sprite(pet).collision
-        if all(world is not other for other in worlds):
-            worlds.append(world)
-    return worlds
-
-
-def _park_overlapping(shell, pets, left, right):
-    """把两只摆成同一组 local 坐标上的迎面重叠（口径同 test_overlay_collision_toggle）。
-
-    位置是测试直接摆放的瞬移，故清空帧间扫掠快照（``_prev_circles``）——否则"瞬移
-    到重叠位"会被当成高速掠过；本用例要测的是同一时刻的重叠判定。
-    """
-    left.set_pos(QPointF(300.0, 300.0))
-    left.set_velocity(QPointF(200.0, 0.0))
-    left.interaction_state = "normal"
-    right.set_pos(QPointF(300.0 + left.rect().width() - 20.0, 300.0))
-    right.set_velocity(QPointF(-200.0, 0.0))
-    right.interaction_state = "normal"
-    for world in _host_worlds(shell, pets):
-        world._prev_circles = {}
-
-
-def _impact_ticks(shell, pets, left, right, times=2):
-    """摆一次迎面重叠 → 经真 tick 入口推一次，重复 ``times`` 次；返回收到的事件。
-
-    每次 tick 前都要重摆：行为链在**状态表新建的那一 tick**会把速度写回 0（它是
-    仿真段的第一步），不重摆就没有迎面速度，重叠只按位置分离结算、不产生"真撞"
-    事件。重摆后每只都带着迎面速度进碰撞步，事件判据才真的被激励——本文件的
-    "同屏必撞"对照组与"跨屏不撞"都被这一条口径同时约束（前者有事件、后者无）。
-    """
-    events = []
-    for world in _host_worlds(shell, pets):
-        world.add_collision_listener(events.append)
-    for _ in range(times):
-        _park_overlapping(shell, pets, left, right)
-        shell.driver.on_tick(0.016)
-    return events
-
-
 def _count_advances(sprites):
     """给每只 sprite 的 ``advance`` 套一层计数（真推进照走，只数次数）。"""
     counts = {sprite: 0 for sprite in sprites}
@@ -227,7 +180,7 @@ def _teardown(shell, clip=None):
 def test_moving_one_pet_leaves_the_other_pet_untouched(tmp_path, two_screens):
     """两屏各一只：把子宠搬到右屏，主宠的位置/边界一个字节不动。"""
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     try:
         main = shell.sprite
         shell.spawn_pet()
@@ -260,7 +213,7 @@ def test_one_window_with_activity_rects_per_screen(tmp_path, two_screens):
     窗口矩形自判全屏的第三方软件会把桌宠当全屏应用。
     """
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     try:
         shell.spawn_pet()
         child = _child(shell)
@@ -291,7 +244,7 @@ def test_one_window_with_activity_rects_per_screen(tmp_path, two_screens):
 def test_one_tick_advances_each_pet_once_on_a_single_timer(tmp_path, two_screens):
     """两屏各一只：一次 tick 每只各推进一次，两屏共用同一个 timer（不双重推进）。"""
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     try:
         main = shell.sprite
         shell.spawn_pet()
@@ -315,70 +268,11 @@ def test_one_tick_advances_each_pet_once_on_a_single_timer(tmp_path, two_screens
         _teardown(shell)
 
 
-# ---------------------------------------------------------------- 4. 同 local 坐标零碰撞
-def test_same_local_position_on_one_screen_still_collides(tmp_path, two_screens):
-    """对照（有牙）：两只在同一块屏的同一组 local 坐标上迎面重叠 → 必须结算。"""
-    primary, _secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
-    try:
-        main = shell.sprite
-        shell.spawn_pet()
-        child = _child(shell)
-        shell.start()
-        assert shell.driver.applied_tier == TIER_ACTIVE, "前提：可见态才跑仿真段"
-
-        assert _impact_ticks(shell, [main, child], main, child) != [], (
-            "前提：同屏同一组 local 坐标上迎面重叠必须撞（否则下面那条跨屏用例是空断言）")
-    finally:
-        _teardown(shell)
-
-
-def test_same_position_within_each_screen_does_not_collide(tmp_path, two_screens):
-    """两只各自站在**自己那块屏**的同一屏内坐标上：零碰撞（真机上相距一整块屏）。
-
-    单窗把全部宠放进同一个世界，局部坐标就是窗口全局坐标，所以这条合同变成了
-    "相隔一整块屏的两只不许被判成接触"——与 #303 的反面同源：真正要紧的是它们
-    在同一套坐标里算距离，而不是按屏各算一份。
-    """
-    primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
-    try:
-        main = shell.sprite
-        shell.spawn_pet()
-        child = _child(shell)
-        shell.start()
-        assert shell.driver.applied_tier == TIER_ACTIVE, "前提：可见态才跑仿真段"
-
-        shell.move_sprite_to_screen(child, secondary)
-        assert _screen_of(shell, child) is secondary, "前提：子宠已在另一块屏"
-
-        events = []
-        for world in _host_worlds(shell, [main, child]):
-            world.add_collision_listener(events.append)
-        for _ in range(2):
-            # 各自屏内的同一相对位置 + 迎面速度（行为链会在状态表新建那一拍把
-            # 速度写回 0，故每拍重摆，口径同 ``_impact_ticks``）
-            main.set_pos(QPointF(_activity_of(shell, primary).topLeft())
-                         + QPointF(300.0, 300.0))
-            main.set_velocity(QPointF(200.0, 0.0))
-            child.set_pos(QPointF(_activity_of(shell, secondary).topLeft())
-                          + QPointF(300.0, 300.0))
-            child.set_velocity(QPointF(-200.0, 0.0))
-            assert abs(main.pos.x() - child.pos.x()) > 1000.0, "前提：两只相隔一整块屏"
-            for world in _host_worlds(shell, [main, child]):
-                world._prev_circles = {}
-            shell.driver.on_tick(0.016)
-
-        assert events == [], "相隔一整块屏的两只不许被判成接触（世界是窗口全局坐标）"
-    finally:
-        _teardown(shell)
-
-
 # ---------------------------------------------------------------- 5. 主屏切换不搬
 def test_primary_screen_change_does_not_move_any_pet(tmp_path, two_screens, monkeypatch):
     """主屏换成右屏：每只宠留在自己那块屏上，屏/宿主/位置都不动。"""
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     try:
         main = shell.sprite
         shell.spawn_pet()
@@ -411,7 +305,7 @@ def test_primary_screen_change_does_not_move_any_pet(tmp_path, two_screens, monk
 def test_unplugging_a_screen_moves_only_the_pets_on_it(tmp_path, two_screens):
     """拔掉右屏：只有右屏上那只迁走，左屏上的宠一个像素不动。"""
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     try:
         main = shell.sprite
         shell.spawn_pet()
@@ -438,7 +332,7 @@ def test_unplugging_a_screen_moves_only_the_pets_on_it(tmp_path, two_screens):
 def test_transfer_keeps_clip_playing_and_never_broadcasts_removal(tmp_path, two_screens):
     """搬到另一屏 = 换个宿主，不是"移除再新建"：不广播移除、不释放 clip、仍被驱动。"""
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     frames_dir = tmp_path / "idle1"
     _make_frames(frames_dir)
     clip = FrameSeqClip(frames_dir)
@@ -478,7 +372,7 @@ def test_each_pet_persists_its_own_screen_and_ratio(tmp_path, two_screens):
     几何键都不写——见 ``test_overlay_cross_screen_switch`` 的 round trip。
     """
     primary, secondary = two_screens
-    shell, cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, cfg = _make_shell(tmp_path, primary)
     try:
         main = shell.sprite
         shell.spawn_pet()
@@ -508,7 +402,7 @@ def test_each_pet_persists_its_own_screen_and_ratio(tmp_path, two_screens):
 def test_restored_pets_land_on_their_own_saved_screen(tmp_path, two_screens):
     """重启复活：每只按它自己档案里的 ``screen_name`` 回到各自那块屏。"""
     primary, secondary = two_screens
-    shell, cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, cfg = _make_shell(tmp_path, primary)
     try:
         shell.spawn_pet()
         child = _child(shell)
@@ -519,7 +413,7 @@ def test_restored_pets_land_on_their_own_saved_screen(tmp_path, two_screens):
     finally:
         _teardown(shell)
 
-    revived, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    revived, _cfg = _make_shell(tmp_path, primary)
     try:
         main = revived.sprite
         child = _child(revived)
@@ -535,7 +429,7 @@ def test_restored_pets_land_on_their_own_saved_screen(tmp_path, two_screens):
 def test_move_with_drop_point_lands_the_pet_on_the_pointer(tmp_path, two_screens):
     """带落点的迁移（拖动跨屏）：这只落到指定的全局左上角，而不是只换坐标系。"""
     primary, secondary = two_screens
-    shell, _cfg = _make_shell(tmp_path, primary, collision_enabled=True)
+    shell, _cfg = _make_shell(tmp_path, primary)
     try:
         shell.spawn_pet()
         child = _child(shell)
