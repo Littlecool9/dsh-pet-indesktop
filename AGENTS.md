@@ -106,8 +106,8 @@ Module rules (guarded by `tests/test_module_architecture.py` and
   entries but never constructs `ModuleRegistry`/module runtimes.
 
 Current `MODULES` (registration order; startup order follows dependencies):
-`surfcore`, `harness`, `hotkeys`, `self_talk`, `network_info`, `focus`,
-`quick_launch`, `todo`, `balance`. Core owns application lifecycle, config,
+`surfcore`, `harness`, `agent_link`, `hotkeys`, `self_talk`, `network_info`,
+`focus`, `quick_launch`, `todo`, `balance`. Core owns application lifecycle, config,
 the overlay/sprite/tick pipeline, animation media (WebM/frame sequences/
 ffmpeg), base interaction, the edge probe, bubbles, dynamic island shell,
 tray, menu/settings frameworks, quiet mode, desktop notifications and
@@ -129,11 +129,19 @@ with a reason and falls back to cached persona/local self-talk presets; it is
 not a second direct-API path.
 
 **Agent link.** The DSH bridge (`integrations/dsh-pet-bridge/`) tags each
-session with its agent preset. `DshMonitor` in `pet/agent_link.py` drops every
+session with its agent preset. Agent link is the `agent_link` module
+(`pet/modules/agent_link/`): `DshMonitor` in `agent_link.py` drops every
 session whose preset starts with `qq-chat` before state-machine/ingest
 dispatch, so only real agents drive the pet (D7). The bridge directory has
 exactly one reader; parsed records feed both signal dispatch and the pure
-8-state converger in `pet/dsh_state.py`.
+8-state converger in `dsh_state.py`. Core reads it through the `agent_link`
+host service / `agent_link.event`; with the module removed the pet runs with
+agent link off.
+
+**Local data directory.** `start-local.bat` (the user's daily launcher) sets
+`APPDATA` to `<repo>\.local\appdata`, so its config lives under the repo, not
+in `%APPDATA%`. Anything that relaunches the pet (autostart, restarts) must
+keep that redirect or it will start against a different config.
 
 Packaging: `scripts/build_onedir.ps1` must collect the whole `pet.modules`
 package with `--collect-submodules pet.modules`, because every module is
