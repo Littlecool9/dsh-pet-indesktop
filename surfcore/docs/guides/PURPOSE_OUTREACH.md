@@ -421,7 +421,13 @@ confidence = 0.15
 12. 素材数 ≥ `minMaterials`，或者有 pending 的「惦记的事」。
 
 手动「立即试一次」会跳过 5 以外的排程类判断（安静时段 / 间隔 / 空闲 / 每日上限），
-但**不会**跳过白名单、模式、token 额度、好友关系。
+但**不会**跳过白名单、模式、**QQ 发送通道**、token 额度、好友关系。
+
+**QQ 发送通道门**（2026-11-04，PITFALLS #127）：投递模型回合之前先看 `qqSendChannelStatus()`
+（和普通唤醒 `sendWakePromptV2` 同一道门）。SnowLuma WS 没连上（`SNOWLUMA_OFFLINE`）或 2 分钟内
+QQ 发送刚失败（`SEND_RECENTLY_FAILED`）时，**不建会话、不烧回合、不占今日次数**，返回
+`{ ok:false, reason:'channel', code, error, hint }`；设置页把 error + hint 显示成红字。
+自动 tick 被拦时按 `retryMs` 排下一次检查，不每分钟空转。
 
 ---
 

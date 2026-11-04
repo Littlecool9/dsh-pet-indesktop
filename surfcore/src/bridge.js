@@ -12493,6 +12493,25 @@ async function main() {
       if (!dshReady) return { ok: false, reason: 'dsh' };
     }
 
+    // 发送通道门（和 sendWakePromptV2 同一道 qqSendChannelStatus）：SnowLuma 没连上 / 刚发失败时，
+    // 回合生成完也发不到 QQ —— 只会白烧一次模型回合，还让设置页显示「已投递」（2026-11-04 现场）。
+    // force（手动「立即试一次」）也拦：明确说「发不出去」比假成功诚实。
+    if (!preview) {
+      const channel = qqSendChannelStatus();
+      if (!channel.ok) {
+        const blocked = purposeChannelBlocked(channel);
+        if (!force) {
+          const retryMs = Math.max(60 * 1000, Number(cfg.purpose?.retryMs) || 5 * 60 * 1000);
+          markPurposeSkip(purposeState, { now, reason: `channel: ${channel.code}`, nextFireAt: now + retryMs });
+          savePurposeState();
+          logThrottled('purpose-channel-gate', 10 * 60 * 1000, `[目的] 暂不出发：${blocked.error}`);
+        } else {
+          log(`[目的] 手动试一次被拦下：${blocked.error}`);
+        }
+        return blocked;
+      }
+    }
+
     // Token 额度 / 私聊每日唤醒上限：主动找主人也算一次唤醒，不能绕过。
     if (!preview) {
       const budgetBlock = tokenGuardWakeBlock(key, st, { direct: false });
@@ -12672,6 +12691,26 @@ async function main() {
       log(`[目的] 投递失败：${error?.message ?? error}（${Math.round(cfg.purpose.retryMs / 60000)} 分钟后重试）`);
       return { ok: false, reason: 'delivery-failed', error: String(error?.message ?? error) };
     }
+  }
+
+  /** 通道门拦下目的回合时的结构化结果（code 机读 / error 人读 / hint 下一步）。 */
+  function purposeChannelBlocked(channel) {
+    if (channel.code === 'SNOWLUMA_OFFLINE') {
+      return {
+        ok: false,
+        reason: 'channel',
+        code: channel.code,
+        error: 'SnowLuma 没连上：这次没让她出发（发了也到不了 QQ）',
+        hint: '先启动 SnowLuma 并登录机器人 QQ，桥接会自动重连；概览页 QQ 状态变成「已连接」后再点「立即试一次」。',
+      };
+    }
+    return {
+      ok: false,
+      reason: 'channel',
+      code: channel.code,
+      error: `QQ 发送通道刚失败过：${channel.reason}；这次没让她出发`,
+      hint: '去 QQ 页检查 SnowLuma 连接与访问令牌（unauthorized = 令牌不一致）；修好后等约 2 分钟或有一条消息发送成功，就会自动放行。',
+    };
   }
 
   // 串行化：一次只允许一个目的回合在跑（60 秒 tick / 手动「试一次」/ 预览共用一把锁）。

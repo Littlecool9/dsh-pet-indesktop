@@ -2127,7 +2127,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           toast(toPet ? "✓ 桌宠主动搭话已发送" : "✓ 目的回合已投递");
           await load();
         } catch (e) {
-          setMsg(`✗ ${e.message}${e.data?.reason ? `（${e.data.reason}）` : ""}`);
+          // 通道门（SnowLuma 没连上 / 刚发失败）会带 code + hint：下一步必须和原因一起显示。
+          const why = e.code || e.data?.reason;
+          setMsg(`✗ ${e.message}${why ? `（${why}）` : ""}${e.hint ? ` — ${e.hint}` : ""}`);
+          toast(`✗ ${e.message}`);
         } finally { setBusy(""); }
       };
 

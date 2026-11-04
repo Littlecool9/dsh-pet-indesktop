@@ -87,6 +87,48 @@ await test('回合回执：没发消息且正常结束 = silent，不重试', as
   assert.ok(h.purposeState.nextFireAt > Date.now());
 });
 
+// 2026-11-04 现场：SnowLuma 没开时「立即试一次」显示投递成功，模型回合发 QQ 全部 fetch failed。
+// 目的回合必须和普通唤醒一样过「发送通道门」：不建会话、不烧回合、不吃今日次数，并给出可行动的原因。
+await test('SnowLuma 没连上：手动试一次也不投递，返回 code + hint', async (h) => {
+  seedOwner(h);
+  h.setSnowlumaHealth({ connected: false });
+  const r = await h.runPurpose({ force: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'channel');
+  assert.equal(r.code, 'SNOWLUMA_OFFLINE');
+  assert.ok(r.error && r.error.includes('SnowLuma'), `error 应点名 SnowLuma：${r.error}`);
+  assert.ok(r.hint && r.hint.length > 0, 'hint 不能为空');
+  assert.equal(h.calls.prompts.length, 0, '通道断着不能投递模型回合');
+  assert.equal(h.purposeState.countToday, 0, '没投递不吃今日次数');
+});
+
+await test('最近发送刚失败：手动试一次同样拦下（SEND_RECENTLY_FAILED）', async (h) => {
+  seedOwner(h);
+  h.setSnowlumaHealth({ connected: true, lastSendOkAt: 0, lastSendFailAt: Date.now(), lastSendError: 'fetch failed' });
+  const r = await h.runPurpose({ force: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'SEND_RECENTLY_FAILED');
+  assert.ok(r.hint);
+  assert.equal(h.calls.prompts.length, 0);
+});
+
+await test('SnowLuma 没连上：自动 tick 跳过并排一个重试时间，不每分钟空转', async (h) => {
+  seedOwner(h);
+  h.makePurposeDue();
+  h.setSnowlumaHealth({ connected: false });
+  const r = await h.runPurpose({});
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'SNOWLUMA_OFFLINE', `应被通道门拦下：${JSON.stringify(r)}`);
+  assert.equal(h.calls.prompts.length, 0);
+  assert.ok(h.purposeState.nextFireAt > Date.now(), '应排下一次检查时间');
+  // 正对照：通道恢复后同样的排程条件会真正出发（证明上面拦它的是通道门，不是别的排程判断）。
+  h.setSnowlumaHealth({ connected: true, lastSendOkAt: Date.now(), lastSendFailAt: 0 });
+  h.makePurposeDue();
+  const ok = await h.runPurpose({});
+  assert.equal(ok.ok, true, `通道恢复后应出发：${JSON.stringify(ok)}`);
+  assert.equal(h.calls.prompts.length, 1);
+}, { config: { purpose: { quietStart: '00:00', quietEnd: '00:00', idleThresholdMs: 0 } } });
+
 const pad2 = (n) => String(n).padStart(2, '0');
 const clockOf = (ms) => {
   const d = new Date(ms);

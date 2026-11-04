@@ -4000,3 +4000,28 @@ npm run test:audit
   读写不对称（GET `/dsh/model` 已代理）导致“能显示、改不动”。
 - **修法**：补 `proxyDshFollowDefault` + 路由；新增静态契约测试，钉住前端路径 ⊆ 宿主路由。
 - **教训**：**中间代理层也是接口**；桥接新增一条路由，宿主必须同步开代理，否则前端只能 404。
+
+## #127（2026-11-04）「立即试一次」显示已投递，QQ 什么都没收到
+
+**现象**
+- 设置 → SurfCore → 目的 →「立即试一次（真发）」提示「✓ 已投递」，QQ 私聊一条都没有。
+- 桥接日志：`[目的] 已投递…` → `QQ 发送失败 (private:…): fetch failed` ×N → `[目的] 回合结束：silent`；
+  `gate-events.jsonl` 有 `gate=snowluma event=send-failed`。现场 SnowLuma 没在跑（3000/3001 无监听）。
+
+**根因**
+- `/purpose/run` 的「成功」只代表「提示词投进了 DSH 模型会话」；真正发 QQ 在之后的模型回合里。
+- 普通唤醒 `sendWakePromptV2` 早有发送通道门 `qqSendChannelStatus()`，但目的回合 `runPurposeOnce`
+  直接调 `deliverPrompt`，绕过了这道门：通道断着照样出发，白烧回合还报成功。
+
+**处置**
+- `runPurposeOnce` 在投递前过 `qqSendChannelStatus()`（force 也过）；拦下返回 `reason:'channel'` + `code` + `error` + `hint`，
+  不建会话、不占今日次数；自动 tick 按 `retryMs` 排下一次。
+- 设置页 `doRun` 失败文案带上 code 与 hint，并弹 toast。
+- 测试：`scripts/test-purpose-wiring.mjs` 三条（手动+离线、手动+刚失败、自动+离线带正对照）。
+- case：`docs/cases/2026-11-04-purpose-run-channel-gate.md`
+
+**教训**
+- **同一类出口要过同一道门**：新增一条「先生成、后发送」的投递路径时，先 grep 现有闸门（`qqSendChannelStatus`）。
+
+**残余**
+- 回合跑完但发送仍失败时（门放行后 SnowLuma 才掉线），结局记成 `silent`、设置页不会回显；需要另做回合结局回显。
