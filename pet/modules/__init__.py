@@ -11,6 +11,7 @@ from __future__ import annotations
 
 MODULES: tuple[str, ...] = (
     "pet.modules.surfcore",
+    "pet.modules.self_talk",
     "pet.modules.network_info",
 )
 

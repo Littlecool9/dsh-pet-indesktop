@@ -1,34 +1,27 @@
 # -*- coding: utf-8 -*-
-"""overlay 拓扑「自言自语族」聚焦回归（周期气泡 / 点击台词 / 配图）。
+"""overlay 拓扑「自言自语」集成回归：模块调度 + 壳气泡呈现 + 配图缓存。
 
-背景：这套功能在旧架构里的唯一宿主是 ``PetWindow``（self_talk 状态装配 +
-周期定时器 + 点击分支 + 朗读注入）。overlay 拓扑下 ``PetWindow`` 不构造，
-``pet/overlay_shell.py`` 的 sprite 壳成了唯一宿主——不接线就整族静默失效
-（气泡跟随器本身能出泡，见本文件判别实验结论）。
-
-覆盖：
-1. ``_init_self_talk`` 状态装配 + 周期定时器：timeout → 气泡收到文本，
-   并按 ``after_display`` 重排（+显示时长）；
-2. 点击 sprite → 只走点击音效/余额分支（点击台词功能已删除）；
-3. 显隐对称：隐藏期 timer 停、恢复重排；
-4. 配图分支：命中图片时走 ``SpriteBubbleFollower.show_image``（刀 1）。
-
-纪律：同步直调（信号 emit / handler 直调，不 sleep 赌时序）；假屏 + 真实
-PetSprite 复用既有测试件；全部 offscreen。
+调度/选择已迁到 ``pet.modules.self_talk``；本文件用真实 OverlayShell + 真实
+模块运行时验证两者接线（周期、显隐对称、配置热改、配图分支仍走既有气泡面）。
+SurfCore 每小时一条的降级矩阵在 ``tests/test_self_talk_module.py`` 用假服务测。
 """
 from __future__ import annotations
 
 import os
 import time
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QColor, QMouseEvent, QPixmap
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication
 
+import pet.overlay_shell as overlay_shell_mod
 import tests.test_overlay_window_capabilities as cap
 import tests.test_sprite_menu_facade as fac
+from pet.modules.host import ModuleHostBase
+from pet.modules.self_talk.module import SelfTalkModule
 from pet.overlay_shell import OverlayShell
 from pet.pet_sprite import PetSprite
 
@@ -65,68 +58,107 @@ def _make_shell(tmp_path, values=None):
     lib = fac.RichLibrary()
     shell.lib = lib
     shell.sprite.library = lib
-    # 点击音效有独立用例（test_sprite_sound.py 的 click_feedback 接线）；这里关掉，
-    # 否则点击路径投递的 0ms 延迟播放队列会跨用例泄漏（被下一条用例的 play_sound
-    # 打桩收走，变成伪失败）。
     shell.overlay.click_feedback = None
     return shell, config
 
 
-def _cleanup(shell) -> None:
-    shell._self_talk_timer.stop()
+class ShellTalkHost(ModuleHostBase):
+    """把模块接到真实壳（宿主能力与 AppModuleHost 同形）。"""
+
+    def __init__(self, shell, config) -> None:
+        super().__init__()
+        self.shell = shell
+        self.config = config
+        self.module: SelfTalkModule | None = None
+
+    def pet_config(self):
+        return self.config
+
+    def self_talk_ready(self) -> bool:
+        return self.shell.self_talk_ready()
+
+    def prepare_self_talk(self, *, images, image_scale) -> None:
+        self.shell.prepare_self_talk(images=images, image_scale=image_scale)
+
+    def show_self_talk(self, *, text=None, image=None, duration_ms=3200,
+                       image_scale=None) -> bool:
+        return self.shell.show_self_talk(
+            text=text, image=image, duration_ms=duration_ms, image_scale=image_scale)
+
+    def set_self_talk_visible(self, visible: bool) -> None:
+        if self.module is not None:
+            self.module.set_visible(visible)
+
+    def apply_module_config(self) -> None:
+        if self.module is not None:
+            self.module.apply_config(self.config)
+
+
+def _make_talk(tmp_path, values=None):
+    shell, config = _make_shell(tmp_path, values)
+    host = ShellTalkHost(shell, config)
+    module = SelfTalkModule()
+    host.module = module
+    shell._instance.shell = SimpleNamespace(
+        _module_host=host, _apply_module_config=host.apply_module_config)
+    module.start(host)
+    shell.overlay.show()
+    module.apply_config(config)
+    return shell, config, module, host
+
+
+def _cleanup(shell, module=None) -> None:
+    if module is not None:
+        module.stop()
     shell._delete_runtime_marker()
 
 
 # ---------------------------------------------------------------- 1. 周期气泡
 def test_periodic_timer_timeout_shows_bubble_and_reschedules(tmp_path):
     """周期定时器到点 → 气泡出文本；显示后按 after_display 重排（+时长）。"""
-    shell, _config = _make_shell(tmp_path, _talk_values())
+    shell, _config, module, _host = _make_talk(tmp_path, _talk_values())
     try:
-        shell.overlay.show()
-        # _init_self_talk 末尾即排程（window.py:740）；5s 间隔钉死可精确断言
-        assert shell._self_talk_timer.isActive() is True
-        assert shell._self_talk_timer.interval() == 5000
+        assert module.timer.isActive() is True
+        assert module.timer.interval() == 5000
 
-        shell._self_talk_timer.timeout.emit()  # 真实信号 → on_self_talk_timeout
+        module.handle_timeout()
 
         assert shell._speech_bubble is not None
         assert shell._speech_bubble._raw_text == "自言自语台词"
-        assert shell._last_self_talk_text == "自言自语台词"
+        assert module.last_text == "自言自语台词"
         # 已展示 → 下一次排在 max(1000, (5 + 1) * 1000)
-        assert shell._self_talk_timer.interval() == 6000
+        assert module.timer.interval() == 6000
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
 def test_self_talk_disabled_does_not_arm_timer(tmp_path):
     """总开关关闭时不排程（周期气泡是独立开关，不能只看文本池非空）。"""
-    shell, _config = _make_shell(
+    shell, _config, module, _host = _make_talk(
         tmp_path, _talk_values(self_talk_enabled=False))
     try:
-        shell.overlay.show()
-        assert shell._self_talk_timer.isActive() is False
+        assert module.timer.isActive() is False
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
-# ---------------------------------------------------------------- 4. 显隐对称
+# ---------------------------------------------------------------- 2. 显隐对称
 def test_hide_stops_timer_and_show_reschedules(tmp_path):
     """隐藏期 timer 停（防止对不可见壳冒泡）；恢复显示重排。"""
-    shell, _config = _make_shell(tmp_path, _talk_values())
+    shell, _config, module, _host = _make_talk(tmp_path, _talk_values())
     try:
-        shell.overlay.show()
-        assert shell._self_talk_timer.isActive() is True
+        assert module.timer.isActive() is True
 
         shell.set_pet_visible(False)
-        assert shell._self_talk_timer.isActive() is False
+        assert module.timer.isActive() is False
 
         shell.set_pet_visible(True)
-        assert shell._self_talk_timer.isActive() is True
+        assert module.timer.isActive() is True
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
-# ---------------------------------------------------------------- 5. 配图分支
+# ---------------------------------------------------------------- 3. 配图分支
 def _write_png(directory, name="angry.png"):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
@@ -137,23 +169,17 @@ def _write_png(directory, name="angry.png"):
 
 
 def test_image_branch_reaches_follower_show_image(tmp_path):
-    """出图概率 100% + 缓存已热 → 走刀 1 的 ``show_image``（而不是文本分支）。
-
-    慢帧修复后配图只走 worker 预热缓存（GUI 零磁盘税）；冷缓存回退文本
-    是设计行为（另有专测）。这里先等后台预热把缓存填上（条件等待，不赌
-    固定 sleep），再断言稳态出图路径。
-    """
+    """出图概率 100% + 缓存已热 → 走既有 ``show_image``（而不是文本分支）。"""
     image_dir = tmp_path / "talk-images"
     _write_png(image_dir)
-    shell, _config = _make_shell(tmp_path, _talk_values(
+    shell, _config, module, _host = _make_talk(tmp_path, _talk_values(
         self_talk_image_dir=str(image_dir),
         self_talk_image_chance=100,
         self_talk_image_scale=150,
     ))
     try:
-        shell.overlay.show()
-        assert shell._self_talk_images, "配置的图片目录必须装进载荷"
-        assert shell._self_talk_image_scale == 1.5
+        assert module.settings is not None and module.settings.images
+        assert module.settings.image_scale == 1.5
 
         deadline = time.monotonic() + 10.0
         while (not getattr(shell, "_self_talk_image_cache", {})
@@ -162,32 +188,31 @@ def test_image_branch_reaches_follower_show_image(tmp_path):
             time.sleep(0.02)
         assert shell._self_talk_image_cache, "后台配图预热超时未完成"
 
-        assert shell._show_random_self_talk() is True
+        module.handle_timeout()
         assert shell._speech_bubble is not None
         assert shell._speech_bubble._content_kind == "image"
         assert shell._speech_bubble._image_scale == 1.5
         # 图片没有可朗读文本：显式记 None（点击路径据此保持安静）
-        assert shell._last_self_talk_text is None
+        assert module.last_text is None
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
 def test_deleted_absolute_image_dir_degrades_to_text(tmp_path):
-    """用户删掉的外部图片目录不再回退内置彩蛋池（window.py:123 语义）。"""
-    shell, _config = _make_shell(tmp_path, _talk_values(
+    """用户删掉的外部图片目录不再回退内置彩蛋池（旧 window.py 语义）。"""
+    shell, _config, module, _host = _make_talk(tmp_path, _talk_values(
         self_talk_image_dir=str(tmp_path / "gone"),
         self_talk_image_chance=100,
     ))
     try:
-        assert shell._self_talk_images == []
-        shell.overlay.show()
-        assert shell._show_random_self_talk() is True
+        assert module.settings is not None and module.settings.images == ()
+        module.handle_timeout()
         assert shell._speech_bubble._raw_text == "自言自语台词"
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
-# ---------------------------------------------------------------- 2/3. 点击链路
+# ---------------------------------------------------------------- 4. 点击链路
 def _click_sprite(shell):
     """走真实 overlay 鼠标路由：同一位置 press→release = 单击 sprite。"""
     sprite = shell.sprite
@@ -203,115 +228,54 @@ def _click_sprite(shell):
 
 def test_click_with_self_talk_off_keeps_bubble_quiet(tmp_path):
     """点击自言自语关闭 → 点击只出动画，不出气泡也不排程。"""
-    shell, _config = _make_shell(
+    shell, _config, module, _host = _make_talk(
         tmp_path, _talk_values(self_talk_enabled=False))
     try:
-        shell.overlay.show()
         _click_sprite(shell)
-        assert shell._self_talk_timer.isActive() is False
+        assert module.timer.isActive() is False
         assert getattr(shell._speech_bubble, "_raw_text", "") != "自言自语台词"
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
 def test_click_show_balance_routes_to_shell_show_balance(tmp_path):
-    """click_show_balance 优先：转 ``AppShell.show_balance``（window.py:3370-3371）。"""
-    shell, _config = _make_shell(
+    """click_show_balance 优先：转 ``AppShell.show_balance``（旧 window.py 语义）。"""
+    shell, _config, module, _host = _make_talk(
         tmp_path, _talk_values(click_show_balance=True))
     calls: list = []
     shell._instance.shell = type(
         "_Shell", (), {"show_balance": lambda self, parent=None: calls.append(parent)})()
     try:
-        shell.overlay.show()
         _click_sprite(shell)
-        # 余额落点 = **被点 sprite 的 pet 形宿主**（绑定发起槽，不是壳本身）：
-        # slot0 关闭后迟到的余额不会再贴到子宠身上；宿主把 show_bubble 转给
-        # 这一只自己的气泡链（旧逐窗架构里"谁被点谁冒泡"的等价物）。
         assert calls == [shell._sprite_host(shell.sprite)]
         assert calls[0] is not shell
-        assert shell._self_talk_timer.interval() == 5000  # 走余额分支，不重排自言自语
+        assert module.timer.interval() == 5000  # 走余额分支，不重排自言自语
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
-# ---------------------------------------------------------------- 7. 配置热改
+# ---------------------------------------------------------------- 5. 配置热改
 def test_refresh_settings_hot_reloads_self_talk_fields(tmp_path):
     """运行期改 self_talk 开关经 refresh_settings 即生效（不等重启）。"""
-    shell, config = _make_shell(tmp_path, _talk_values())
+    shell, config, module, _host = _make_talk(tmp_path, _talk_values())
     try:
-        shell.overlay.show()
-        assert shell._self_talk_timer.isActive() is True
+        assert module.timer.isActive() is True
 
         config.set("self_talk_enabled", False)
         shell.refresh_settings()
-        assert shell._self_talk_enabled is False
-        assert shell._self_talk_timer.isActive() is False  # 关掉即停表
+        assert module.settings is not None and module.settings.enabled is False
+        assert module.timer.isActive() is False  # 关掉即停表
 
         config.set("self_talk_enabled", True)
         shell.refresh_settings()
-        assert shell._self_talk_timer.isActive() is True  # 打开即重排
-
+        assert module.timer.isActive() is True  # 打开即重排
     finally:
-        _cleanup(shell)
+        _cleanup(shell, module)
 
 
-# ---------------------------------------------------------------- 8. 图片路径慢帧归因
-def test_image_branch_uses_warm_cache_no_gui_disk_work(tmp_path):
-    """配图走 worker 预热缓存（GUI 零磁盘/解码税）；is_file 剔除有 60s TTL。"""
-    import time as _time
-
-    shell, _config = _make_shell(tmp_path, _talk_values(self_talk_image_chance=100))
-    try:
-        img_path = _write_png(tmp_path / "imgs")
-        shell._self_talk_images = [img_path]
-        shell._self_talk_image_cache = {str(img_path): QPixmap(str(img_path)).toImage()}
-        shell._self_talk_images_checked_at = _time.monotonic()  # TTL 内不再 stat
-
-        calls: dict = {}
-        follower = shell._bubble_follower
-        original = follower.show_image
-        follower.show_image = lambda path, ms, image_scale=1.0, pixmap=None: (
-            calls.update(path=path, pixmap=pixmap), True)[1]
-
-        assert shell._show_random_self_talk() is True
-        assert calls["path"] == img_path
-        assert calls["pixmap"] is not None and not calls["pixmap"].isNull()
-
-        follower.show_image = original
-        shell._delete_runtime_marker()
-    finally:
-        shell._delete_runtime_marker()
-
-
-def test_image_branch_cache_miss_falls_back_to_text(tmp_path):
-    """缓存未命中（decode 在飞）→ 回退文本气泡，绝不在 GUI 同步读图。"""
-    shell, _config = _make_shell(tmp_path, _talk_values(self_talk_image_chance=100))
-    try:
-        img_path = _write_png(tmp_path / "imgs")
-        shell._self_talk_images = [img_path]
-        shell._self_talk_image_cache = {}  # 未命中
-
-        calls: dict = {}
-        follower = shell._bubble_follower
-        follower.show_image = lambda *a, **k: (calls.update(image=True), True)[1]
-        shell._show_bubble_text = lambda text, ms: (
-            calls.update(text=text), True)[1]
-
-        assert shell._show_random_self_talk() is True
-        assert "image" not in calls          # 没有同步出图
-        assert calls.get("text") == "自言自语台词"
-        shell._delete_runtime_marker()
-    finally:
-        shell._delete_runtime_marker()
-
-
+# ---------------------------------------------------------------- 6. 图片缓存口径
 def test_warm_self_talk_images_prescales_big_images(tmp_path):
-    """配图缓存按**实际绘制盒**（显示盒 × 配图大小 × DPR × 余量）预缩放：
-    24 张原图解码 = 114MB 的内存回压（任务管理器实锤）。旧实现固定长边
-    ≤640，用户小尺寸/1× 屏时多存一倍以上（实测 36.8MB）；改成现算后只多留
-    1.1 倍余量（N2）。"""
-    import time as _time
-
+    """配图缓存按实际绘制盒预缩放（不是固定长边 640）。"""
     shell, _config = _make_shell(tmp_path, _talk_values(self_talk_image_chance=100))
     try:
         big = QPixmap(2000, 1000)
@@ -320,19 +284,19 @@ def test_warm_self_talk_images_prescales_big_images(tmp_path):
         d.mkdir()
         path = d / "big.png"
         assert big.save(str(path))
+        shell.prepare_self_talk(images=[str(path)], image_scale=1.0)
         shell._self_talk_images = [path]
         shell._self_talk_image_cache = {}
 
         shell._warm_self_talk_images()
-        deadline = _time.monotonic() + 10.0
+        deadline = time.monotonic() + 10.0
         while str(path) not in shell._self_talk_image_cache \
-                and _time.monotonic() < deadline:
+                and time.monotonic() < deadline:
             QApplication.instance().processEvents()
-            _time.sleep(0.02)
+            time.sleep(0.02)
 
         cached = shell._self_talk_image_cache[str(path)]
         assert max(cached.width(), cached.height()) == shell._self_talk_image_cache_edge()
         assert not cached.isNull()
-        shell._delete_runtime_marker()
     finally:
-        shell._delete_runtime_marker()
+        _cleanup(shell)

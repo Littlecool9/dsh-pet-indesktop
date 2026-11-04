@@ -60,24 +60,29 @@ def test_refresh_settings_resyncs_sprite(tmp_path):
 
 
 def test_stop_halts_self_talk_timer(tmp_path):
-    """M9：shell.stop() 后 self_talk 定时器不再自我重排。"""
-    shell, _config = _make_shell(tmp_path, {
+    """M9：模块 stop() 后自言自语定时器不再自我重排。"""
+    from pet.modules.self_talk.module import SelfTalkModule
+    from tests.test_overlay_self_talk import ShellTalkHost
+
+    shell, config = _make_shell(tmp_path, {
         "self_talk_enabled": True,
         "self_talk_texts": ["台词"],
         "self_talk_min_interval": 5.0,
         "self_talk_max_interval": 5.0,
     })
+    host = ShellTalkHost(shell, config)
+    module = SelfTalkModule()
+    host.module = module
     try:
         shell.overlay.show()
-        assert shell._self_talk_timer.isActive() is True
-        shell.start()
-        shell.stop()
-        assert shell._self_talk_timer.isActive() is False
+        module.start(host)
+        module.apply_config(config)
+        assert module.timer.isActive() is True
+        module.stop()
+        assert module.timer.isActive() is False
         shell._delete_runtime_marker()
     finally:
-        timer = getattr(shell, "_self_talk_timer", None)
-        if timer is not None:
-            timer.stop()
+        module.stop()
         shell._delete_runtime_marker()
 
 

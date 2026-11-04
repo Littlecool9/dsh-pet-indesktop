@@ -419,7 +419,7 @@ def test_quiet_does_not_touch_self_talk_or_link_bubbles(win):
     assert window_alerts.quiet_blocked(win) is True
     assert window_alerts.bubble_blocked(win) is False, "免打扰不得写进 bubble_blocked"
 
-    assert win._show_self_talk_text("自言自语一句") is True
+    assert win.show_self_talk(text="自言自语一句") is True
     assert _shown_texts(win)[-1] == "自言自语一句"
 
     # 联动状态气泡走 show_bubble（不经 bubble_blocked / quiet_blocked）

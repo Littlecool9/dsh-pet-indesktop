@@ -54,5 +54,63 @@ class AppModuleHost(ModuleHostBase):
         dialog.raise_()
         dialog.activateWindow()
 
+    # ---- 自言自语（呈现/每宠配置/门禁由壳提供，模块不 import 壳）----------
+    def pet_config(self) -> Any:
+        """主宠那份每宠配置视图（自言自语等每宠键的真值在槽档案里）。"""
+        overlay_shell = getattr(self.shell, "_overlay_shell", None)
+        cfg = getattr(overlay_shell, "cfg", None)
+        if cfg is not None and callable(getattr(cfg, "get", None)):
+            return cfg
+        return self.config
+
+    def self_talk_ready(self) -> bool:
+        """自言自语当前是否允许上屏（可见/抑制/专注/提醒让路/忙时）。"""
+        fn = getattr(getattr(self.shell, "_overlay_shell", None), "self_talk_ready", None)
+        if not callable(fn):
+            return True
+        try:
+            return bool(fn())
+        except Exception:
+            logger.debug("自言自语门禁查询失败", exc_info=True)
+            return False
+
+    def prepare_self_talk(self, *, images, image_scale) -> None:
+        """把模块选出的配图清单交给壳的预热缓存（GUI 线程零磁盘/解码税）。"""
+        fn = getattr(getattr(self.shell, "_overlay_shell", None),
+                    "prepare_self_talk", None)
+        if callable(fn):
+            try:
+                fn(images=images, image_scale=image_scale)
+            except Exception:
+                logger.debug("自言自语配图预热失败", exc_info=True)
+
+    def show_self_talk(self, *, text=None, image=None, duration_ms: int = 3200,
+                       image_scale=None) -> bool:
+        """用壳的既有气泡路径呈现一条自言自语；返回是否真的上屏。"""
+        overlay_shell = getattr(self.shell, "_overlay_shell", None)
+        fn = getattr(overlay_shell, "show_self_talk", None)
+        if callable(fn):
+            try:
+                return bool(fn(
+                    text=text, image=image,
+                    duration_ms=int(duration_ms), image_scale=image_scale))
+            except Exception:
+                logger.debug("模块自言自语展示失败", exc_info=True)
+                return False
+        if text is None:
+            return False
+        return self.show_bubble(str(text), int(duration_ms))
+
+    def set_self_talk_visible(self, visible: bool) -> None:
+        """桌宠显隐变化：让模块停表/重排（旧壳的显隐对称语义）。"""
+        getter = getattr(self.shell, "running_module", None)
+        module = getter("self_talk") if callable(getter) else None
+        setter = getattr(module, "set_visible", None)
+        if callable(setter):
+            try:
+                setter(bool(visible))
+            except Exception:
+                logger.debug("自言自语显隐同步失败", exc_info=True)
+
 
 __all__ = ["AppModuleHost"]

@@ -1394,33 +1394,39 @@ class TestUXFixesRound3:
         """重要气泡占用期间，自言自语必须让路。"""
         from PySide6.QtWidgets import QApplication
         import tests.test_sprite_menu_facade as fac
+        from pet.modules.self_talk.module import SelfTalkModule
+        from tests.test_overlay_self_talk import ShellTalkHost
 
         app = QApplication.instance() or QApplication([])
         shell, _lib = fac._make_shell(tmp_path)
         shell._config.set("self_talk_enabled", True)
-        shell._self_talk_enabled = True
+        host = ShellTalkHost(shell, shell._config)
+        module = SelfTalkModule()
+        host.module = module
         shell.overlay.show()
         app.processEvents()
+        module.start(host)
+        module.apply_config(shell._config)
 
         shown = []
-        # 自言自语经 _show_random_self_talk 显示（返回是否真实显示）
-        shell._show_random_self_talk = lambda: shown.append(1) or True
+        shell.show_self_talk = lambda **kwargs: shown.append(1) or True
 
         try:
             # 无占用时自言自语正常显示
-            shell._on_self_talk_timeout()
+            module.handle_timeout()
             assert len(shown) == 1
 
             # 占用期间自言自语跳过
             shell.hold_bubble(60.0)
-            shell._on_self_talk_timeout()
+            module.handle_timeout()
             assert len(shown) == 1  # 没有新增
 
             # 占用过期后恢复
             shell._bubble_busy_until = time.monotonic() - 1  # 字段自审查修复起为单调时钟
-            shell._on_self_talk_timeout()
+            module.handle_timeout()
             assert len(shown) == 2
         finally:
+            module.stop()
             shell.stop()
             shell._delete_runtime_marker()
 
