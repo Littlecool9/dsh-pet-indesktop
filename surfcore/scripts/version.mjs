@@ -82,7 +82,6 @@ function show() {
   const siblings = [
     ['surfvoicelocal', path.resolve(ROOT, '..', 'voice', 'packages', 'voice-local')],
     ['surfvoicecloud', path.resolve(ROOT, '..', 'voice', 'packages', 'voice-cloud')],
-    ['surfpet', path.resolve(ROOT, '..', 'pet')],
   ];
   for (const [name, dir] of siblings) {
     const pkg = path.join(dir, 'package.json');

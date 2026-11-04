@@ -141,19 +141,6 @@ export const DEFAULT_UNIFIED = {
     start: { qq: true, bili: true },
   },
   ui: { activeTab: 'overview', showAdvanced: false },
-  // 组件更新（2026-10-26）：检查 SurfCore 本体 / 语音包 / 桌宠 / 未来登记的扩展。
-  // 只做 git 快进；`components` 里可以自己加 `{id,name,dir,branch}` 把别的仓库纳入检查。
-  updates: {
-    enabled: true,
-    checkOnStart: true,
-    startDelayMs: 20000,
-    intervalMs: 21600000,
-    components: [],
-    // 构建产物型组件（桌宠）走版本清单：发版时把 version.json 放到 Release 资产里。
-    // 默认指向官方 Release 的 latest 直链（无 API 限流）；自建发布源就改这里。
-    pet: { versionUrl: 'https://github.com/Mieksido/surfpet/releases/latest/download/version.json' },
-    voice: { localVersionUrl: '', cloudVersionUrl: '' },
-  },
 };
 
 export const SECRET_PATHS = new Set([

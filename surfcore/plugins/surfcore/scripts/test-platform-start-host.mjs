@@ -85,7 +85,7 @@ try {
   assert.equal(overview.status, 200);
   assert.deepEqual(overview.data.platformStart, { qq: false, bili: false },
     '/overview 的 platformStart 应反映开关');
-  assert.ok(overview.data.launch?.qq && overview.data.launch?.bili && overview.data.launch?.pet && overview.data.launch?.voice, 'overview 必须带统一 launch 状态');
+  assert.ok(overview.data.launch?.qq && overview.data.launch?.bili && overview.data.launch?.voice, 'overview 必须带统一 launch 状态');
   assert.equal(overview.data.scheduler.running, false, 'B站 开关关闭时生物钟不应运行');
   assert.equal(overview.data.scheduler.disabled, true, 'B站 开关关闭时 scheduler.disabled 应为 true');
 
@@ -111,10 +111,10 @@ try {
   assert.ok(empty.data.hint, '空选择必须给下一步');
 
   const stopped = await invoke(api, 'POST', '/dsh-surfcore/api/bridge', {
-    action: 'stop-selected', components: ['qq', 'bili', 'pet', 'voice'],
+    action: 'stop-selected', components: ['qq', 'bili', 'voice'],
   });
   assert.equal(stopped.status, 200);
-  assert.equal(stopped.data.items?.length, 4, '一键停止要覆盖四项');
+  assert.equal(stopped.data.items?.length, 3, '一键停止要覆盖三项');
   assert.ok(stopped.data.items.every((x) => x.ok), '未运行的服务停止应幂等成功');
 
   // 一键启动：两个都关 → 跳过两边，不启动任何进程。

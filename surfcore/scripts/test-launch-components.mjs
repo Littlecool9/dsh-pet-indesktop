@@ -17,7 +17,7 @@ assert.ok(index.includes('VOICE_BRIDGE_DOWN'), '语音依赖桥接必须返回�
 assert.ok(index.includes('PLATFORM_DISABLED'), '平台开关关闭必须返回结构化错误');
 assert.ok(index.includes("'QQ（含 SnowLuma）'"), '启动项标签必须包含 SnowLuma');
 assert.ok(index.includes("stopSchedulerNow"), '一键停止必须能停 B站生物钟');
-assert.ok(index.includes("['voice', 'qq', 'bili', 'pet']"), '停止顺序必须先语音后桥接');
+assert.ok(index.includes("['voice', 'qq', 'bili']"), '停止顺序必须先语音后桥接');
 
 for (const text of ['一键启动 SurfCore', '一键停止（全部）', 'voiceBranch', '语音分支']) {
   assert.ok(client.includes(text), `前端必须有一键启动/停止/语音分支：${text}`);

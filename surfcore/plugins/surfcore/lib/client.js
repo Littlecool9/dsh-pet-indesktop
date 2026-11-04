@@ -1534,203 +1534,6 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
     }
 
     // ── 概览 ────────────────────────────────────────────────────────────────
-    function UpdatesModal({ status, onClose, onDone, onStaged, toast }) {
-      const pending = Array.isArray(status?.pending) ? status.pending : [];
-      // 远端只拿到提交号时显示「提交 abc1234」而不是 "vabc1234"（否则用户以为是乱码）
-      const fmtV = (v) => {
-        const t = String(v ?? "").trim();
-        if (!t) return "?";
-        return /^[0-9a-f]{7,40}$/i.test(t) ? `提交 ${t.slice(0, 7)}` : `v${t}`;
-      };
-      const [selected, setSelected] = useState(() => new Set(pending.map((item) => item.id)));
-      const [never, setNever] = useState(false);
-      const [working, setWorking] = useState(false);
-      // 下载进度：应用期间轮询 /updates，显示已下载/总量/速度/百分比（2026-10-31 用户要求）
-      const [dl, setDl] = useState(null);
-      const sizeText = (n) => (Number(n) > 0 ? `${(Number(n) / 1024 / 1024).toFixed(1)} MB` : "0 MB");
-      const speedText = (n) => {
-        const v = Number(n) || 0;
-        if (v <= 0) return "";
-        return v >= 1024 * 1024 ? `${(v / 1024 / 1024).toFixed(1)} MB/s` : `${Math.round(v / 1024)} KB/s`;
-      };
-      const phaseText = (d) => {
-        if (!d) return "正在准备更新…";
-        const label = d.phase === "extract"
-          ? "下载完成，正在解压"
-          : d.phase === "verify"
-            ? "下载完成，正在校验"
-            : d.phase === "backup"
-              ? "下载完成，正在备份"
-              : d.phase === "install"
-                ? "下载完成，正在安装"
-                : d.phase === "stage"
-                  ? "下载完成，正在排队"
-                  : d.phase === "pending"
-                  ? "下载完成，等待重启"
-                  : d.phase === "failed"
-                    ? "更新失败"
-                    : "下载中";
-        const stats = `${sizeText(d.bytes)}${d.total ? ` / ${sizeText(d.total)}` : ""}${d.speedBps ? ` · ${speedText(d.speedBps)}` : ""}${d.percent != null ? ` · ${d.percent}%` : ""}`;
-        return `${label} ${stats}`;
-      };
-      const toggle = (id) => setSelected((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id); else next.add(id);
-        return next;
-      });
-      const applySelected = async (opts = {}) => {
-        const overwriteModified = opts?.overwriteModified === true;
-        const firstInstall = opts?.firstInstall === true;
-        const ids = [...selected];
-        if (!ids.length) return;
-        setWorking(true);
-        setDl(null);
-        const readProgress = async () => {
-          try {
-            const st = await api("/updates");
-            if (st?.download) setDl(st.download);
-          } catch {}
-        };
-        void readProgress();
-        const poll = setInterval(readProgress, 500);
-        try {
-          const r = await api("/updates", { method: "POST", body: { action: "apply", ids, overwriteModified, firstInstall } });
-          await readProgress();
-          const failed = (r.results ?? []).filter((x) => !x.ok);
-          const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
-          if (r.ok && staged.length) {
-            // 延后应用：文件已下载到 staging，宿主退出后才覆盖（避免覆盖正在使用的模块导致崩溃）
-            toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
-            onStaged?.(staged.length);
-          } else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
-          else {
-            const f = failed[0] ?? {};
-            toast(`✗ 更新失败${f.code ? `（${f.code}）` : ""}：${f.reason ?? f.error ?? "原因不明"}${f.hint ? `；建议：${f.hint}` : ""}`);
-          }
-          onDone?.(r);
-        } catch (e) { toast(`✗ 更新失败：${e.message}`); }
-        finally { clearInterval(poll); setWorking(false); }
-      };
-      const dismissThis = async () => {
-        setWorking(true);
-        try {
-          await api("/updates", { method: "POST", body: { action: "dismiss" } });
-          toast("✓ 本次更新不再提示（远端有新提交时会再提醒）");
-        } catch (e) { toast(`✗ ${e.message}`); }
-        finally { setWorking(false); onClose?.(); }
-      };
-      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget && !working) onClose?.(); } },
-        h("div", { className: "qbw-modal", style: { maxWidth: "600px", maxHeight: "82vh", display: "flex", flexDirection: "column" } },
-          h("h3", { style: { flexShrink: 0 } }, pending.length > 1 ? `发现 ${pending.length} 个可用更新` : "发现可用更新"),
-          h("div", { style: { flex: "1 1 auto", minHeight: 0, overflow: "auto", paddingRight: "2px" } },
-          h("p", null, (() => {
-            // 让用户一眼看到"这次更新到什么版本"（以前只有提交列表，用户不知道是哪个版本）
-            const withVer = pending.filter((x) => x.latestVersion);
-            if (!withVer.length) return "git 安装做快进（--ff-only）；zip 安装会下载新包覆盖代码。两种都不会动 config.json 与记忆卡。";
-            const parts = withVer.map((x) => `${x.name} v${x.installedVersion || "?"} → ${fmtV(x.latestVersion)}`);
-            return `${parts.join("　")}；更新不会动 config.json 与记忆卡。`;
-          })()),
-          h("p", { style: { fontSize: "12px", color: "var(--qbw-warn-text)", marginTop: "2px" } },
-            "⚠️ 下载/更新完成后需要完全退出 DSH 再打开才会生效；只刷新设置页不会应用。"),
-          (() => {
-            // 更新通道：正式用户 stable（默认）；测试机才切 dev（只跟 -dev.N 预发布）
-            const ch = status?.channel === "dev" ? "dev" : "stable";
-            const switchChannel = async (next) => {
-              if (next === ch) return;
-              setWorking(true);
-              try {
-                const r = await api("/updates", { method: "POST", body: { action: "set-channel", channel: next } });
-                if (!r.ok) throw new Error(r.error || "切换通道失败");
-                toast(`✓ 已切到${next === "dev" ? "测试" : "稳定"}通道；正在重新检查…`);
-                onDone?.();
-              } catch (e) { toast(`✗ ${e.message}${e.hint ? `；${e.hint}` : ""}`); }
-              finally { setWorking(false); }
-            };
-            return h("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
-              h("span", { className: "qbw-label", style: { margin: 0 } }, "更新通道"),
-              h("select", { className: "qbw-select", value: ch, disabled: working, onChange: (e) => switchChannel(e.target.value) },
-                h("option", { value: "stable" }, "stable（正式版，默认）"),
-                h("option", { value: "dev" }, "dev（测试版，只给测试机）")),
-              h("span", { className: "qbw-hint" }, ch === "dev"
-                ? "只安装 vX.Y.Z-dev.N 的 Pre-release；正式用户不要开。"
-                : "只安装正式 Release；Pre-release 不会打扰你。"));
-          })(),
-          pending.length ? pending.map((item) => h("div", { key: item.id, style: { border: "1px solid rgba(127,127,127,.24)", borderRadius: "10px", padding: "10px 12px", margin: "0 0 8px" } },
-            h("label", { style: { display: "flex", gap: "8px", alignItems: "center", fontWeight: 600 } },
-              h("input", { type: "checkbox", checked: selected.has(item.id), onChange: () => toggle(item.id), disabled: working }),
-              item.name,
-              h("span", { className: "qbw-chip", style: { marginLeft: "auto" } },
-                item.channel === "version" || item.channel === "dev"
-                  ? `v${item.installedVersion} → ${fmtV(item.latestVersion)}${item.channel === "dev" ? "（测试通道）" : ""}`
-                  : item.channel === "release"
-                    ? `${item.installedVersion ? `v${item.installedVersion}` : "未安装"} → ${fmtV(item.latestVersion)}`
-                    : (item.latestVersion
-                      ? `v${item.installedVersion || "?"} → ${fmtV(item.latestVersion)}（${item.behind} 个提交）`
-                      : `${item.behind} 个提交（到 ${String(item.remote || "").slice(0, 7)}）`))),
-            h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-              `${item.dir} · ${item.branch ?? ""}${item.dirty ? ` · ⚠️ 本地有 ${item.dirty} 处改动` : ""}${item.ahead ? ` · ⚠️ 本地领先 ${item.ahead}` : ""} · ${item.channel === "release" ? "版本清单" : item.channel === "version" ? "版本追踪" : item.channel === "dev" ? "测试通道（Pre-release）" : "git 仓库"}`),
-            item.blocked ? h("div", { className: "qbw-hint", style: { color: "var(--qbw-err-text)" } }, `不能自动更新：${item.blocked}`) : null,
-            item.blocked ? h("div", { className: "qbw-hint" }, "处理办法：本仓库有未提交改动时，先 commit/stash 再更新；或者直接用新版本的 zip 覆盖安装。") : null,
-            (item.changelog ?? []).length ? h("ul", { style: { margin: "6px 0 0 18px", padding: 0, fontSize: "11.5px", lineHeight: "18px", opacity: 0.82 } },
-              item.changelog.slice(0, 8).map((line, index) => h("li", { key: index }, line))) : null,
-            (item.changelog ?? []).length > 8 ? h("div", { className: "qbw-hint" }, `…另有 ${item.changelog.length - 8} 条`) : null)) : h("p", null, "当前没有可用更新。"),
-          h("label", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" } },
-            h("input", { type: "checkbox", checked: never, onChange: (e) => setNever(e.target.checked), disabled: working }),
-            h("span", { className: "qbw-hint" }, "不再提示本次更新（只对这次的远端版本生效；有更新提交时会重新提醒）")),
-            (() => {
-            const la = status?.lastApply;
-            if (!la || la.status !== "failed") return null;
-            return h("div", {
-              className: "qbw-err",
-              style: { marginTop: "6px", padding: "8px 10px", borderRadius: "8px", background: "rgba(192,57,43,.12)" },
-            },
-            h("div", { style: { fontWeight: 600 } }, `更新被阻止（${la.code || "failed"}）`),
-            (la.mismatchCount || la.missingCount)
-              ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
-                `清单不符 ${la.mismatchCount ?? 0} 个 / 缺失 ${la.missingCount ?? 0} 个`)
-              : null,
-            h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, la.reason || "原因不明"),
-            la.hint ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${la.hint}`) : null,
-            h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
-              h(Btn, { kind: "qbw-btn2", onClick: async () => {
-                try {
-                  await navigator.clipboard.writeText(JSON.stringify({ at: la.at, code: la.code, reason: la.reason, hint: la.hint, version: la.version ?? "" }, null, 2));
-                  toast("✓ 诊断信息已复制");
-                } catch (e) { toast(`✗ 复制失败：${e.message}`); }
-              } }, "复制诊断"),
-              la.code === "local-modifications" ? h(Btn, {
-                onClick: async () => {
-                  const n = Number(la.modifiedCount) || 0;
-                  if (!window.confirm(`将先备份 ${n ? n + " 个" : "这些"}被本地改过的文件，再覆盖为最新版。\n\n备份在 state/backups，可随时恢复。继续？`)) return;
-                  await applySelected({ overwriteModified: true });
-                },
-              }, `备份并覆盖${la.modifiedCount ? `（${la.modifiedCount} 个）` : ""}`) : null,
-              la.code === "evidence-insufficient" ? h(Btn, {
-                onClick: async () => {
-                  if (!window.confirm("这是首次 zip 安装更新，目录里还没有安装记录。\n\n会先把当前文件备份到 state/backups，再覆盖为最新版；只对官方 zip 解压安装使用。\n\n继续？")) return;
-                  await applySelected({ firstInstall: true });
-                },
-              }, "首次更新（先备份）") : null,
-              h(Btn, { kind: "qbw-btn2", onClick: () => window.open("https://github.com/Mieksido/surfcore/releases/latest", "_blank", "noopener") }, "去下载新版")));
-          })(),
-          working ? h(ProgressBar, {
-            pct: dl?.percent ?? 0,
-            phase: phaseText(dl),
-            // 下载阶段有真实百分比；解压/校验/备份阶段没有字节进度，只保留阶段文字和下载统计。
-            indeterminate: !dl || (dl.active !== true && dl.phase !== 'pending' && dl.phase !== 'install') || dl.percent == null,
-          }) : null),
-          h("div", { className: "qbw-actions", style: { flexShrink: 0, paddingTop: "10px" } },
-            h(Btn, { kind: "qbw-btn2", onClick: () => (never ? dismissThis() : onClose?.()), disabled: working },
-              never ? "不再提示本次" : "稍后"),
-            h(Btn, {
-              onClick: applySelected,
-              disabled: working || !selected.size || status?.lastApply?.deterministic === true,
-            },
-              status?.lastApply?.deterministic === true
-                ? "此版本无法自动更新（请手动下载）"
-                : (working ? "更新中…" : `立即更新（${selected.size}）`)))));
-    }
-
     // 插件冲突体检报告：只读结果；明确写出“未覆盖项”，避免把“没查到”当“兼容”。
     function CompatModal({ report, error, onClose, onRetry, busy, toast }) {
       const issues = Array.isArray(report?.issues) ? report.issues : [];
@@ -1874,96 +1677,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       const biliStart = platformStart.bili !== false;
       // ── 一键启动 / 停止（QQ+B站+桌宠+语音）────────────────────────────
       const launch = overview?.launch ?? {};
-      const [launchSel, setLaunchSel] = useState({ qq: true, bili: true, pet: false, voice: false });
+      const [launchSel, setLaunchSel] = useState({ qq: true, bili: true, voice: false });
       const [voiceBranch, setVoiceBranch] = useState("voice-local");
       const [launchResult, setLaunchResult] = useState(null);
       const [launchErr, setLaunchErr] = useState(null);
-      // ── 组件更新（2026-10-26）──────────────────────────────────────────
-      // 检查在插件里做（git fetch，只读）；界面只负责展示与确认。
-      const updates = overview?.updates ?? {};
-      const [updateOpen, setUpdateOpen] = useState(false);
-      const [compat, setCompat] = useState(null);
-      const [compatError, setCompatError] = useState(null);
-      const [gateData, setGateData] = useState(null);
-      const [gateAlert, setGateAlert] = useState(null);
-      const dismissedGates = useRef(new Set());
-      // 更新后必须重启 DSH：检查到更新、以及下载完成后都主动提示（只刷新页面不会应用）
-      const [restartHint, setRestartHint] = useState(null);
-      const [tokenDraft, setTokenDraft] = useState("");
-      const saveGithubToken = async (clear = false) => {
-        setBusy("token");
-        try {
-          const r = await api("/updates", { method: "POST", body: clear ? { action: "clear-token" } : { action: "set-token", token: tokenDraft.trim() } });
-          if (!r.ok) throw new Error(r.error ?? "保存失败");
-          toast(clear ? "✓ 已清除令牌（回到匿名 60 次/小时）" : "✓ 令牌已保存（检查更新改用账号额度 5000 次/小时）");
-          setTokenDraft("");
-          await reload();
-        } catch (e) {
-          toast(`✗ ${e.message}${e.hint ? `；${e.hint}` : ""}`);
-        } finally { setBusy(""); }
-      };
-      const [snowError, setSnowError] = useState(null);
-      // 手动导入 SnowLuma：先说明"导入的是什么"，再开选择框
-      const [snowImport, setSnowImport] = useState(false);
-      const [autoPrompted, setAutoPrompted] = useState(false);
-      // 更新弹窗只在「这个版本还没提醒过」时自动弹一次（2026-10-31 用户反馈：
-      // 每次打开设置页都弹，服务都还没启动就先被拦一下）。
-      // 记在 localStorage：同一批版本只自动弹一次；「稍后」也不会第二天重弹；换新版本会再提醒。
-      const UPDATE_PROMPT_SEEN_KEY = "surfcore.updatePromptSeen";
-      const updatePromptSignature = (results) => (Array.isArray(results) ? results : [])
-        .filter((x) => x && x.updateAvailable)
-        .map((x) => `${x.id ?? x.name ?? ""}@${x.latestVersion ?? x.latestSha ?? ""}`)
-        .sort().join("|");
-      useEffect(() => {
-        if (autoPrompted || !updates?.showPrompt) return;
-        const sig = updatePromptSignature(updates.results);
-        if (!sig) return;
-        let seen = "";
-        try { seen = localStorage.getItem(UPDATE_PROMPT_SEEN_KEY) || ""; } catch {}
-        setAutoPrompted(true);
-        if (seen === sig) return; // 这个版本提醒过：只保留卡片入口，不再自动弹
-        try { localStorage.setItem(UPDATE_PROMPT_SEEN_KEY, sig); } catch {}
-        setUpdateOpen(true);
-      }, [updates?.showPrompt, updates?.results, autoPrompted]);
-      const checkUpdates = async ({ openOnHit = true } = {}) => {
-        setBusy("updates");
-        try {
-          const r = await api("/updates", { method: "POST", body: { action: "check" } });
-          const n = r.pendingCount ?? 0;
-          const unknown = r.unknownCount ?? 0;
-          const pendingRestart = r.lastApply?.status === "pending_restart";
-          toast(n
-            ? `发现 ${n} 个组件有更新（安装后需重启 DSH）`
-            : pendingRestart
-              ? "✓ 更新已下载，请重启 DSH 生效"
-              : unknown
-                ? `无法判定 ${unknown} 个组件是否有更新（见详情）`
-                : "已是最新");
-          if (n) setRestartHint({ staged: false, count: n });
-          else if (pendingRestart) setRestartHint({ staged: true, count: 1 });
-          if (n && openOnHit) setUpdateOpen(true);
-          await reload();
-          return r;
-        } catch (e) {
-          toast(`✗ 检查更新失败：${e.message}`);
-          return null;
-        } finally { setBusy(""); }
-      };
-      // 更新通道：main/stable 只跟正式 Release；dev 只跟 -dev.N 的 Pre-release（测试机才用）
-      const switchUpdateChannel = async (channel) => {
-        if ((updates?.channel ?? "stable") === channel) return;
-        setBusy("channel");
-        try {
-          const r = await api("/updates", { method: "POST", body: { action: "set-channel", channel } });
-          if (!r.ok) throw new Error(r.error || "切换通道失败");
-          toast(channel === "dev"
-            ? "✓ 已切到 dev 测试通道（只装 -dev.N 构建）；正检查更新…"
-            : "✓ 已切回 main 稳定通道（只装正式 Release）");
-          await checkUpdates();
-        } catch (e) {
-          toast(`✗ ${e.message}${e.hint ? `；${e.hint}` : ""}`);
-        } finally { setBusy(""); }
-      };
       // 插件冲突体检：只读扫描；结果必须带“未覆盖项”，不能把“没查到”说成“兼容”。
       const runCompat = async () => {
         setBusy("compat");
@@ -2180,9 +1897,6 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               h("label", { className: "qbw-row", style: { alignItems: "center", gap: "6px", marginRight: "10px" } },
                 h("input", { type: "checkbox", checked: launchSel.bili, onChange: (e) => setLaunchSel((v) => ({ ...v, bili: e.target.checked })) }),
                 h("span", null, `B站${launch.bili?.running ? " · 运行中" : " · 未运行"}`)),
-              h("label", { className: "qbw-row", style: { alignItems: "center", gap: "6px", marginRight: "10px" } },
-                h("input", { type: "checkbox", checked: launchSel.pet, onChange: (e) => setLaunchSel((v) => ({ ...v, pet: e.target.checked })) }),
-                h("span", null, `桌宠${launch.pet?.running ? " · 运行中" : (launch.pet?.installed ? " · 未运行" : " · 未安装")}`)),
               h("label", { className: "qbw-row", style: { alignItems: "center", gap: "6px" } },
                 h("input", { type: "checkbox", checked: launchSel.voice, onChange: (e) => setLaunchSel((v) => ({ ...v, voice: e.target.checked })) }),
                 h("span", null, `语音${launch.voice?.running ? " · 运行中" : " · 未运行"}`))),
@@ -2199,7 +1913,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               h(Btn, { kind: "qbw-btn2", onClick: () => runLaunch("stop"), disabled: !!busy }, busy === "launch-stop" ? "停止中…" : "一键停止（全部）"),
               h(Btn, { kind: "qbw-btn3", onClick: () => goTab?.("qq"), disabled: !!busy }, "去 QQ 页改启动开关"),
               h(Btn, { kind: "qbw-btn3", onClick: () => goTab?.("bili"), disabled: !!busy }, "去 B站 页改启动开关")),
-            [["qq", "QQ"], ["bili", "B站"], ["pet", "桌宠"], ["voice", "语音"]].map(([id, label]) =>
+            [["qq", "QQ"], ["bili", "B站"], ["voice", "语音"]].map(([id, label]) =>
               launch[id]?.lastError ? h("div", { className: "qbw-hint", key: `launch-err-${id}`, style: { color: "var(--qbw-err-text)", marginTop: "2px" } },
                 `${label}：${launch[id].lastError}`) : null),
             launchErr ? h("div", { className: "qbw-err", style: { marginTop: "6px" } },
@@ -2216,170 +1930,12 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                 checked: unified?.bridge?.startupNotify !== false,
                 onChange: (e) => setUnified(["bridge", "startupNotify"], e.target.checked),
               })),
-            h("div", { className: "qbw-hint" }, "一键启动会按勾选项启动，已在跑的不重复启动；QQ 会按需打开已安装的 SnowLuma（仍需扫码）。一键停止只停 SurfCore 托管的 QQ 桥接、B站生物钟、桌宠和语音包，不会关闭 SnowLuma 本体。人格卡在「角色」页维护。")),
+            h("div", { className: "qbw-hint" }, "一键启动会按勾选项启动，已在跑的不重复启动；QQ 会按需打开已安装的 SnowLuma（仍需扫码）。一键停止只停 SurfCore 托管的 QQ 桥接、B站生物钟和语音包，不会关闭 SnowLuma 本体，也不会启动/停止桌面桌宠（它自己连过来）。人格卡在「角色」页维护。")),
           h("div", { className: "qbw-card" },
-            h("h4", null, "更新 ", (() => {
-              const rows = updates.results ?? [];
-              const bad = rows.filter((x) => !x.available);
-              const stale = rows.filter((x) => x.versionStale);
-              if (updates.pendingCount > 0) return h(StatusDot, { ok: false, warn: true }, `${updates.pendingCount} 个可更新`);
-              if (bad.length) return h(StatusDot, { ok: false, warn: true }, `部分查不到（${bad[0].name}：${bad[0].reason || "网络/限流"}）`);
-              if (stale.length) return h(StatusDot, { ok: false, warn: true }, "用的是缓存结果（上次拉取失败）");
-              return h(StatusDot, { ok: true }, "已是最新");
-            })()),
-            h("div", { className: "qbw-kv" }, h("span", null, "上次检查"), h("span", null, updates.lastCheckAt ? fmtTime(updates.lastCheckAt) : "还没查过")),
-            (() => {
-              // 上次更新的结果必须能看见（成功/失败/待重启/未验证），不能只靠 toast 一闪而过
-              const la = updates.lastApply;
-              if (!la) return null;
-              const color = la.status === "failed" ? "var(--qbw-err-text)" : (la.status === "applied_unverified" ? "var(--qbw-warn-text)" : undefined);
-              const text = la.status === "failed"
-                ? `失败：${la.reason || "原因不明"}${la.hint ? `（${la.hint}）` : ""}`
-                : la.status === "pending_restart"
-                  ? "已排队，等待退出 DSH 后应用（尚未更新）"
-                  : la.status === "applied_unverified"
-                    ? `${la.reason || "已应用，尚未验证"}${la.hint ? `（${la.hint}）` : ""}`
-                    : `${la.reason || "结果未知"}${la.hint ? `（${la.hint}）` : ""}`;
-              return h("div", { className: "qbw-kv" }, h("span", null, "上次更新"), h("span", { style: { color } },
-                text,
-                la.status === "failed"
-                  ? h(Btn, {
-                    kind: "qbw-btn2", disabled: !!busy,
-                    onClick: async () => {
-                      setBusy("rollback");
-                      try {
-                        const r = await api("/updates", { method: "POST", body: { action: "rollback", id: la.component || "surfcore" } });
-                        if (r.ok) toast(`✓ ${r.message ?? "已回滚"}（请重启 DSH）`);
-                        else toast(`✗ 回滚失败：${r.reason ?? r.error ?? "原因不明"}${r.hint ? `；${r.hint}` : ""}`);
-                        await reload();
-                      } catch (e) { toast(`✗ 回滚失败：${e.message}`); } finally { setBusy(""); }
-                    },
-                  }, busy === "rollback" ? "回滚中…" : "回滚到更新前")
-                  : null));
-            })(),
-            h("div", { className: "qbw-kv" }, h("span", null, "组件"), h("span", null,
-              (updates.results ?? []).length
-                ? updates.results.map((item) => {
-                  // 三种结果必须说清（AGENTS 1.7）：有更新 / 已是最新 / 查不到（附原因）。
-                  // 不允许把"查不到/失败"显示成"最新"（2026-10-29 事故）。
-                  const ver = item.latestVersion
-                    ? (item.ahead
-                      ? ` 本地 v${item.installedVersion} 领先发布 v${item.latestVersion}`
-                      : ` v${item.installedVersion ?? "?"}→v${item.latestVersion}`)
-                      + (item.versionStale ? "（缓存）" : "")
-                    : "";
-                  const st = item.status ?? "";
-                  if (st === "update") return `${item.name}（有更新${ver}）`;
-                  if (st === "latest") return `${item.name}（已是最新${ver}）`;
-                  if (st === "blocked") return `${item.name}（更新被阻止：${item.blocked || item.reason || "原因不明"}）`;
-                  if (st === "failed") return `${item.name}（检查失败：${item.reason || "原因不明"}）`;
-                  if (st === "unknown") return `${item.name}（查不到：${item.reason || "原因不明"}）`;
-                  if (item.available) return `${item.name}${item.updateAvailable ? `（有更新${ver}）` : `（已是最新${ver}）`}`;
-                  return `${item.name}（查不到：${item.reason || "原因不明"}）`;
-                }).join(" · ")
-                : "还没检查")),
-            (() => {
-              // 查不到/失败：原因 + 建议，常驻显示（不能只留一句"不可查"）
-              const bad = (updates.results ?? []).filter((x) => x.status === "unknown" || x.status === "failed" || x.status === "blocked");
-              if (!bad.length) return null;
-              return h("div", { className: "qbw-hint", style: { color: "var(--qbw-err-text)", marginTop: "4px" } },
-                bad.map((x) => `${x.name}：${x.reason || "原因不明"}${x.hint ? `（${x.hint}）` : ""}`).join("；"));
-            })(),
-            (updates.results ?? []).filter((item) => item.available && item.blocked && item.updateAvailable).length
-              ? h("div", { className: "qbw-hint", style: { color: "var(--qbw-err-text)" } },
-                "有组件因本地改动/未推送提交被拒，详情点「查看详情」。")
-              : null,
-            (updates.pending ?? []).length
-              ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
-                "下载完成 ≠ 已更新：需要完全退出 DSH 再打开才会应用（只刷新页面不会生效）。")
-              : null,
+            h("h4", null, "插件体检"),
+            h("p", { className: "qbw-hint" }, "只读扫描当前 DSH profile 的插件/工具冲突；不会自动改配置。"),
             h("div", { className: "qbw-actions" },
-              h(Btn, { onClick: () => checkUpdates(), disabled: !!busy }, busy === "updates" ? "检查中…" : "检查更新"),
-              h(Btn, { kind: "qbw-btn2", onClick: runCompat, disabled: !!busy }, busy === "compat" ? "体检中…" : "插件体检"),
-              (updates.results ?? []).some((x) => x.status === "unknown" || x.status === "failed")
-                ? h(Btn, {
-                  kind: "qbw-btn2",
-                  onClick: async () => {
-                    const payload = {
-                      at: new Date().toISOString(),
-                      version: updates.results?.find((x) => x.id === "surfcore")?.installedVersion ?? "",
-                      results: (updates.results ?? []).map((x) => ({
-                        id: x.id, status: x.status, code: x.code, reason: x.reason, hint: x.hint,
-                        installedVersion: x.installedVersion, latestVersion: x.latestVersion, channel: x.channel,
-                      })),
-                    };
-                    try {
-                      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-                      toast("✓ 诊断信息已复制，可直接贴给开发者");
-                    } catch (e) {
-                      toast(`✗ 复制失败（${e.message}）：请截图更新卡片`);
-                    }
-                  },
-                }, "复制诊断")
-                : null,
-              (updates.results ?? []).some((x) => x.updateAvailable && x.downloadUrl)
-                ? h(Btn, { kind: "qbw-btn2", onClick: () => window.open((updates.results ?? []).find((x) => x.updateAvailable && x.downloadUrl).downloadUrl, "_blank", "noopener") }, "去下载新版")
-                : null,
-              (updates.pending ?? []).length
-                ? h(Btn, {
-                  onClick: async () => {
-                    setBusy("apply-update");
-                    try {
-                      const ids = (updates.pending ?? []).map((x) => x.id);
-                      const r = await api("/updates", { method: "POST", body: { action: "apply", ids } });
-                      const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
-                      const failed = (r.results ?? []).filter((x) => !x.ok);
-                      if (r.ok && staged.length) {
-                        toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
-                        setRestartHint({ staged: true, count: staged.length });
-                      }
-                      else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
-                      else {
-                        const f = failed[0] ?? {};
-                        toast(`✗ 更新失败${f.code ? `（${f.code}）` : ""}：${f.reason ?? f.error ?? "原因不明"}${f.hint ? `；建议：${f.hint}` : ""}`);
-                      }
-                      await reload();
-                    } catch (e) { toast(`✗ 更新失败：${e.message}`); } finally { setBusy(""); }
-                  },
-                }, busy === "apply-update" ? "更新中…" : `立即更新（${(updates.pending ?? []).length}）`)
-                  : (updates.lastApply?.deterministic
-                    ? h(Btn, { onClick: () => window.open("https://github.com/Mieksido/surfcore/releases/latest", "_blank", "noopener") },
-                      "此版本无法自动更新：手动下载")
-                    : null),
-              h(Btn, { kind: "qbw-btn2", onClick: () => setUpdateOpen(true), disabled: !(updates.results ?? []).length }, "查看详情"))),
-          h("div", { style: { display: "flex", gap: "14px", alignItems: "center", marginTop: "8px", flexWrap: "wrap" } },
-            h("span", { className: "qbw-label", style: { margin: 0 } }, "更新通道"),
-            ...[["stable", "main（正式版，默认）"], ["dev", "dev（测试版，只给测试机）"]].map(([value, label]) =>
-              h("label", { key: value, style: { display: "inline-flex", gap: "5px", alignItems: "center", cursor: busy ? "default" : "pointer", fontSize: "12.5px" } },
-                h("input", {
-                  type: "radio", name: "update-channel", value,
-                  checked: (updates.channel ?? "stable") === value,
-                  disabled: !!busy,
-                  onChange: () => switchUpdateChannel(value),
-                }), label)),
-            h("span", { className: "qbw-hint" }, (updates.channel ?? "stable") === "dev"
-              ? "只安装 vX.Y.Z-dev.N 的 Pre-release；正式用户不要选。"
-              : "只安装正式 Release；Pre-release 不会打扰你。")),
-          h("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(127,127,127,.18)" } },
-            h("div", { className: "qbw-hint" },
-              updates.githubTokenConfigured
-                ? "GitHub 令牌：已配置（检查更新走账号额度 5000 次/小时）"
-                : "GitHub 令牌：未配置（匿名 60 次/小时，共享 IP 时可能遇到“查不到：限流”）"),
-            h("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
-              h("input", {
-                type: "password",
-                value: tokenDraft,
-                placeholder: updates.githubTokenConfigured ? "已配置；要更换请粘贴新令牌" : "粘贴只读 token（可留空）",
-                onChange: (e) => setTokenDraft(e.target.value),
-                style: { width: "280px" },
-              }),
-              h(Btn, { kind: "qbw-btn2", disabled: !!busy || !tokenDraft.trim(), onClick: () => saveGithubToken(false) },
-                busy === "token" ? "保存中…" : "保存令牌"),
-              updates.githubTokenConfigured
-                ? h(Btn, { kind: "qbw-btn2", disabled: !!busy, onClick: () => saveGithubToken(true) }, "清除")
-                : null),
-            h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-              "只需要“读公开仓库”的权限；令牌只存在本机 config.json，不会上传，也不会出现在诊断信息里。")),
+              h(Btn, { onClick: runCompat, disabled: !!busy }, busy === "compat" ? "体检中…" : "插件体检"))),
           (gateData?.events ?? []).length
             ? h("div", { className: "qbw-card" },
               h("h4", null, "安全提醒 ", h("span", { className: "qbw-badge " + ((gateData?.counts?.L3 ?? 0) > 0 ? "bad" : "warn") },
@@ -2446,31 +2002,6 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
             { label: "打开官方下载页", kind: "qbw-btn2", onClick: () => window.open(snow.downloadUrl || "https://github.com/SnowLuma/SnowLuma/releases/latest", "_blank", "noopener") },
           ],
           onClose: () => setSnowError(null),
-        }) : null,
-        restartHint ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setRestartHint(null); } },
-          h("div", { className: "qbw-modal" },
-            h("h3", null, restartHint.staged ? "更新已下载：重启 DSH 后生效" : "有可用更新：安装后需要重启 DSH"),
-            h("p", null, restartHint.staged
-              ? "文件已经下载并排队，退出 DSH 后会自动替换（尚未更新）。只刷新页面不会应用。"
-              : "这里只是发现了新版本；点「立即更新」下载后，需要完全退出 DSH 再打开，新版本才会生效。"),
-            h("ol", { style: { margin: "6px 0 8px", paddingLeft: "20px", fontSize: "12px", lineHeight: "20px" } },
-              h("li", null, "完全退出 DSH（包括托盘图标 / 任务栏里的窗口，不能只关设置页）"),
-              h("li", null, "重新打开 DSH"),
-              h("li", null, "回到这里点「检查更新」确认版本已变")),
-            h("p", { className: "qbw-hint" },
-              "为什么必须重启：更新助手要等 DSH 退出后才替换文件；插件本身跑在 DSH 进程里，没法热更新自己。"),
-            h("div", { className: "qbw-actions" },
-              restartHint.staged
-                ? h(Btn, { onClick: () => setRestartHint(null) }, "我知道了")
-                : h(Btn, { onClick: () => { setRestartHint(null); setUpdateOpen(true); } }, "去更新"),
-              h(Btn, { kind: "qbw-btn2", onClick: () => setRestartHint(null) }, "稍后")))
-          ) : null,
-        updateOpen ? h(UpdatesModal, {
-          status: updates,
-          toast,
-          onClose: () => setUpdateOpen(false),
-          onDone: async () => { setUpdateOpen(false); await reload(); },
-          onStaged: (count) => setRestartHint({ staged: true, count }),
         }) : null,
         (compat || compatError) ? h(CompatModal, {
           report: compat,
@@ -2670,7 +2201,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h(Btn, { kind: "qbw-btn2", onClick: load, disabled: !!busy }, "刷新状态")),
         error ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, error) : null,
         status?.availability ? h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-          `载体现状：${status.availability.pet?.installed ? (status.availability.pet.running ? (status.availability.pet.online ? "桌宠在线" : "桌宠已启动 · 还没连上") : "桌宠已安装 · 未运行") : "桌宠未安装"}；` +
+          `载体现状：${status.availability.pet?.online ? "桌宠在线" : "桌宠离线（在 desktop-pet 仓库启动桌面端后自动连上）"}；` +
           `QQ ${status.availability.qq?.running ? "桥接在跑" : "桥接没在跑"}${status.availability.qq?.mode ? `（模式 ${status.availability.qq.mode}）` : ""}。`) : null,
         status?.focus ? h("div", { className: "qbw-hint", style: { marginTop: "4px", color: "var(--qbw-warn-text)" } },
           "专注模式开着：自动主动搭话已暂停（QQ / 桌宠都不发）；手动「立即试一次」仍可用。去「桌宠」页或右键菜单关闭。") : null,
@@ -2748,7 +2279,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
 
     // ── 目的机制 · 载体选择（桌宠 / QQ）──────────────────────────────────
     // 2026-10-25 用户要求：目的机制独立成一个栏目；载体可选桌宠或 QQ，
-    // 未安装桌宠的用户默认 QQ。同一时刻只有一个载体在发，避免两边同时收到。
+    // 载体可选桌宠或 QQ；桌面桌宠没连上时默认 QQ。同一时刻只有一个载体在发，避免两边同时收到。
     function PurposeCarrierCard({ cfg, set, busy, toast }) {
       const P = cfg?.purpose && typeof cfg.purpose === "object" ? cfg.purpose : {};
       const carrier = P.carrier === "pet" ? "pet" : "qq";
@@ -2790,10 +2321,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         boxShadow: active ? "0 0 0 2px var(--qbw-hover)" : "none",
       });
       const petText = !status ? "读取中…"
-        : !pet.installed ? "未安装桌宠：先去「桌宠」页安装，再回来选"
-        : !pet.running ? "已安装 · 未运行（去「桌宠」页启动）"
         : pet.online ? `在线${pet.roleName ? ` · 角色「${pet.roleName}」` : ""}`
-        : "已启动 · 还没连上（等几秒，或看「桌宠」页状态）";
+        : "离线：在 desktop-pet 仓库启动桌面端后会自动连上";
       const qqText = qq.running
         ? `桥接运行中${qq.mode ? ` · 模式 ${qq.mode}` : ""}`
         : "桥接没在运行：选了也要先在「QQ」页启动";
@@ -2806,7 +2335,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h("div", { style: cardStyle(carrier === "qq"), onClick: () => choose("qq"), role: "button" },
             h("div", { style: { fontWeight: 600, fontSize: "13px" } }, "QQ 私聊（默认）"),
             h("div", { className: "qbw-hint" }, qqText),
-            h("div", { className: "qbw-hint" }, "没安装桌宠的用户保持这一项即可。")),
+            h("div", { className: "qbw-hint" }, "桌宠没连上时保持这一项即可。")),
           h("div", { style: cardStyle(carrier === "pet"), onClick: () => choose("pet"), role: "button" },
             h("div", { style: { fontWeight: 600, fontSize: "13px" } }, "桌宠气泡 / 语音"),
             h("div", { className: "qbw-hint" }, petText),
@@ -5249,7 +4778,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h("div", { style: { fontSize: "12px", opacity: 0.85, marginTop: "2px" } },
             "网盘里是完整的离线包。下载解压后，点对应卡片的「导入离线包…」，选择解压出来的 voice-local 或 voice-cloud 文件夹；导入会校验文件、保留旧包备份，失败会告诉你缺什么。"),
           h("div", { style: { fontSize: "12px", opacity: 0.8, marginTop: "2px" } },
-            "语音包不参与 SurfCore 的「检查更新」：它是离线运行时/模型/vendor 包，不是代码 zip。需要新版本时用「重新导入离线包…」，导入会保留 config.toml、.venv、models、vendor。"),
+            "语音包是离线运行时/模型/vendor 包，需要新版本时用「重新导入离线包…」，导入会保留 config.toml、.venv、models、vendor。"),
           h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap", alignItems: "center" } },
             h(Btn, { onClick: openNetdisk }, "打开网盘下载（提取码 sxUZ）"),
             h(Btn, { kind: "qbw-btn2", onClick: copyNetdisk }, "复制链接"),
@@ -6341,12 +5870,11 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h(Btn, { onClick: onSave, disabled: !!busy }, busy === "save" ? "保存中…" : "保存额度")));
     }
 
-    // ── 桌宠页：独立栏目，默认不安装，用户自己装 ───────────────────────────
+    // ── 桌宠页：桌面端是仓库根目录的 PySide6 程序，自己连 pet-api ─────────
     function PetTab({ toast, unified, setUnified }) {
       const [st, setSt] = useState(null);
       const [busy, setBusy] = useState("");
       const [err, setErr] = useState("");
-      const [form, setForm] = useState({ source: "", electronPath: "", appDir: "", mirror: "" });
       const chatCfg = unified?.pet?.chat && typeof unified.pet.chat === "object" ? unified.pet.chat : {};
       const setChat = (key, value) => setUnified?.(["pet", "chat", key], value);
 
@@ -6354,27 +5882,10 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         try {
           const r = await api("/pet/status");
           setSt(r);
-          setForm((f) => ({
-            source: (r.source && r.source.trim()) ? r.source : (r.installed ? f.source : (r.defaults?.zipUrl || f.source)),
-            electronPath: (r.electronPath && r.electronPath.trim()) ? r.electronPath : (r.electronDetected || f.electronPath),
-            appDir: r.appDir ?? f.appDir,
-            mirror: r.mirror ?? f.mirror ?? "",
-          }));
           setErr("");
         } catch (e) { setErr(e.message); }
       }, []);
       useEffect(() => { read(); }, [read]);
-
-      const act = async (action, body, busyKey) => {
-        setBusy(busyKey || action); setErr("");
-        try {
-          const r = await api("/pet/" + action, { method: "POST", body: body ?? {} });
-          if (r.ok === false) { setErr(r.error || "操作失败"); return; }
-          if (toast) toast(action === "install" ? "✓ 桌宠安装完成" : action === "start" ? "✓ 桌宠已启动" : action === "stop" ? "✓ 桌宠已停止" : action === "remove" ? "✓ 桌宠已卸载" : "✓ 已保存");
-          await read();
-        } catch (e) { setErr(e.message); }
-        finally { setBusy(""); }
-      };
 
       // 专注模式：写 pet/focus.json（桌宠菜单也改同一份），并推事件让桌面立刻收住。
       const actFocus = async (enabled) => {
@@ -6388,110 +5899,27 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         finally { setBusy(""); }
       };
 
-      const fmt = (n) => {
-        const v = Number(n) || 0;
-        return v > 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(v / 1024)) + " KB";
-      };
       const kv = (k, v) => h("div", { className: "qbw-kv", key: k }, h("span", null, k), h("span", null, v));
+      const online = st?.client?.online === true;
+      const lastSeen = st?.client?.lastSeenAt ? fmtTime(st.client.lastSeenAt) : "还没连过";
 
       return h("div", null,
         h("div", { className: "qbw-infobox" },
-          "桌宠是独立组件：不随 SurfCore 安装，也不影响 QQ / B站 / 记忆 / 语音。",
-          "填安装包地址 → 安装 → 填 Electron 路径 → 启动。卸载只删 ~/.dsh/surfcore/pet/app，不碰你的皮肤工程。"),
+          "桌面桌宠是本仓库根目录的独立 PySide6 程序（python -m pet），不随 SurfCore 安装，也没有安装按钮。",
+          "它自己读取 ~/.dsh/surfcore/pet/host.json 里的地址与令牌，连接本插件的 pet-api 并长轮询 /events；这里只显示连接状态和对话设置。"),
         h("div", { className: "qbw-card" },
-          h("h4", null, "运行状态"),
-          kv("状态", st ? (st.running ? "● 运行中" : st.installed ? "○ 已安装 · 未运行" : "未安装") : "读取中…"),
-          st && st.installed ? kv("版本", st.version || "—") : null,
-          st && st.installed ? kv("占用", fmt(st.sizeBytes)) : null,
-          st && st.installed ? kv("目录", h("code", { className: "qbw-code" }, st.dir)) : null,
-          st && st.installing ? h(ProgressBar, { pct: st.installing.progress, phase: st.installing.phase, err: st.installing.error, indeterminate: /依赖|模型/.test(String(st.installing.phase || '')) && Number(st.installing.progress || 0) >= 99 }) : null,
+          h("h4", null, "桌面客户端",
+            h("span", { className: "qbw-badge " + (online ? "ok" : "warn") }, st ? (online ? "桌宠在线" : "桌宠离线") : "读取中…")),
+          kv("连接状态", st ? (online ? "● 在线（正在连 pet-api）" : "○ 离线") : "读取中…"),
+          kv("最近连接", st ? lastSeen : "读取中…"),
+          h("div", { className: "qbw-hint" },
+            "启动桌面桌宠后几秒内会出现在这里。一直离线时：确认桌宠能读到 ~/.dsh/surfcore/pet/host.json，且 DSH / SurfCore 正在运行；" +
+            "桌宠的安装、启动与更新都在 desktop-pet 仓库里，不在这里做。"),
           h("div", { className: "qbw-actions" },
-            !st || !st.installed ? h(Btn, { disabled: busy === "install" || !form.source.trim(), onClick: async () => {
-              const r0 = await api("/pet/install", {
-                method: "POST",
-                body: {
-                  source: form.source.trim(),
-                  appDir: form.appDir.trim(),
-                  electronPath: form.electronPath.trim(),
-                },
-              }).catch((e) => ({ ok: false, error: e.message }));
-              if (r0 && r0.ok === false) { setErr(r0.error); return; }
-              setBusy("install");
-              for (let i = 0; i < 600; i += 1) {
-                await new Promise((r) => setTimeout(r, 1200));
-                const cur = await api("/pet/status").catch(() => null);
-                if (!cur) continue;
-                setSt(cur);
-                const job = cur.installing;
-                if (!job) break;
-                if (job.phase === "失败") { setErr(job.error || "安装失败"); break; }
-                if (job.phase === "完成") break;
-              }
-              setBusy("");
-              if (toast) toast("✓ 安装流程结束");
-              await read();
-            } }, busy === "install" ? "安装中…" : "安装") : null,
-            !st || !st.installed ? h("span", { style: { fontSize: "12px", opacity: 0.7 } }, form.source.trim() ? "" : "← 先在下方「安装设置」填安装包地址，按钮才可点") : null,
-            err ? h("div", { className: "qbw-err", style: { width: "100%", marginTop: "6px" } }, err) : null,
-            err ? h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
-              h(Btn, { kind: "qbw-btn2", onClick: () => setForm((f) => ({ ...f, source: st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip" })) }, "用官方最新版"),
-              h(Btn, { kind: "qbw-btn2", onClick: async () => {
-                setBusy("clean"); setErr("");
-                try {
-                  const r = await api("/pet/clean", { method: "POST", body: {} });
-                  if (r.ok === false) { setErr(r.error || "清理失败"); return; }
-                  if (toast) toast("✓ 已清理安装目录，可以重新安装");
-                  await read();
-                } catch (e) { setErr(e.message); } finally { setBusy(""); }
-              } }, busy === "clean" ? "清理中…" : "清理残留后重试")) : null,
-            st && st.installed && !st.running ? h(Btn, {
-              onClick: () => act("start", { electronPath: form.electronPath.trim() }),
-              disabled: !!busy,
-            }, "启动") : null,
-            st && st.installed && st.running ? h(Btn, { kind: "qbw-btn2", onClick: () => act("stop"), disabled: !!busy }, "停止") : null,
-            st && st.installed ? h(Btn, { kind: "qbw-btn2", onClick: () => act("remove"), disabled: !!busy }, "卸载") : null)),
-        h("div", { className: "qbw-card", style: { marginTop: "10px" } },
-          h("h4", null, "安装设置"),
-          h("div", { className: "qbw-hint", style: { margin: "4px 0 8px" } }, "安装包：zip 的本地路径或 http(s) 链接；Electron：本机 electron.exe 的完整路径（安装包不带运行时）。"),
-          h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "安装包地址"),
-            h("input", { className: "qbw-input", value: form.source, placeholder: "D:/tools/pet-pack.zip 或 https://…", onChange: (e) => setForm((f) => ({ ...f, source: e.target.value })) }),
-            h(Browse, { mode: "file", title: "选择安装包 zip", onPick: (v) => setForm((f) => ({ ...f, source: v })) })),
-          h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "Electron 路径"),
-            h("input", { className: "qbw-input", value: form.electronPath, placeholder: "D:/tools/electron/electron.exe", onChange: (e) => setForm((f) => ({ ...f, electronPath: e.target.value })) }),
-            h(Browse, { mode: "file", title: "选择 electron.exe", onPick: (v) => setForm((f) => ({ ...f, electronPath: v })) })),
-          h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "安装目录（可选）"),
-            h("input", { className: "qbw-input", value: form.appDir, placeholder: "留空 = ~/.dsh/surfcore/pet/app", onChange: (e) => setForm((f) => ({ ...f, appDir: e.target.value })) }),
-            h(Browse, { mode: "dir", title: "选择桌宠安装目录", onPick: (v) => setForm((f) => ({ ...f, appDir: v })) })),
-          h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, "沙箱 / 只读用户目录的环境里，把安装目录指到可写位置（例如工作区内）。"),
-          h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-            "Windows 请填**带盘符**的完整路径（例如 D:\dshwork\pet）；只写 /dshwork/pet 会被装到当前盘。"),
-          h("div", { className: "qbw-hint", style: { marginTop: "6px" } },
-            `官方最新包：${st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip"}`),
-          h("div", { className: "qbw-actions" },
-            h(Btn, { kind: "qbw-btn2", onClick: () => setForm((f) => ({ ...f, source: st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip" })) }, "用官方最新版"),
-            h(Btn, { kind: "qbw-btn2", disabled: busy === "electron-detect", onClick: () => act("electron-detect") }, busy === "electron-detect" ? "检测中…" : "检测 Electron"),
-            h(Btn, { kind: "qbw-btn2", disabled: busy === "electron-install", onClick: () => act("electron-install", { source: "auto" }) },
-              busy === "electron-install" ? "下载中…（约 125MB，2~5 分钟）" : `下载 Electron ${st?.defaults?.electronVersion || "45.0.0"}`),
-            h(Btn, { kind: "qbw-btn2", disabled: busy === "electron-install-gh", onClick: () => act("electron-install", { source: "github" }, "electron-install-gh") },
-              busy === "electron-install-gh" ? "从 GitHub 下载中…" : "GitHub 官方源"),
-            h(Btn, { kind: "qbw-btn2", disabled: busy === "config", onClick: () => act("config", form) }, busy === "config" ? "保存中…" : "保存设置")),
-          h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "下载链路"),
-            h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
-              ...[
-                { id: "", label: "官方（GitHub）" },
-                { id: "https://gh-proxy.com", label: "镜像 · gh-proxy" },
-                { id: "https://ghproxy.net", label: "镜像 · ghproxy" },
-              ].map((opt) => h(Btn, {
-                key: opt.id || "official",
-                kind: (form.mirror || "") === opt.id ? "qbw-btn" : "qbw-btn2",
-                onClick: () => act("config", { ...form, mirror: opt.id }),
-              }, ((form.mirror || "") === opt.id ? "● " : "") + opt.label)))),
-          h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-            st?.electronDetected ? `已检测到 Electron：${st.electronDetected}` : "没检测到 Electron：点「下载 Electron」自动装到 ~/.dsh/surfcore/pet/runtime（约 125MB）")),
-        // ── 桌宠对话：人设 / 记忆 / 模型都来自当前角色，这里只管长短与开关 ──
+            h(Btn, { kind: "qbw-btn2", onClick: read, disabled: !!busy }, "刷新状态"))),
         h("div", { className: "qbw-card", style: { marginTop: "10px" } },
           h("h4", null, "对话",
-            h("span", { className: "qbw-badge " + (st?.proactive?.online ? "ok" : "warn") }, st?.proactive?.online ? "桌宠在线" : "桌宠离线"),
+            h("span", { className: "qbw-badge " + (online ? "ok" : "warn") }, online ? "桌宠在线" : "桌宠离线"),
             st?.proactive?.carrier === "pet" ? h("span", { className: "qbw-badge" }, "主动搭话载体") : null),
           h("p", null, "在桌宠上右键「文本对话 / 语音对话」打开对话框；回复会用对应形式（文本或语音），气泡里始终显示文字。人设卡、记忆卡、目的状态跟 QQ / B站 共用当前角色。"),
           h("div", { className: "qbw-hint" },
@@ -6521,10 +5949,6 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h("div", { className: "qbw-hint" }, "改完点底部「保存」即生效（不用重启桌宠）；用量计入 token 额度「其他」。"),
           st?.proactive?.carrier !== "pet" ? h("div", { className: "qbw-hint" },
             "「主动搭话」目前由 QQ 载体发出：在「目的」页可以把载体切成桌宠。") : null),
-        st && st.skins && st.skins.length ? h("div", { className: "qbw-card", style: { marginTop: "10px" } },
-          h("h4", null, "内置形象"),
-          h("div", { className: "qbw-chips" }, st.skins.map((x) => h("span", { className: "qbw-chip", key: x.id }, x.name))),
-          h("div", { className: "qbw-hint", style: { marginTop: "6px" } }, "在桌宠上右键「穿什么呢」切换。")) : null,
         err ? h("div", { className: "qbw-err", style: { marginTop: "8px" } }, err) : null);
     }
 
