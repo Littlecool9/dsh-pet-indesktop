@@ -23,6 +23,7 @@ from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QGuiApplication
 
 from . import catalog
+from .clock import time as _clock  # 可补丁时钟 seam：pet.clock.time.monotonic
 
 from . import slot_manager as slot_manager_mod
 
@@ -329,11 +330,10 @@ def remove_runtime_marker(host: Any) -> None:
 
 def arm_screen_restore_retry(host) -> None:
     """目标副屏暂未就绪：启动 5s 轮询 + screenAdded 监听，等它上线。"""
-    from .window import time as _window_time  # 兼容 seam：与 HEAD 同读 pet.window.time
     app = QGuiApplication.instance()
     if app is None:
         return
-    host._screen_retry_deadline = _window_time.monotonic() + 120.0
+    host._screen_retry_deadline = _clock.monotonic() + 120.0
     if not host._screen_restore_armed:
         app.screenAdded.connect(host._screen_retry_tick)
         host._screen_restore_armed = True
@@ -358,12 +358,11 @@ def disarm_screen_restore_retry(host) -> None:
 
 def screen_retry_tick(host, *_args) -> None:
     """轮询/screenAdded 共用入口：目标屏一旦进入枚举立即恢复位置。"""
-    from .window import time as _window_time  # 兼容 seam：与 HEAD 同读 pet.window.time
     target = host._awaiting_saved_screen
     if not target:
         host._disarm_screen_restore_retry()
         return
-    if _window_time.monotonic() > host._screen_retry_deadline:
+    if _clock.monotonic() > host._screen_retry_deadline:
         # 超时也不能把窗口留在不可见的幻影屏上（启动时 Qt 可能枚举到
         # 空名字/假几何的占位屏，show() 到上面真实桌面不可见）：强制
         # 落到当前主屏并确保可见。宁可位置不理想，不可窗口消失。

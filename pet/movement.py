@@ -16,6 +16,8 @@ from __future__ import annotations
 # 静默失效——测试仍绿但确定性丢失。
 import random
 
+from .clock import time as _clock  # 可补丁时钟 seam：pet.clock.time.monotonic
+
 __all__ = ["body_reach", "choose_move_direction", "curve_progress_at_time",
            "inward_facing", "move_anim_tick", "move_position_at_frame",
            "quantize_move", "wander_target_y"]
@@ -213,8 +215,6 @@ def move_anim_tick(host) -> None:
     _on_frame 帧驱动完成，帧到达时重锚定 anchor_frames/anchor_time，
     帧号始终是位置权威。
     """
-    from .window import time as _window_time  # 测试 seam：与 window 同读可补丁时钟
-
     plan = host._move_plan
     if (plan is None or 'total_frames' not in plan
             or host._physics_mode is not None
@@ -226,7 +226,7 @@ def move_anim_tick(host) -> None:
         return
     anchor_f = float(plan.get('anchor_frames', 0.0))
     anchor_t = float(plan.get('anchor_time', 0.0))
-    fe = anchor_f + (_window_time.monotonic() - anchor_t) * total / duration
+    fe = anchor_f + (_clock.monotonic() - anchor_t) * total / duration
     fe = min(fe, anchor_f + 1.0, total - 1.0)
     if fe <= anchor_f + 1e-9:
         return

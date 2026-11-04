@@ -16,6 +16,8 @@ import random
 from collections import deque
 
 from . import quiet_mode
+from .clock import time as _clock  # 可补丁时钟 seam：pet.clock.time.monotonic
+from .config import DEFAULT_SELF_TALK_TEXTS
 from . import window_placement
 
 _log = logging.getLogger("dsh-pet-standalone")
@@ -547,7 +549,6 @@ def on_speech_bubble_hidden(host) -> None:
 
     sticky 恢复防抖：同一 sticky 内容在 300ms 内不重复 show_text，
     避免「审批被盖→恢复→再盖→再恢复」的卡顿循环。"""
-    from .window import time as _window_time  # 兼容 seam：与 HEAD 同读 pet.window.time
     if not host.isVisible() or bubble_blocked(host):
         # 飞行期同样在这里截断：气泡是壳在起飞边沿主动收的，不能让它顺着
         # hidden 链路推进队列（否则飞行中会接着弹下一条）。_alert_current 原样
@@ -557,7 +558,7 @@ def on_speech_bubble_hidden(host) -> None:
     if cur is not None:
         if cur.get("sticky"):
             # 防抖：同一 sticky 内容在 300ms 内不重复恢复
-            now = _window_time.monotonic()
+            now = _clock.monotonic()
             if abs(now - getattr(host, "_last_sticky_restore", 0.0)) < 0.3:
                 return
             host._last_sticky_restore = now
@@ -583,7 +584,6 @@ def on_speech_bubble_hidden(host) -> None:
 
 
 def read_self_talk_texts(value) -> list[str]:
-    from .window import DEFAULT_SELF_TALK_TEXTS
     if not isinstance(value, list):
         return list(DEFAULT_SELF_TALK_TEXTS)
     texts = []
@@ -595,7 +595,6 @@ def read_self_talk_texts(value) -> list[str]:
 
 
 def expression_style_text(host, text: str) -> str:
-    from .window import DEFAULT_SELF_TALK_TEXTS
     """Apply the shared expression style only to built-in host-talk text."""
     if text not in DEFAULT_SELF_TALK_TEXTS:
         return text
@@ -727,8 +726,7 @@ def show_random_self_talk(host) -> bool:
 
 
 def on_self_talk_timeout(host) -> None:
-    from .window import time as _window_time  # 兼容 seam：与 HEAD 同读 pet.window.time
-    if _window_time.monotonic() < host._bubble_busy_until:
+    if _clock.monotonic() < host._bubble_busy_until:
         # 重要气泡占用中：本次自言自语跳过，重新排队下一次
         host._schedule_self_talk()
         return

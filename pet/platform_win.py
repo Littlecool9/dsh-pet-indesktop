@@ -20,7 +20,7 @@ from PySide6.QtGui import QCursor
 from . import vision as vision_mod
 
 if TYPE_CHECKING:
-    from .window import PetWindow
+    from .overlay_window import OverlayWindow
 
 
 # ---- Win32：全屏判定用常量/结构 ----
@@ -172,7 +172,7 @@ class WindowsPerPixelInputController:
     _applied_mouse_through: bool | None = None
     _refreshes_since_read: int = 0
 
-    def __init__(self, window: "PetWindow") -> None:
+    def __init__(self, window: "OverlayWindow") -> None:
         self._window = window
         self._timer = QTimer(window)
         self._timer.setInterval(self.NORMAL_POLL_INTERVAL_MS)

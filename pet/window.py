@@ -22,7 +22,6 @@ import math
 import random
 import sys
 import threading
-import time as _stdlib_time
 from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
@@ -30,7 +29,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 # 测试 seam：`pet.window.time.monotonic` 是可被 monkeypatch 的时钟命名空间；
 # 搬迁出去的 helper 模块经委托注入本命名空间的 monotonic（见 *_delegation）。
-time = SimpleNamespace(monotonic=_stdlib_time.monotonic)
+from .clock import time  # noqa: E402  同一个命名空间对象：补丁 pet.window.time 与 pet.clock.time 等价
 
 import shiboken6
 
