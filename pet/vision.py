@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 # 注意：不在此处顶层 import PIL —— Image/ImageGrab 只在截屏路径
-# （capture_window_rect / capture_screen_bytes）用到，而本模块随 pet.window
+# （capture_window_rect / capture_screen_bytes）用到，而本模块随 platform_win
 # 顶层导入常驻进程；PIL 顶层导入会让它在启动期常驻数 MB。用到的地方在
 # 函数内延迟导入（PIL 进入 sys.modules 后重复 import 代价可忽略）。
 #
