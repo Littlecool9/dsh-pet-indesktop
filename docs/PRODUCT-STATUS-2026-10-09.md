@@ -70,7 +70,7 @@ close 增量**的机器门（冻结窗口 2026-10-11 02:37–02:55），覆盖�
 | 域 | 现状 | 说明与证据 |
 |---|---|---|
 | 灵动岛（主信息段 + 系统段 + 折叠） | **已实现（源码）** | 时间/余额/峰谷定宽与 CPU/内存/网络同屏；S1–S4 收缩 + `+N` chip；告警两级 + 滞回；状态点五态。聚焦证据见 `.scratch/product-island-extensions-20261010/REPORT.md` 等 |
-| 游戏帧率（灵动岛 `fps` 段） | **已实现（源码）；真实读数未验** | 后端 = 随 Windows 包分发的官方 PresentMon（`resources/presentmon/`，构建期两道门校验名称/sha256/x86-64）；主值口径 = 目标应用的 **Present 帧率**（按 `(pid, swapchain)` 分窗，多链不相加，上屏帧率只进详情）；设置 3 行（指标开关 + 跟随前台 / 指定程序的 2 个进程级键），默认关。设置页真机布局四组合实测通过（`ALL LAYOUT CHECKS PASSED`）。**没有任何真实帧数据**，权限阻塞见 §三.12；证据见 [`PR-REPORT-GAME-FPS-2026-10-11.md`](PR-REPORT-GAME-FPS-2026-10-11.md) |
+| 游戏帧率（灵动岛 `fps` 段） | **已实现（源码）；真实读数未验** | 后端 = 随 Windows 包分发的官方 PresentMon（`resources/presentmon/`，构建期两道门校验名称/sha256/x86-64）；主值口径 = 目标应用的 **Present 帧率**（按 `(pid, swapchain)` 分窗，多链不相加，上屏帧率只进详情）；设置 3 行（指标开关 + 跟随前台 / 指定程序的 2 个进程级键），默认关。设置页真机布局四组合实测通过（`ALL LAYOUT CHECKS PASSED`）。**没有任何真实帧数据**，权限阻塞见 §三.12；证据见 [`PR-REPORT-GAME-FPS-2026-10-11.md`](archive/PR-REPORT-GAME-FPS-2026-10-11.md) |
 | 第三方岛段（组件清单→准入→采样→胶囊/卡片→超宽折叠→卸载） | **已实现（源码）** | 整条链已接（`gpu` 段改为真实读数）；契约与约束见 [`ISLAND-SEGMENTS-EXTENSION.md`](ISLAND-SEGMENTS-EXTENSION.md) §八/§九。**缺**冻结包上真实示例组件的实机目视 |
 | 设置界面（分类/搜索/已修改标记/默认值/重置作用域） | **已实现（源码）** | 重置作用域按 `SlotRoutedConfig` 类型判定而非实例名；保存失败不关窗、草稿留在控件里。准入/准出见 [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md) |
 | 设置表单：代次过期、discard、会话结束收口 | **已实测（真机包）+ 两份代码票 PASS** | 候选包上三出口（继续编辑 / Esc / 放弃并关闭）真点通过，重开为新基线；全局草稿与每表单 Config 隔离。发布层证据另算 |
@@ -134,7 +134,7 @@ close 增量**的机器门（冻结窗口 2026-10-11 02:37–02:55），覆盖�
     `error: failed to start trace session: access denied.` / `PresentMon requires either
     administrative privileges or to be run by a user in the "Performance Log Users" user
     group.`，退出码 6（2026-10-11 12:40 用当前产品命令行复现，原文见
-    [`PR-REPORT-GAME-FPS-2026-10-11.md`](PR-REPORT-GAME-FPS-2026-10-11.md) §五）。
+    [`PR-REPORT-GAME-FPS-2026-10-11.md`](archive/PR-REPORT-GAME-FPS-2026-10-11.md) §五）。
     因此**没有任何真实帧数据**，所有读数断言都在替身/纯逻辑层；**不得**把这套测试说成
     "性能/帧率已验证"。**权限方案（2026-10-12 定稿）**：设置页「授予采集权限…」一次性把当前账户加入
     `Performance Log Users`（按 SID，系统弹一次管理员授权窗口，`pet/fps_permission.py`），

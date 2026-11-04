@@ -5,7 +5,7 @@
 > **范围**：3 个代码/测试文件（实现 2、测试 1），另有本报告与 INDEX 登记
 > **关联**：[`PR-REPORT-music-lyric-align-2026-09-22.md`](PR-REPORT-music-lyric-align-2026-09-22.md)、
 > [`PR-REPORT-music-lyric-2026-09-16.md`](PR-REPORT-music-lyric-2026-09-16.md)、
-> [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)（代理/VPN 影响面清单）
+> [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)（代理/VPN 影响面清单）
 
 ## 一、核心特性
 
@@ -85,7 +85,7 @@
   `pet/click_sound.py`（音效，且它**不联网**）、`pet/balance.py`、`pet/updater.py`、
   `pet/vision.py` 的代理行为**一律不动**：实测更新清单只有走代理才通、TTS 端点直连也
   可用，所以"一刀切绕过代理"会踩坏别的功能（逐条数字见
-  [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)）。
+  [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)）。
 - `pet/music_lyric.py` 的三源并发与死线逻辑（`_PRIORITY_GRACE` / `HTTP_TIMEOUT + 1`）不变，
   失败路径仍然是 9 秒，不引入第二遍请求。
 - 未新增任何持久设置（否则要触发 `docs/SETTINGS-CHANGE-GATES.md` 的设置页/白名单/迁移工作量）。
@@ -213,7 +213,7 @@
   `cdn.jsdelivr.net` **直连失败、走代理 1.45s 成功**；edge-tts 的音色列表端点
   直连 2.08s / 走代理 2.26s **都可用**——所以"全局绕过代理"会踩坏更新检查，
   而"全局走代理"会踩坏歌词。逐功能的实测清单、30 秒探针与推荐分流配置见
-  [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)。
+  [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)。
   更正：点击音效**不联网**（本地素材 + 本地转码缓存），先前草稿把它列进"同类风险面"有误。
 
 ## 六、修改文件清单（供 PR 描述引用）

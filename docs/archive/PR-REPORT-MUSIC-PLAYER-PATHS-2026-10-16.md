@@ -3,7 +3,7 @@
 > **基线**：`0b7152d654b1263b1dda7b490eb9483c71652abf`（`fix(screen-capture): 固定品牌图标规则并隔离跨截图异步结果 (#278)`）+ 本分支提交——本报告描述的改动已提交在 `feat/music-player-paths` 并开出 PR（提交号与 PR 链接见 GitHub），**没有构建、没有发布**。
 > **分支**：`feat/music-player-paths`　**日期**：2026-10-16
 > **范围**：16 个受版本控制的文件（实现 7、测试 8、文档 1）+ 1 个新增测试文件 = `+2338 / −91`（`git diff --numstat`，未含本报告与两份登记文档）。另有同批文档登记：`docs/INDEX.md`、`docs/SETTINGS-CHANGE-GATES.md`、本报告（新增）。
-> **关联**：[`PR-REPORT-MUSIC-MULTI-ARTIST-2026-10-15.md`](PR-REPORT-MUSIC-MULTI-ARTIST-2026-10-15.md)（**取词侧**；本报告是**启动入口与路径侧**）、[`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md) 2026-10-16 条目、[`PR-REPORT-SETTINGS-POLISH-2026-10-16.md`](PR-REPORT-SETTINGS-POLISH-2026-10-16.md)（同日设置页呈现层批次）。
+> **关联**：[`PR-REPORT-MUSIC-MULTI-ARTIST-2026-10-15.md`](PR-REPORT-MUSIC-MULTI-ARTIST-2026-10-15.md)（**取词侧**；本报告是**启动入口与路径侧**）、[`SETTINGS-CHANGE-GATES.md`](../SETTINGS-CHANGE-GATES.md) 2026-10-16 条目、[`PR-REPORT-SETTINGS-POLISH-2026-10-16.md`](../PR-REPORT-SETTINGS-POLISH-2026-10-16.md)（同日设置页呈现层批次）。
 >
 > **本报告与改动的关系**：产品与 `tests/` 的改动由本批前序执行方落在工作树。本报告由**取证方**撰写，取证过程中**未改产品、未改测试**，唯一例外是按明确许可在 `pet/app.py:443` 的 docstring 补了一段注释（写明启动预热仍只覆盖原两键，**预热循环一行未动**）。
 

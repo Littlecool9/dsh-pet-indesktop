@@ -146,7 +146,7 @@ recovery
 
 本刀**新增 1 个持久设置键与 1 行设置项**（待办到点是否念出来），不改任何既有键的
 默认值、归属与保存语义。证据见
-[`PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md`](PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md)。
+[`PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md`](archive/PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md)。
 
 | 项 | 本刀口径 |
 |---|---|
@@ -184,7 +184,7 @@ recovery
 4. **跨平台**：产品代码无新增平台分支；真实 GUI 验收仅本机 Windows，macOS / Linux 未跑
    （不推断）。
 5. **视觉与文档**：本记录即变更记录；PR 报告
-   [`PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md`](PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md)
+   [`PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md`](archive/PR-REPORT-TODO-VOICE-BROADCAST-2026-10-18.md)
    与 `docs/INDEX.md` 登记同步。
 
 ### 2026-10-17 — slot0 迁移「源清理」口径回正：清源与 `Config.save` 同一条规则，不丢数据改由备份承担
@@ -264,7 +264,7 @@ recovery
 字典键，成员从 2 个（`netease` / `qqmusic`）扩到最多 4 个（新增 `kugou` / `soda`），
 **没有新增任何一层配置结构、没有迁移、默认值仍是 `{}` = 走自动搜索**。改的是：设置页该组
 多了两行（同一折叠组内）、右键菜单音乐子菜单多了两条「打开…给主人放歌」入口。
-证据见 [`PR-REPORT-MUSIC-PLAYER-PATHS-2026-10-16.md`](PR-REPORT-MUSIC-PLAYER-PATHS-2026-10-16.md)。
+证据见 [`PR-REPORT-MUSIC-PLAYER-PATHS-2026-10-16.md`](archive/PR-REPORT-MUSIC-PLAYER-PATHS-2026-10-16.md)。
 
 | 项 | 本刀口径 |
 |---|---|
@@ -433,8 +433,8 @@ Windows 支持前台观察；其它平台保留可解释的不可用开关，仍
 | 哪些路径不许弹 UAC | 开关、开机恢复、切游戏目标、隐藏/显示、暂停恢复、重试退避**一律不弹**；只有用户点那一个操作才弹。用户在 UAC 上点"否"= 取消，**不重试、不循环弹窗**，等待再次点击 |
 | 依赖与恢复 | 未授权时 `session_factory` 抛异常、卡片写**「需要授权」**（不摆假数字、不显示 0）；权限类失败仍是**终态不自动重试**。已经在 `Performance Log Users` 组里、普通权限就能采的机器**不经 UAC**（不强制提权） |
 | 必须如实说的常驻事实 | 授权期间助手是**一个常驻进程**（暂停采集时也在，只停 ETW 与后端）。设置页文案**不许**写"零开销 / 零进程" |
-| 代码状态（**接线已完成 ≠ 权限已验证**） | 传输层（`pet/fps_elevation_transport.py`：授权控制器 / 状态 / 取消 / 去重 / 会话适配）与请求线（`pet/fps_authorization.py`：主进程 `QLocalServer` 服务 + 设置进程异步客户端 + 主进程真确认框 + "已授权才走提权助手"的分发）都已实现并有独立测试；**设置页接线已完成**——灵动岛页帧率段下两行：只读状态行 `game_fps_authorization` + 动作行 `game_fps_authorize`（按钮「授权本次采集…」），点它只向主进程发一条本机请求、由**主进程**弹确认框，状态每 2 秒轮询一次且**只在帧率段开着时**跑。**两行不是设置项**：没有配置键、不写盘，"不持久化已获权限"因此在设置面也成立。指标行那句"首次使用可能需要在系统里授予相应权限"**保留**——普通权限机器（已在 `Performance Log Users` 组里）本来就照常出读数、不必授权。**仍未验**：真实 UAC 提权、真实 ETW 会话、任何真实帧读数（本机从未执行过 `runas`）。取证见 [`PR-REPORT-GAME-FPS-2026-10-11.md`](PR-REPORT-GAME-FPS-2026-10-11.md) §十 |
-| 边界 | 助手是本地构建的**未签名**候选（UAC 显示未知发布者）；**真实 UAC 提权、ETW 采集与任何真实帧读数本机均未验证**。打包侧三道校验与这一处边界见 [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md)「按需 UAC 采集助手」、[`PR-REPORT-GAME-FPS-2026-10-11.md`](PR-REPORT-GAME-FPS-2026-10-11.md) §九 |
+| 代码状态（**接线已完成 ≠ 权限已验证**） | 传输层（`pet/fps_elevation_transport.py`：授权控制器 / 状态 / 取消 / 去重 / 会话适配）与请求线（`pet/fps_authorization.py`：主进程 `QLocalServer` 服务 + 设置进程异步客户端 + 主进程真确认框 + "已授权才走提权助手"的分发）都已实现并有独立测试；**设置页接线已完成**——灵动岛页帧率段下两行：只读状态行 `game_fps_authorization` + 动作行 `game_fps_authorize`（按钮「授权本次采集…」），点它只向主进程发一条本机请求、由**主进程**弹确认框，状态每 2 秒轮询一次且**只在帧率段开着时**跑。**两行不是设置项**：没有配置键、不写盘，"不持久化已获权限"因此在设置面也成立。指标行那句"首次使用可能需要在系统里授予相应权限"**保留**——普通权限机器（已在 `Performance Log Users` 组里）本来就照常出读数、不必授权。**仍未验**：真实 UAC 提权、真实 ETW 会话、任何真实帧读数（本机从未执行过 `runas`）。取证见 [`PR-REPORT-GAME-FPS-2026-10-11.md`](archive/PR-REPORT-GAME-FPS-2026-10-11.md) §十 |
+| 边界 | 助手是本地构建的**未签名**候选（UAC 显示未知发布者）；**真实 UAC 提权、ETW 采集与任何真实帧读数本机均未验证**。打包侧三道校验与这一处边界见 [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md)「按需 UAC 采集助手」、[`PR-REPORT-GAME-FPS-2026-10-11.md`](archive/PR-REPORT-GAME-FPS-2026-10-11.md) §九 |
 
 ### 2026-10-11 — 游戏帧率段：`island_metrics` 新增 `fps` 成员 + 2 个进程级目标键
 

@@ -5,7 +5,7 @@ Android 8.0（API 26），编译和目标 SDK 为 36。它是原生 Kotlin 客�
 共用桌面项目的角色素材、定位框、移动曲线和默认台词。
 授权、构建、设置准入和历史性能数字见 [首版交付报告](PR-REPORT-ANDROID-PET-2026-10-15.md)，
 模块化与本次性能修复的实测数字见 [本次交付报告](PR-REPORT-ANDROID-PET-MODULES-PERF-2026-10-15.md)。
-桌面安装包仍使用 [onedir 流程](ONEDIR_PACKAGING.md)。
+桌面安装包仍使用 [onedir 流程](../ONEDIR_PACKAGING.md)。
 
 ## 安装和使用
 
@@ -155,7 +155,7 @@ Gradle Wrapper 固定为 8.11.1（含分发包 SHA-256），AGP 8.10.1、Kotlin
 
 ### 设置准入记录
 
-参照 [设置变更门禁](SETTINGS-CHANGE-GATES.md)，手机使用独立原生界面，
+参照 [设置变更门禁](../SETTINGS-CHANGE-GATES.md)，手机使用独立原生界面，
 Qt 窗口截图、桌面多 slot 和桌面菜单编辑器条目不适用。
 
 | 设置 | 归属 | 默认/范围 | 保存与恢复 |
@@ -209,7 +209,7 @@ $adb = "$env:LOCALAPPDATA/dsh-pet-android/sdk/platform-tools/adb.exe"
 0.1.0 的旧包使用；完整的 `check()` 需要本版新增的诊断键，旧包会在窗口等待处
 超时，这是刻意的。
 
-素材署名与许可见 [第三方声明](../THIRD_PARTY_NOTICES.md) 第 1、2、9 节。
+素材署名与许可见 [第三方声明](../../THIRD_PARTY_NOTICES.md) 第 1、2、9 节。
 APK 资产内含 `NOTICE.txt`、Apache-2.0 全文（`LICENSE-APACHE-2.0.txt`）与**第三方声明
 本体**（`THIRD_PARTY_NOTICES.md`，含内置点击音 MeteorNOX 的 MIT 完整正文）；
 角色素材继续限个人非商业用途。

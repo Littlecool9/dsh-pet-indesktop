@@ -3,7 +3,7 @@
 > **基线**：`main@7d622db`（v4.2.1 已发布）→ 分支 `fix/186-cross-screen-tray-menu-2026-09-23`（分支名刻意不含任何第三方品牌词——`tests/test_desktop_pet_features.py::test_product_copy_has_no_external_brand_reference` 会扫 `docs/`）
 > **提交**：`ea17bfa`（右键菜单去重）→ `cd7821b`（#186 跨屏）→ `b37a44c`（托盘图标）→ 本报告所在 docs 提交
 > **三项互不依赖**，可分别 `git revert`；本报告按 `AGENTS.md` 的 Delivery evidence discipline 交付三份证据（§二 / §四 / §五）。
-> **关联**：issue #186（本 PR 关闭）；相邻文档见 [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md)、[`CONTEXT-MENU-RESEARCH-AND-REFACTOR-2026-08-25.md`](CONTEXT-MENU-RESEARCH-AND-REFACTOR-2026-08-25.md)、[`WINDOW_PY_SPLIT_GUIDE.md`](WINDOW_PY_SPLIT_GUIDE.md)、[`PR-REPORT-ISLAND-RESHOW-NOCHAT-2026-09-23.md`](PR-REPORT-ISLAND-RESHOW-NOCHAT-2026-09-23.md)（同一批发布后补丁）。
+> **关联**：issue #186（本 PR 关闭）；相邻文档见 [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md)、[`CONTEXT-MENU-RESEARCH-AND-REFACTOR-2026-08-25.md`](CONTEXT-MENU-RESEARCH-AND-REFACTOR-2026-08-25.md)、[`WINDOW_PY_SPLIT_GUIDE.md`](archive/WINDOW_PY_SPLIT_GUIDE.md)、[`PR-REPORT-ISLAND-RESHOW-NOCHAT-2026-09-23.md`](PR-REPORT-ISLAND-RESHOW-NOCHAT-2026-09-23.md)（同一批发布后补丁）。
 
 ---
 

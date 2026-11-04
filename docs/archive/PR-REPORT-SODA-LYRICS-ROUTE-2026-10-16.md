@@ -5,7 +5,7 @@
 > **范围**：6 个文件（实现 1、测试 1、文档 3 改动 + 本报告为新增）；改动合计 `+649 / −64`（不含本报告，逐文件见 §二）
 > **关联**：现场调查报告 [`../.scratch/soda-lyrics/REPORT.md`](../.scratch/soda-lyrics/REPORT.md)
 > （本机只读取证，未改产品）；代理口径文档
-> [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)（本次已同步 §一/§二/§四 并追加 §六）；
+> [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)（本次已同步 §一/§二/§四 并追加 §六）；
 > 上一次歌词网络改动 [`PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md`](PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md)
 
 ## 一、核心特性

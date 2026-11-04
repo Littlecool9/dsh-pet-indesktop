@@ -706,7 +706,7 @@ tests/                        # 单元测试、Qt offscreen 测试和构建相�
 
 > 本表随 README 下沉于 2026-10-15（原 README「开发结构」节，正文逐字保留）；
 > §1.3 的文件级结构总览仍是 2026-09-16 的基线快照（含语音报时定制标注），两表口径不同，互为补充。
-> 给 `window.py` 加功能前必读 [`WINDOW_PY_SPLIT_GUIDE.md`](WINDOW_PY_SPLIT_GUIDE.md)：
+> 给 `window.py` 加功能前必读 [`WINDOW_PY_SPLIT_GUIDE.md`](archive/WINDOW_PY_SPLIT_GUIDE.md)：
 > 它处于「只许瘦不许胖」的增量拆分公约下（CI 有行数预算红线），新功能先按公约拆对应控制器再动手。
 > `modern_settings_dialog.py` 同理：控件库/菜单编辑器/AI 设置页/主题 QSS 已拆出，
 > 再往主对话框塞新页面会被预算红线拦下。

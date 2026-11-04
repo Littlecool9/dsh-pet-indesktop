@@ -5,12 +5,12 @@
 > **范围**：13 个文件（实现 8、测试 5），净 `+1568 / −16`，含 3 个新文件
 > **关联**：issue #228
 > **互链**：网络与系统代理口径（歌词请求**故意绕过代理**）见
-> [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)；
-> 设置准入/准出见 [`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md)；
+> [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)；
+> 设置准入/准出见 [`SETTINGS-CHANGE-GATES.md`](../SETTINGS-CHANGE-GATES.md)；
 > 音乐会话语义（浏览器媒体会话否决表）见
-> [`PR-REPORT-SMTC-MEDIA-TYPE-2026-10-06.md`](PR-REPORT-SMTC-MEDIA-TYPE-2026-10-06.md)；
-> 必备证据章节见 [`PR-REPORT-TEMPLATE.md`](PR-REPORT-TEMPLATE.md)；本文已登记在
-> [`INDEX.md`](INDEX.md) 的「PR 报告存档」。
+> [`PR-REPORT-SMTC-MEDIA-TYPE-2026-10-06.md`](../PR-REPORT-SMTC-MEDIA-TYPE-2026-10-06.md)；
+> 必备证据章节见 [`PR-REPORT-TEMPLATE.md`](../PR-REPORT-TEMPLATE.md)；本文已登记在
+> [`INDEX.md`](../INDEX.md) 的「PR 报告存档」。
 
 ## 一、核心特性
 
@@ -342,7 +342,7 @@ ImportError: cannot import name 'music_title'        # 红（模块尚不存在�
 
 ## 九、终审修复对齐（2026-10-07 追加）
 
-> 按 [`PR-REPORT-TEMPLATE.md`](PR-REPORT-TEMPLATE.md) 的「后续轮次在同一文档追加新章节、
+> 按 [`PR-REPORT-TEMPLATE.md`](../PR-REPORT-TEMPLATE.md) 的「后续轮次在同一文档追加新章节、
 > 保留新旧对照，不要重写覆盖」约定**追加**：上文记录的是各提交当时的树，本节只记终审修复
 > 带来的增量。上文对应位置已就地加注「2026-10-07 终审修复对齐（提交 `<sha>`）」。
 

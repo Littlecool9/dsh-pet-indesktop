@@ -43,11 +43,11 @@
 - manifest 查询不依赖单一 GitHub 域名：API 失败后会尝试三个 jsDelivr 镜像。
 - **二进制下载必须配置真实可达的镜像 URL**。镜像 manifest 本身不会自动代理 GitHub 二进制；发布者必须把镜像地址写入同一资产的 `urls` 数组，并将镜像域名加入客户端可信列表后再发布。
 - Quark 网盘是人工下载兜底入口，不参与自动安装，因为网盘页面不是稳定的、可校验的直接安装包 URL。
-- 系统代理/VPN 会影响 urllib 请求；排查“昨天能更新、今天不能更新”时，先按 [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md) 的现场探针确认出口，不要通过关闭 SHA-256 校验来规避网络问题。
+- 系统代理/VPN 会影响 urllib 请求；排查“昨天能更新、今天不能更新”时，先按 [`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md) 的现场探针确认出口，不要通过关闭 SHA-256 校验来规避网络问题。
 
 ## 4. 发布前清单
 
-1. 使用 [`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md) 生成对应变体的 Inno Setup 安装包。
+1. 使用 [`ONEDIR_PACKAGING.md`](../ONEDIR_PACKAGING.md) 生成对应变体的 Inno Setup 安装包。
 2. 对每个安装包记录最终文件名、字节数和 SHA-256；不要对安装包重新压缩或改名后再计算摘要。
 3. 将 GitHub Release URL 与每个可用镜像 URL 写入结构化 manifest；确认 URL 指向直接文件而不是网页。
 4. 先用源码运行的测试夹具验证解析、镜像回退、大小校验、摘要校验和不可信源拒绝，再在 Windows 冻结版上实测安装器关闭旧进程并重启。
@@ -62,7 +62,7 @@
 
 ## 6. 相关文档
 
-- 设置入口和页面准入：[`SETTINGS-CHANGE-GATES.md`](SETTINGS-CHANGE-GATES.md)
-- 网络代理/VPN 排查：[`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)
-- onedir 与安装包构建：[`ONEDIR_PACKAGING.md`](ONEDIR_PACKAGING.md)
-- 若未来更新 DLC/插件目录，另读 [`PLUGIN-UPDATE-PROTOCOL.md`](plugin-phase-04-updates/PLUGIN-UPDATE-PROTOCOL.md)；该协议的原子激活/回滚模型不替代当前 Core 安装包更新。
+- 设置入口和页面准入：[`SETTINGS-CHANGE-GATES.md`](../SETTINGS-CHANGE-GATES.md)
+- 网络代理/VPN 排查：[`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)
+- onedir 与安装包构建：[`ONEDIR_PACKAGING.md`](../ONEDIR_PACKAGING.md)
+- 若未来更新 DLC/插件目录，另读 [`PLUGIN-UPDATE-PROTOCOL.md`](../plugin-phase-04-updates/PLUGIN-UPDATE-PROTOCOL.md)；该协议的原子激活/回滚模型不替代当前 Core 安装包更新。

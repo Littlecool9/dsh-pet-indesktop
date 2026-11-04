@@ -9,12 +9,12 @@
 > （`integration/2026-10-07-night-batch`，2026-10-07）
 > **关联**：issue #231（OBS 捕获黑屏与枚举不到）；T4 设计原文
 > `.scratch/single-overlay-window/PHASE4_DESIGN.md:76-83`；
-> [`PR-REPORT-WINDOWS-PARITY-JANK-2026-09-27.md`](PR-REPORT-WINDOWS-PARITY-JANK-2026-09-27.md)
+> [`PR-REPORT-WINDOWS-PARITY-JANK-2026-09-27.md`](../PR-REPORT-WINDOWS-PARITY-JANK-2026-09-27.md)
 > §B8（当时把该开关定为「置灰 + 暂不支持」，**本批推翻**）；
-> [`PR-REPORT-PHASE4-4-RETIRE-MULTIPROCESS-2026-09-23.md`](PR-REPORT-PHASE4-4-RETIRE-MULTIPROCESS-2026-09-23.md)
+> [`PR-REPORT-PHASE4-4-RETIRE-MULTIPROCESS-2026-09-23.md`](../PR-REPORT-PHASE4-4-RETIRE-MULTIPROCESS-2026-09-23.md)
 > （slot 文件锁退役的背景）；报告体裁与必备章节见
-> [`PR-REPORT-TEMPLATE.md`](PR-REPORT-TEMPLATE.md)；本文已登记在
-> [`INDEX.md`](INDEX.md) 的「PR 报告存档」。
+> [`PR-REPORT-TEMPLATE.md`](../PR-REPORT-TEMPLATE.md)；本文已登记在
+> [`INDEX.md`](../INDEX.md) 的「PR 报告存档」。
 
 ## 一、核心特性
 
@@ -418,7 +418,7 @@ AssertionError: 已有实例在运行：不得建到 AppShell 这一层  # legac
 
 ## 九、终审修复对齐（2026-10-07 追加）
 
-> 按 [`PR-REPORT-TEMPLATE.md`](PR-REPORT-TEMPLATE.md) 的「后续轮次在同一文档追加新章节、
+> 按 [`PR-REPORT-TEMPLATE.md`](../PR-REPORT-TEMPLATE.md) 的「后续轮次在同一文档追加新章节、
 > 保留新旧对照」约定**追加**：上文正文不改，本节只记后续收口对本文叙述的影响。
 
 ### 9.1 捕获模式多了一处**拓扑条件**置灰（`ddbea79` 的 M5）

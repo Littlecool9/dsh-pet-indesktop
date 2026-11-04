@@ -2,7 +2,7 @@
 
 > **基线**：工作树 `v4.2.1` 代码基线（未创建提交）　**日期**：2026-09-24
 > **范围**：17 个本次功能相关文件（实现、测试、打包配置和文档）；保留工作区原有的 4 个插件化未跟踪文档和 `.workbuddy/`。
-> **关联**：[`ONLINE-UPDATE.md`](ONLINE-UPDATE.md)、[`NETWORK-PROXY-AND-VPN-2026-09-22.md`](NETWORK-PROXY-AND-VPN-2026-09-22.md)
+> **关联**：[`ONLINE-UPDATE.md`](ONLINE-UPDATE.md)、[`NETWORK-PROXY-AND-VPN-2026-09-22.md`](../NETWORK-PROXY-AND-VPN-2026-09-22.md)
 
 ## 一、核心特性
 

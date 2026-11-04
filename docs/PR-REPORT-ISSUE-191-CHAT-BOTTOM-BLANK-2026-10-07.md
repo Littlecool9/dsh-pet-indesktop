@@ -211,7 +211,7 @@ bubble    width=635  sizeHint.h=84  heightForWidth=67   → 幻影 +17
    不是缺陷；回归测试用方向断言把这一区分写进了断言里。
 4. **未做**：issue 后半段提到的「直播适配 OBS 黑屏」不属本条——它已被随后落地的
    「直播捕获 Phase A」重写覆盖（见
-   [`PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md`](PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md)），
+   [`PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md`](archive/PR-REPORT-STREAM-CAPTURE-PHASE-A-2026-10-07.md)），
    对话空白这半没有被任何后续提交碰过（本分支的改动对象与那份报告无交集）。
 
 ## 八、风险与回滚

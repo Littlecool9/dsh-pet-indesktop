@@ -335,4 +335,4 @@ headless，本机两个发行名同版本并存、都提供 `cv2` 顶层模块�
   第 1 节的点击音 MIT 正文因此随 APK 一起走（见
   `scripts/export_android_assets.py::copy_notices`，2026-10-17 起）。
 - 手机使用的 WebP 动画与图标由第 2 节角色素材派生，继续保留其署名和
-  个人非商业使用限制。工具与验收说明见 [Android 文档](docs/ANDROID.md)。
+  个人非商业使用限制。工具与验收说明见 [Android 文档](docs/archive/ANDROID.md)。

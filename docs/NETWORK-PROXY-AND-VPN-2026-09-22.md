@@ -4,8 +4,8 @@
 > **实测环境**：Windows，系统代理 `http://127.0.0.1:12450`（全局模式 VPN 客户端进程 `core`），
 > CPython 3.11.1，全部数字为 2026-09-22 本机单次实测（每项 1 次，含冷连接）
 > **缘由**：用户反馈「合并后识别不到网易云的歌词、快进进度也不行了」，真因是**系统代理把歌词取词拖到超时**
-> （完整证据链见 [`PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md`](PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md)），
-> 与相关机制见 [`PR-REPORT-music-lyric-align-2026-09-22.md`](PR-REPORT-music-lyric-align-2026-09-22.md)。
+> （完整证据链见 [`PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md`](archive/PR-REPORT-MUSIC-LYRIC-SYSTEM-PROXY-2026-09-22.md)），
+> 与相关机制见 [`PR-REPORT-music-lyric-align-2026-09-22.md`](archive/PR-REPORT-music-lyric-align-2026-09-22.md)。
 
 ## 一句话结论
 
@@ -89,7 +89,7 @@ PY
 - **逐功能决定，不做全局**。歌词源已实测「代理有害」→ 代码里以**直连为首选**
   （`pet/music_lyric.py` 的 `_build_opener()` = `ProxyHandler({})`，见 PR #181）；
   直连**传输失败或 500/502/504** 时回退一次系统代理（2026-10-16，见 §六与
-  [`PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md`](PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md)）。
+  [`PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md`](archive/PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md)）。
   其余功能保持"跟随系统代理"，因为更新（jsdelivr）实测**只有代理能用**，
   而 TTS 端点直连/代理都可用但海外网络需要代理。
 - 桌宠**不会**改用户的代理设置，也不主动关代理；歌词请求只影响它自己。
@@ -126,7 +126,7 @@ GitHub API               直连 0.69s (52124 bytes)    走代理 1.41s (52124 by
 
 结论：**两条路都可能死，也可能只有一条活**——固定押一条路就得靠用户自己配分流。
 据此歌词请求改成了「直连首选 + 有界的单次回退」，判据与预算见
-[`PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md`](PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md)。
+[`PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md`](archive/PR-REPORT-SODA-LYRICS-ROUTE-2026-10-16.md)。
 本文档 §一/§二/§四 的相应表述已同步；§五（2026-09-22 的原始数字）保持历史原样。
 
 > 诚实边界：追补的**实现**由本机回环探针（真实 HTTP 服务器 + 真实 socket，不联网）
