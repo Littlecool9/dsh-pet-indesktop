@@ -90,9 +90,6 @@ def _expand_toggle_dependencies(dialog: ModernSettingsDialog) -> None:
         dialog.island_enabled_check,
         dialog.island_icon_check,
         dialog.island_info_check,
-        dialog.egg_enabled_check,
-        dialog.collision_enabled_check,
-        dialog.collision_sound_check,
         dialog.click_sound_check,
         dialog.agent_sound_check,
     ):
