@@ -107,8 +107,19 @@ class _StubAppShell:
     def open_todo_panel(self):
         self._record("open_todo_panel")
 
-    def open_network_info(self):
-        self._record("open_network_info")
+    def running_module(self, module_id):
+        if module_id != "network_info":
+            return None
+        shell = self
+
+        class _Module:
+            def open_dialog(self):
+                shell._record("open_network_info")
+
+        return _Module()
+
+    def module_unavailable_reason(self, _module_id):
+        return ""
 
     def open_settings_process(self, instance=None):
         self._record("open_settings_process", instance)
@@ -139,6 +150,11 @@ class _StubInstance(cap.CapInstance):
         return fac.RichLibrary()
 
 
+class _ReferenceModule:
+    def open_dialog(self) -> None:
+        pass
+
+
 class _ReferenceHost:
     """现代建造器的独立 pet 形基准：显式声明 app 同款回调，不依赖 overlay facade。"""
 
@@ -152,7 +168,8 @@ class _ReferenceHost:
         self.on_look_screen = self.look_at_screen if chat else None
         self.on_open_modern_settings = lambda: None
         self.on_open_todo_panel = lambda: None
-        self.on_network_info = lambda: None
+        self.running_module = lambda _module_id: _ReferenceModule()
+        self.module_unavailable_reason = lambda _module_id: ""
         self.on_switch_character = lambda character_id: None
         self.playback_speed = 1.0
         self.scale = 1.0
@@ -520,7 +537,7 @@ def test_menu_routes_service_semantics(tmp_path, monkeypatch):
         link_menu = _find(menu, "Agent 联动").menu()
         _find(link_menu, "Claude Code").setChecked(True)
         assert manager_calls == [("claude", True)]
-        # 网络信息 → AppShell.open_network_info（进程级弹窗，与作用对象无关）
+        # 网络信息 → 运行中模块的 open_dialog（进程级弹窗，与作用对象无关）
         _require(menu, "网络信息").trigger()
         assert "open_network_info" in [call[0] for call in instance.shell.calls]
     finally:

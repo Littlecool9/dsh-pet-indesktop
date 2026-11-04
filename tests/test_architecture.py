@@ -194,11 +194,11 @@ def test_pure_logic_modules_do_not_import_qt():
     # 2026-09-23 加入 overlay_settings_command：D12 指令通道的写/读/消费与拓扑门
     # 必须零 Qt——独立设置进程（pet/__main__.py --settings）禁止导入 pet.app/
     # overlay_shell，env 读取的唯一实现只能落在两侧都能 import 的轻模块里。
-    # network_info.py 是「网络信息」弹窗的数据层（属地解析/连通性/文案），必须零
-    # Qt——弹窗只在打开时取一次数据，数据层不碰 GUI。
+    # 网络信息模块的数据层（属地解析/连通性/文案）必须零 Qt——弹窗只在打开时
+    # 取一次数据，数据层不碰 GUI（阶段 2 起随功能搬进模块目录）。
     for name in (
         "overlay_settings_command.py",
-        "network_info.py",
+        "modules/network_info/data.py",
         # 2026-10-07 加入 island_segments（灵动岛段契约）：段注册契约与宽度/四态
         # 兜底必须零 Qt——测宽靠调用方注入的 QFontMetrics（依赖注入）。
         # 2026-10-07 加入 island_layout（P1 Slice D2 下沉）：段数据/落位/收缩流水线

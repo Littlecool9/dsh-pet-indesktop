@@ -173,6 +173,24 @@ def test_menu_action_id_conflict_is_an_error():
         reg.menu_action_specs()
 
 
+def test_from_packages_can_tolerate_broken_packages(monkeypatch):
+    good = types.ModuleType("pet_fake_mods.good")
+    good.MANIFEST = _m("good")
+    monkeypatch.setitem(sys.modules, "pet_fake_mods.good", good)
+    missing = "pet_fake_mods.missing"
+
+    tolerant = ModuleRegistry.from_packages(
+        ("pet_fake_mods.good", missing), tolerant=True)
+    assert tolerant.manifest("good") is not None
+    assert tolerant.status("missing").state == FAILED
+    assert "模块清单读取失败" in tolerant.status("missing").reason
+    tolerant.start_all(_Host())
+    assert tolerant.running("good")
+
+    with pytest.raises(ImportError):
+        ModuleRegistry.from_packages(("pet_fake_mods.good", missing))
+
+
 def test_read_manifest_requires_matching_package_name(monkeypatch):
     pkg = types.ModuleType("pet_fake_mods.alpha")
     pkg.MANIFEST = _m("alpha")

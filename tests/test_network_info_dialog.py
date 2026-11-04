@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「网络信息」弹窗单测（``pet/network_info_dialog.py``）。
+"""「网络信息」弹窗单测（``pet/modules/network_info/dialog.py``）。
 
 Qt 行为从弹窗这个公开 seam 测：注入探针替身（零真实请求），断言
 "打开取一次 / 失败如实显示 / 取数中不重复发请求 / 关窗后回调不炸"。
@@ -16,8 +16,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from pet import network_info as ni
-from pet.network_info_dialog import NetworkInfoDialog
+from pet.modules.network_info import data as ni
+from pet.modules.network_info.dialog import NetworkInfoDialog
 
 app = QApplication.instance() or QApplication([])
 

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""右键菜单「网络信息」入口的接线契约（issue #172）。
+"""右键菜单「网络信息」入口与模块接线契约（issue #172 / 阶段 2）。
 
-覆盖：注册表三件套（label/icon/默认布局节点）、显隐门（``network_info_menu_enabled``
-默认开、关掉即不可用）、两套建造器共用的建造函数、AppShell 接线与弹窗单例。
+覆盖：模块清单的菜单入口、``MenuActionRegistry`` 惰性合并（label/icon/可调用
+置灰原因）、开关关掉与模块不可用两种置灰、模块内单例弹窗（含父窗带走/静默销毁
+后的自愈）、以及 AppShell 按 ``MODULES`` 启动后菜单拿得到运行中的模块。
 
-真实菜单树端的覆盖在既有套件里（不在这里重复造 stub）：
-``tests/test_menu_layout.py::test_default_layout_populates_real_qmenu_hierarchy``
-断言现代菜单「工具与帮助」里有这一项；``tests/test_sprite_menu_parity.py``
-的 legacy/modern 树比对与 REQUIRED_LABELS 逐项包含它，并覆盖点击路由。
+真实菜单树端的覆盖在既有套件里：``tests/test_menu_layout.py`` 断言现代菜单
+「工具与帮助」里有这一项；``tests/test_sprite_menu_parity.py`` 的树比对与
+REQUIRED_LABELS 逐项包含它，并覆盖点击路由。
 
 弹窗在本文件里一律替换成不发真实请求的替身（真探针的真实取数由实机验证覆盖）。
 """
@@ -17,18 +17,18 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
+import shiboken6
 from PySide6.QtWidgets import QApplication, QMenu
 
-from pet import network_info_dialog as dialog_mod
 from pet.config import Config
 from pet.context_menus import registry as registry_mod
-from pet.context_menus.shared import (
-    NETWORK_INFO_DISABLED_REASON,
-    add_network_info,
-    network_info_menu_enabled,
-)
 from pet.menu_layout import load_default_menu_layout
+from pet.module_config import module_defaults, module_global_keys
+from pet.modules.base import ModuleManifest, load_entry
+from pet.modules.network_info import config as module_config
+from pet.modules.network_info import dialog as dialog_mod
+from pet.modules.network_info import menu as module_menu
+from pet.modules.network_info.module import NetworkInfoModule
 
 app = QApplication.instance() or QApplication([])
 
@@ -42,14 +42,18 @@ class _Cfg:
 
 
 class _Pet:
-    def __init__(self, values: dict | None = None, *, with_callback: bool = True):
-        self.cfg = _Cfg(values or {})
-        self.calls = 0
-        if with_callback:
-            self.on_network_info = self._open
+    """菜单宿主替身：运行中模块 + 可选不可用原因。"""
 
-    def _open(self):
-        self.calls += 1
+    def __init__(self, values: dict | None = None, *, module=..., reason: str = ""):
+        self.cfg = _Cfg(values or {})
+        self.module = module
+        self.reason = reason
+
+    def running_module(self, _module_id):
+        return self.module
+
+    def module_unavailable_reason(self, _module_id):
+        return self.reason
 
 
 def _labels(menu) -> list[str]:
@@ -63,11 +67,19 @@ def _find(menu, label: str):
     raise AssertionError(f"菜单缺项 {label}；实际 = {_labels(menu)}")
 
 
-# ---------------------------------------------------------------- 注册表契约
-def test_registry_declares_label_icon_and_layout_node():
-    assert registry_mod.ACTION_LABELS["network_info"] == "网络信息"
-    assert registry_mod.ACTION_ICONS["network_info"] == "web"
-    assert "network_info" in registry_mod.MENU_ACTIONS.ids
+# ---------------------------------------------------------------- 清单 / 注册表
+def test_manifest_declares_menu_actions_config_schema_and_layout_node():
+    manifest = load_entry("pet.modules.network_info:MANIFEST")
+    assert isinstance(manifest, ModuleManifest)
+    assert manifest.id == "network_info"
+    assert manifest.menu_actions == "pet.modules.network_info.menu:actions"
+    assert manifest.config_schema == "pet.modules.network_info.config:SCHEMA"
+    assert manifest.config_keys == (module_config.SWITCH_KEY,)
+
+    actions = module_menu.actions()
+    spec = actions["network_info"]
+    assert spec.label == "网络信息"
+    assert spec.icon == "web"
 
     def ids(nodes) -> list[str]:
         found = []
@@ -80,126 +92,108 @@ def test_registry_declares_label_icon_and_layout_node():
     assert "network_info" in ids(load_default_menu_layout().get("nodes", []))
 
 
-def test_gate_default_on_and_missing_callback_counts_as_unavailable():
-    assert network_info_menu_enabled(_Pet()) is True
-    assert network_info_menu_enabled(_Pet({"network_info_menu_enabled": False})) is False
-    assert network_info_menu_enabled(object()) is True  # 无 cfg 的宿主按默认开
+def test_registry_merges_module_label_icon_and_layout_node():
+    registry = registry_mod.MENU_ACTIONS
+    assert "network_info" in registry.ids
+    assert registry.label("network_info") == "网络信息"
+    assert registry.default_icon("network_info") == "web"
+    # 旧核心的标签/图标表不再维护这一项（单一来源在模块）。
+    assert "network_info" not in registry_mod.ACTION_LABELS
+    assert "network_info" not in registry_mod.ACTION_ICONS
+
+
+def test_gate_default_on_and_module_config_is_global():
+    assert module_defaults()[module_config.SWITCH_KEY] is True
+    assert module_config.SWITCH_KEY in module_global_keys()
 
 
 def test_callback_gates_availability_and_switch_gates_enablement():
     """两条门各管一件事（CONTEXT.md 的 Runtime Disabled）：
 
-    - 回调缺失（纯桌宠变体/替身）＝**能力不可用** → 从 available 里消失，整条不出现；
-    - 开关关掉＝**运行时停用** → 仍在 available 里（保留布局位置），只是不在 enabled
-      里，渲染成"灰掉 + 说明"，不再从菜单消失。
+    - 宿主没接上模块生命周期＝**能力不可用** → 从 available 里消失；
+    - 模块在跑但开关关掉＝**运行时停用** → 仍在 available 里（保留布局位置），
+      只是不在 enabled 里，渲染成"灰掉 + 说明"。
     """
     actions = registry_mod.MENU_ACTIONS
-    assert "network_info" in actions.available_ids(_Pet())
+    module = object()
+    assert "network_info" in actions.available_ids(_Pet(module=module))
     assert "network_info" in actions.available_ids(
-        _Pet({"network_info_menu_enabled": False})), "开关不该再影响可用性"
-    assert "network_info" not in actions.available_ids(_Pet(with_callback=False))
+        _Pet({"network_info_menu_enabled": False}, module=module)), "开关不该影响可用性"
+    assert "network_info" not in actions.available_ids(object())
 
-    assert "network_info" in actions.enabled_ids(_Pet())
+    assert "network_info" in actions.enabled_ids(_Pet(module=module))
     assert "network_info" not in actions.enabled_ids(
-        _Pet({"network_info_menu_enabled": False}))
-    assert "network_info" not in actions.enabled_ids(_Pet(with_callback=False))
+        _Pet({"network_info_menu_enabled": False}, module=module))
+
+
+def test_unavailable_module_is_available_but_greyed_with_its_reason():
+    pet = _Pet(module=None, reason="启动失败：RuntimeError: boom")
+    actions = registry_mod.MENU_ACTIONS
+    assert "network_info" in actions.available_ids(pet)
+    assert "network_info" not in actions.enabled_ids(pet)
+    assert actions.disabled_reason("network_info", pet) == "启动失败：RuntimeError: boom"
+    # 没有 pet 的只读查询回落开关说明（不抛）。
+    assert actions.disabled_reason("network_info") == module_config.SWITCH_OFF_REASON
 
 
 def test_disable_reason_is_shared_by_registry_and_builder():
-    """置灰文案单源：注册表 disabled_reason 与建造器写的 tooltip 必须同一份。"""
-    assert registry_mod.MENU_ACTIONS.disabled_reason("network_info") == \
-        NETWORK_INFO_DISABLED_REASON
-    assert NETWORK_INFO_DISABLED_REASON
+    class _Module:
+        def open_dialog(self):
+            raise AssertionError("置灰项不得触发回调")
+
+    pet = _Pet({"network_info_menu_enabled": False}, module=_Module())
+    actions = registry_mod.MENU_ACTIONS
+    assert module_config.SWITCH_OFF_REASON
+    assert actions.disabled_reason("network_info", pet) == module_config.SWITCH_OFF_REASON
+
+    menu = QMenu()
+    try:
+        action = module_menu._build(menu, pet)
+        assert action.isEnabled() is False
+        assert action.toolTip() == module_config.SWITCH_OFF_REASON
+    finally:
+        menu.close()
+        app.processEvents()
 
 
 # ---------------------------------------------------------------- 建造函数
-def test_add_network_info_builds_action_with_click_callback():
-    pet = _Pet()
+def test_build_action_opens_the_running_module():
+    opened: list = []
+
+    class _Module:
+        def open_dialog(self):
+            opened.append(True)
+
     menu = QMenu()
     try:
-        action = add_network_info(menu, pet, icons=False)
-        assert action is not None
+        action = module_menu._build(menu, _Pet(module=_Module()))
         assert action.text() == "网络信息"
         assert action.isEnabled() is True
         assert action.property("closeOnTrigger") is True
         action.trigger()
-        assert pet.calls == 1
+        assert opened == [True]
     finally:
         menu.close()
         app.processEvents()
 
 
-def test_add_network_info_keeps_disabled_entry_when_switch_off():
-    """legacy 建造器直接调它：开关关掉时**保留入口但置灰 + 说明**，不点了没反应也不消失。"""
-    pet = _Pet({"network_info_menu_enabled": False})
-    menu = QMenu()
-    try:
-        action = add_network_info(menu, pet, icons=False)
-        assert action is not None, "关掉的是开关不是能力：入口保留位置"
-        assert action.text() == "网络信息"
-        assert action.isEnabled() is False
-        assert action.toolTip() == NETWORK_INFO_DISABLED_REASON
-        action.trigger()
-        assert pet.calls == 0, "置灰项不得触发回调"
-    finally:
-        menu.close()
-        app.processEvents()
-
-
-def test_add_network_info_returns_none_only_without_callback():
-    """回调不存在（能力不可用）：整条不出现，而不是留一个永远灰着的占位。"""
-    menu = QMenu()
-    try:
-        assert add_network_info(menu, _Pet(with_callback=False)) is None
-        assert _labels(menu) == []
-    finally:
-        menu.close()
-        app.processEvents()
-
-
-def test_modern_registry_renders_entry_disabled_with_reason():
-    """modern 路径（注册表 populate）：开关关掉时渲染成置灰项并带说明。"""
+def test_modern_registry_renders_entry_disabled_with_module_reason():
     nodes = ({"type": "action", "id": "network_info", "visible": True},)
-
-    off = _Pet({"network_info_menu_enabled": False})
+    pet = _Pet(module=None, reason="缺少依赖模块：SurfCore 连接")
     menu = QMenu()
     try:
         registry_mod.MENU_ACTIONS.populate(
-            menu, off, nodes, enabled_actions=registry_mod.MENU_ACTIONS.enabled_ids(off))
+            menu, pet, nodes,
+            enabled_actions=registry_mod.MENU_ACTIONS.enabled_ids(pet))
         action = _find(menu, "网络信息")
         assert action.isEnabled() is False
-        assert action.toolTip() == registry_mod.MENU_ACTIONS.disabled_reason("network_info")
-    finally:
-        menu.close()
-        app.processEvents()
-
-    on = _Pet()
-    menu = QMenu()
-    try:
-        registry_mod.MENU_ACTIONS.populate(
-            menu, on, nodes, enabled_actions=registry_mod.MENU_ACTIONS.enabled_ids(on))
-        assert _find(menu, "网络信息").isEnabled() is True
+        assert action.toolTip() == "缺少依赖模块：SurfCore 连接"
     finally:
         menu.close()
         app.processEvents()
 
 
-def test_add_network_info_uses_semantic_vector_icon():
-    from pet.context_menus.icons import vector_menu_icon
-
-    pet = _Pet()
-    menu = QMenu()
-    try:
-        action = add_network_info(menu, pet, icons=True)
-        expected = vector_menu_icon(menu, "web")
-        assert not action.icon().isNull()
-        assert action.icon().pixmap(16, 16).toImage() == expected.pixmap(16, 16).toImage()
-    finally:
-        menu.close()
-        app.processEvents()
-
-
-# ---------------------------------------------------------------- AppShell 接线
+# ---------------------------------------------------------------- 模块内弹窗
 class _QuietDialog(dialog_mod.NetworkInfoDialog):
     """不发真实请求的弹窗替身（只验证接线与单例语义）。"""
 
@@ -211,98 +205,99 @@ class _QuietDialog(dialog_mod.NetworkInfoDialog):
         self.refreshed += 1
 
 
-@pytest.fixture
-def quiet_dialog(monkeypatch):
+class _Host:
+    def __init__(self):
+        self.parent = None
+
+    def dialog_parent(self):
+        return self.parent
+
+    def present_dialog(self, dialog):
+        dialog.show()
+
+
+def _quiet(monkeypatch):
     monkeypatch.setattr(dialog_mod, "NetworkInfoDialog", _QuietDialog)
 
 
-def test_open_network_info_is_single_process_level_dialog(tmp_path, quiet_dialog):
-    from pet.app import AppShell
-
-    shell = AppShell(app, Config(tmp_path))
-    try:
-        shell.open_network_info()
-        dialog = shell.network_info_dialog
-        assert isinstance(dialog, _QuietDialog)
-        assert dialog.refreshed == 1, "弹窗显示时应当取一次数据"
-        shell.open_network_info()
-        assert shell.network_info_dialog is dialog, "非模态单例：再次点击复用同一窗"
-    finally:
-        if shell.network_info_dialog is not None:
-            shell.network_info_dialog.close()
-            shell.network_info_dialog = None
+def _open_quietly(monkeypatch) -> tuple[NetworkInfoModule, _Host]:
+    _quiet(monkeypatch)
+    module = NetworkInfoModule()
+    module.start(_Host())
+    return module, module._host
 
 
-def test_open_network_info_recovers_after_dialog_destroyed_with_parent(tmp_path, quiet_dialog):
-    """随父宠物销毁（不发 finished）后，单例不得仍指向失效对象。
-
-    复现：C++ 侧被销毁（等价于父 QWidget 析构带走子窗）→ 再点菜单必须给出新窗，
-    而不是在复用路径上抛 "Internal C++ object already deleted"。
-    """
-    import shiboken6
-
-    from pet.app import AppShell
-
-    shell = AppShell(app, Config(tmp_path))
-    try:
-        shell.open_network_info()
-        first = shell.network_info_dialog
-        shiboken6.delete(first)  # 销毁不发 finished（destroyed 才发）
-        app.processEvents()
-        assert shell.network_info_dialog is None, "销毁信号必须收口单例"
-
-        shell.open_network_info()
-        second = shell.network_info_dialog
-        assert isinstance(second, _QuietDialog) and second is not first
-        assert second.refreshed == 1, "重开的弹窗照常取数"
-    finally:
-        if shell.network_info_dialog is not None:
-            shell.network_info_dialog.close()
-            shell.network_info_dialog = None
+def test_open_dialog_is_single_instance(monkeypatch):
+    module, _host = _open_quietly(monkeypatch)
+    module.open_dialog()
+    dialog = module._dialog
+    assert isinstance(dialog, _QuietDialog)
+    assert dialog.refreshed == 1, "弹窗显示时应当取一次数据"
+    module.open_dialog()
+    assert module._dialog is dialog, "非模态单例：再次点击复用同一窗"
+    module.stop()
+    assert module._dialog is None
 
 
-def test_open_network_info_replaces_singleton_that_was_destroyed_silently(
-        tmp_path, quiet_dialog):
-    """收口信号没到（例如别的线程/时序缝隙销毁）时，复用前自查失效对象，不得抛。"""
-    import shiboken6
+def test_open_dialog_recovers_after_destroyed_with_parent(monkeypatch):
+    """随父宠物销毁（不发 finished）后，单例不得仍指向失效对象。"""
+    module, _host = _open_quietly(monkeypatch)
+    module.open_dialog()
+    first = module._dialog
+    shiboken6.delete(first)  # 销毁不发 finished（destroyed 才发）
+    app.processEvents()
+    assert module._dialog is None, "销毁信号必须收口单例"
 
-    from pet.app import AppShell
-
-    shell = AppShell(app, Config(tmp_path))
-    try:
-        shell.open_network_info()
-        first = shell.network_info_dialog
-        shiboken6.delete(first)
-        app.processEvents()
-        shell.network_info_dialog = first  # 人为塞回：模拟 destroyed 未送达
-        shell.open_network_info()
-        second = shell.network_info_dialog
-        assert isinstance(second, _QuietDialog) and second is not first
-    finally:
-        if shell.network_info_dialog is not None:
-            shell.network_info_dialog.close()
-            shell.network_info_dialog = None
+    module.open_dialog()
+    second = module._dialog
+    assert isinstance(second, _QuietDialog) and second is not first
+    assert second.refreshed == 1, "重开的弹窗照常取数"
+    module.stop()
 
 
-def test_stale_destroyed_signal_does_not_clear_new_dialog(tmp_path, quiet_dialog):
+def test_open_dialog_replaces_singleton_that_was_destroyed_silently(monkeypatch):
+    """收口信号没到（时序缝隙）时，复用前自查失效对象，不得抛。"""
+    module, _host = _open_quietly(monkeypatch)
+    module.open_dialog()
+    first = module._dialog
+    shiboken6.delete(first)
+    app.processEvents()
+    module._dialog = first  # 人为塞回：模拟 destroyed 未送达
+    module.open_dialog()
+    second = module._dialog
+    assert isinstance(second, _QuietDialog) and second is not first
+    module.stop()
+
+
+def test_stale_destroyed_signal_does_not_clear_new_dialog(monkeypatch):
     """旧窗晚到的 destroyed 不得清掉新实例（对象身份核对）。"""
-    import shiboken6
+    module, _host = _open_quietly(monkeypatch)
+    module.open_dialog()
+    first = module._dialog
+    shiboken6.delete(first)
+    app.processEvents()
+    module.open_dialog()
+    second = module._dialog
+    assert second is not None and second is not first
 
+    module._dialog_destroyed(first)  # 旧窗的收口信号晚到
+    assert module._dialog is second
+    module.stop()
+
+
+# ---------------------------------------------------------------- AppShell 接线
+def test_app_shell_starts_network_info_module(tmp_path, monkeypatch):
     from pet.app import AppShell
 
+    _quiet(monkeypatch)
     shell = AppShell(app, Config(tmp_path))
     try:
-        shell.open_network_info()
-        first = shell.network_info_dialog
-        shiboken6.delete(first)
-        app.processEvents()
-        shell.open_network_info()
-        second = shell.network_info_dialog
-        assert second is not None and second is not first
-
-        shell._network_info_destroyed(first)  # 旧窗的收口信号晚到
-        assert shell.network_info_dialog is second
+        shell._start_modules()
+        module = shell.running_module("network_info")
+        assert isinstance(module, NetworkInfoModule)
+        assert shell.module_unavailable_reason("network_info") == ""
+        module.open_dialog()
+        assert isinstance(module._dialog, _QuietDialog)
     finally:
-        if shell.network_info_dialog is not None:
-            shell.network_info_dialog.close()
-            shell.network_info_dialog = None
+        shell._stop_modules()
+        shell._module_registry = None

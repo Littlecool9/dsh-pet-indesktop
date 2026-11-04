@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""「网络信息」数据层单测（``pet/network_info.py``）。
+"""「网络信息」数据层单测（``pet/modules/network_info/data.py``）。
 
 opener 全注入（FakeOpener），**不发真实请求**；活体取数由实机验证覆盖。
 """
@@ -11,7 +11,7 @@ import urllib.error
 
 import pytest
 
-from pet import network_info as ni
+from pet.modules.network_info import data as ni
 
 
 class FakeResponse:

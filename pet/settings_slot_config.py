@@ -66,7 +66,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 
-from . import overlay_settings_command, pet_profiles
+from . import module_config, overlay_settings_command, pet_profiles
 from .config import Config, chat_secret_carryover, normalize_pet_profile_snapshot
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,8 @@ __all__ = [
 _UNPINNED = object()
 
 #: 该写进 slot 文件的键 = per-slot 取源集（``overlay_spawn_state`` 的单一来源）。
-SLOT_ROUTED_KEYS = pet_profiles.PER_PET_KEYS
+#: 模块 schema 声明为 global 的键显式排除：全局真值只能有一份（主 ``config.json``）。
+SLOT_ROUTED_KEYS = pet_profiles.PER_PET_KEYS - module_config.module_global_keys()
 
 #: slot 文件的**本地**键：只有落种/身份逻辑读它，运行期一个都不看。
 #: 写进主配置会凭空多出第三个真值，故与 per-slot 键同走 slot 文件。

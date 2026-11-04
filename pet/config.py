@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import catalog
+from . import catalog, module_config
 from .focus_mode import normalize_focus_config
 
 
@@ -842,7 +842,7 @@ class Config:
         ``__init__`` 与 :meth:`reset_to_defaults` 共用本方法：默认值只此一份，
         重置设置必须与首次启动落在同一组值上（两份字面量迟早会漂移）。
         """
-        return {
+        data = {
             "version": 4,
             "rx": None,
             "ry": None,
@@ -928,8 +928,6 @@ class Config:
             # 优先级 = 收缩时尾部先被折叠**；合法 id = 声明清单里的第三方组件
             # （``_clean_island_metrics`` 是准入口径）。默认空 = 只要主信息。
             "island_metrics": [],
-            # 右键菜单「网络信息」入口显隐（弹窗只在打开时取一次数据，不轮询）。
-            "network_info_menu_enabled": True,
             "proactive_screen": _default_proactive_screen_data(),
             "focus_mode": normalize_focus_config(None),
             "agent_link": _default_agent_link_data(),
@@ -963,6 +961,10 @@ class Config:
             "settings_process_isolation": True,
             "chat": _default_chat_data(),
         }
+        # 模块拥有的配置键（键名稳定）也从 schema 来：删模块即删默认值，
+        # 设置页「默认值」小字 / reset_to_defaults 与首次启动同源。
+        data.update(module_config.module_defaults())
+        return data
 
     def _migrate_legacy_config(self, base) -> None:
         """旧版各变体共用 %APPDATA%/dsh-pet-standalone；升级后首次运行时
@@ -1064,6 +1066,7 @@ class Config:
                     if "vision_api_key" not in raw_provider and previous_provider.get("vision_api_key"):
                         merged_provider["vision_api_key"] = previous_provider["vision_api_key"]
         for key in (
+            *module_config.module_keys(),
             "rx",
             "ry",
             "screen_name",
@@ -1134,7 +1137,6 @@ class Config:
             "chat_always_on_top",
             "dynamic_island",
             "island_metrics",
-            "network_info_menu_enabled",
             "media_prewarm",
             "first_frame_cache_max_mb",
             "predict_prewarm_lead_ms",
@@ -1465,9 +1467,8 @@ class Config:
         self.data["chat_ui_style"] = ui_style if ui_style in {"modern", "classic"} else "modern"
         self.data["chat_always_on_top"] = bool(self.data.get("chat_always_on_top", False))
         self.data["dynamic_island"] = _clean_dynamic_island_data(self.data.get("dynamic_island"))
-        # 网络信息菜单入口：布尔同规防字符串布尔误开。
-        self.data["network_info_menu_enabled"] = _bool_or_default(
-            self.data.get("network_info_menu_enabled"), True)
+        # 模块配置：各自 schema 就地清洗（例如网络信息菜单开关的字符串布尔）。
+        module_config.normalize_module_keys(self.data)
         # 灵动岛附加指标：列表归一化（只接受已声明的第三方组件 id）。
         self.data["island_metrics"] = _clean_island_metrics(
             self.data.get("island_metrics"))
@@ -1581,7 +1582,7 @@ class Config:
             "chat_always_on_top",
             "dynamic_island",
             "island_metrics",
-            "network_info_menu_enabled",
+            *module_config.module_keys(),
         }:
             self._normalize_pet_settings()
             # 本次显式赋的键是**整值替换**，不是"用户删了里面的子键"：把它的规范化

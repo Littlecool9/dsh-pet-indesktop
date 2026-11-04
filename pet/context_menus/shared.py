@@ -844,42 +844,6 @@ def add_look_screen(menu: QMenu, pet, *, icons: bool = True):
     return add_action(menu, "看看屏幕", "screen" if icons else None, callback, close_on_trigger=True)
 
 
-def network_info_menu_enabled(pet) -> bool:
-    """「网络信息」入口的开关（``network_info_menu_enabled``，默认开）。
-
-    开关真值只有一份：注册表的 ``enabled`` 与本模块建造器写的 tooltip 共用它，
-    避免"设置里关掉了、菜单里还在"这种两套真值。
-    """
-    cfg = getattr(pet, "cfg", None)
-    if cfg is None:
-        return True
-    return bool(cfg.get("network_info_menu_enabled", True))
-
-
-#: 入口关掉时的说明（注册表的 ``disabled_reason`` 与建造器写的 tooltip 共用这一份，
-#: 口径见 CONTEXT.md 的 Runtime Disabled：保留位置、置灰、并解释原因）。
-NETWORK_INFO_DISABLED_REASON = "已在设置里关闭「网络信息」菜单入口"
-
-
-def add_network_info(menu: QMenu, pet, *, icons: bool = True):
-    """「网络信息」入口：**能力**看回调，**开关**看配置，两者语义不同。
-
-    - 回调不存在（纯桌宠变体）＝ 能力不可用 → 整条不出现；
-    - 开关关掉 ＝ 运行时停用 → 保留位置、置灰并写上说明（不消失、也不点了没反应）。
-      置灰在建造器里落地（任何调用方——布局渲染或直调——拿到的都是同一份 reason），
-      ``populate`` 之后还会按 ``enabled_ids`` 再置一次灰（幂等）。
-    """
-    callback = getattr(pet, "on_network_info", None)
-    if callback is None:
-        return None
-    action = add_action(
-        menu, "网络信息", "web" if icons else None, callback, close_on_trigger=True)
-    if not network_info_menu_enabled(pet):
-        action.setEnabled(False)
-        action.setToolTip(NETWORK_INFO_DISABLED_REASON)
-    return action
-
-
 #: 「截图」入口名。置灰理由的真值在 ``pet/screen_capture/reasons.py``
 #: （动作条「翻译」按钮的 tooltip 与结果浮层状态行共用一份）。
 SCREEN_CAPTURE_LABEL = "截图提问"
