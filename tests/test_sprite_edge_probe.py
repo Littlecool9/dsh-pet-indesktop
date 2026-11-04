@@ -9,8 +9,7 @@
   （tick 计数口径的实现会失败在这条）；
 - 点击真实角色 → 拉直（角度 0、曝光 engage）→ EDGE_IDLE_SECONDS 后自动
   退回探头姿态；
-- cancel 三触发源：拖拽开始 / 碰撞真撞击 / 抛掷态；碰撞取消后按
-  EDGE_REENTRY_SECONDS 延迟重进；
+- cancel 触发源：拖拽开始 / tick 检测到拖拽态；
 - 多 sprite 各自独立；
 - 钳制放宽（与旧 probe_body_bounds 逐值对拍）与取消后恢复，且不影响
   其它 sprite；
@@ -34,7 +33,7 @@ from PySide6.QtGui import QImage, QPainter, QRegion
 from PySide6.QtWidgets import QApplication
 
 from pet.overlay_window import OverlayWindow
-from pet.pet_sprite import INTERACTION_DRAG, INTERACTION_NORMAL, INTERACTION_THROWN, PetSprite
+from pet.pet_sprite import INTERACTION_DRAG, INTERACTION_NORMAL, PetSprite
 from pet.sprite_behavior import STATE_MOVE, BehaviorController
 from pet.sprite_edge_probe import (
     EDGE_ENGAGE_EXPOSURE,
@@ -42,7 +41,6 @@ from pet.sprite_edge_probe import (
     EDGE_IDLE_SECONDS,
     EDGE_PEEK_EXPOSURE,
     EDGE_PROBE_ANGLE,
-    EDGE_REENTRY_SECONDS,
     EDGE_REST_SECONDS,
     EDGE_RETURN_MS,
     EDGE_STRAIGHTEN_MS,
@@ -449,42 +447,6 @@ def test_drag_started_cancels_and_restores_normal_clamp():
     assert sprite.body_rect().left() >= BOUNDS.left()
 
 
-def test_drag_during_reentry_countdown_voids_it():
-    """重进倒计时期间拖拽 → 作废倒计时，改走常规静止阈值（不等剩余 5 秒）。"""
-    world, clock = _world()
-    sprite = _sprite((0.0, 300.0))
-    _drive_to_peeking(world, clock, [sprite])
-    sprite.interaction_state = INTERACTION_THROWN
-    world.tick([sprite], 1 / 60)
-    assert world.reentry_remaining_of(sprite) > 0.0
-
-    sprite.interaction_state = INTERACTION_DRAG
-    world.on_sprite_drag_started(sprite)
-    assert world.reentry_remaining_of(sprite) == 0.0
-
-    _run(world, clock, [sprite], 2.0, step=0.05)
-    assert world.mode_of(sprite) == OFF  # 拖拽期间不进入
-
-    sprite.interaction_state = INTERACTION_NORMAL
-    world.on_sprite_drag_released(sprite)
-    _run(world, clock, [sprite], EDGE_REST_SECONDS + 0.05, step=0.02)
-    assert world.mode_of(sprite) == ENTERING  # 只等静止阈值，不是剩余 5 秒
-
-
-def test_thrown_state_cancels_and_arms_reentry():
-    """抛掷：tick 检测到 thrown 即取消并arm 重进倒计时（物理落地后 tick 自行重进）。"""
-    world, clock = _world()
-    sprite = _sprite((0.0, 300.0))
-    _drive_to_peeking(world, clock, [sprite])
-
-    sprite.interaction_state = INTERACTION_THROWN
-    world.tick([sprite], 1 / 60)
-
-    assert world.mode_of(sprite) == OFF
-    assert sprite.probe_exposure == 1.0
-    assert world.reentry_remaining_of(sprite) > 0.0
-
-
 def test_cancel_is_idempotent_and_forget_clears_state():
     world, clock = _world()
     sprite = _sprite((0.0, 300.0))
@@ -496,7 +458,6 @@ def test_cancel_is_idempotent_and_forget_clears_state():
 
     world.forget(sprite)
     assert world.mode_of(sprite) == OFF
-    assert world.reentry_remaining_of(sprite) == 0.0
 
 
 # ---------------------------------------------------------------- 多 sprite 独立
@@ -743,7 +704,6 @@ def test_unknown_sprite_queries_are_safe():
     assert world.is_probing(sprite) is False
     assert world.angle_of(sprite) == 0.0
     assert world.exposure_of(sprite) == 1.0
-    assert world.reentry_remaining_of(sprite) == 0.0
 
 
 # ---------------------------------------------------------------- overlay 壳接线

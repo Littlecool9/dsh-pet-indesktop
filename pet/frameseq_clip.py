@@ -630,12 +630,12 @@ class FrameSeqClip(QObject):
         return True
 
     def set_playback_speed(self, speed: float) -> None:
-        """写入播放速率（用户速率 × 飞行倍率）。
+        """写入播放速率（菜单「播放速率」的用户速率）。
 
         运行中的帧表按 ``_apply_interval`` 落地新间隔：同值不碰 QTimer、真变速
         排到下一次 ``_advance`` 落地——对运行中的 QTimer ``start(ms)`` 会重开
-        倒计时，飞行期每 ~4 tick 的写入会把帧交付一路推迟（实机"上下飞帧数上
-        不去"，见 tests/test_flight_frame_pacing.py）。
+        倒计时，频繁写入会把帧交付一路推迟（见
+        tests/test_playback_speed_frame_pacing.py）。
         """
         self.playback_speed = max(0.1, float(speed))
         if self._running and not self._paused:

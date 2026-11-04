@@ -17,7 +17,7 @@
 RETURNING``；进入条件 = 边缘 + 持续静止（``EDGE_REST_SECONDS``，「拖着经过
 边缘」不算）；过渡动画是角度/曝光 tween，**时间基是注入时钟而不是 tick
 计数**；点击真实角色 → 拉直（0°/``EDGE_ENGAGE_EXPOSURE``）→
-``EDGE_IDLE_SECONDS`` 后自动退回探头姿态；拖拽开始/抛掷态 → ``cancel``；
+``EDGE_IDLE_SECONDS`` 后自动退回探头姿态；拖拽开始/拖拽态 → ``cancel``；
 多 sprite 各自独立；隐藏时 ``pause`` 冻结进度、``resume`` 从原处继续（同旧机）。
 
 与旧机的两处刻意差异（sprite 世界无对应物，已在测试里固化）：
@@ -30,7 +30,7 @@ RETURNING``；进入条件 = 边缘 + 持续静止（``EDGE_REST_SECONDS``，「
    （旧 ``_restore_x`` 的等价物），不需要记账进入前的坐标。
 
 tick 链挂载建议（壳层接线）：行为控制器之后（探头姿态是位置/角度的最终写
-入口）、抛掷物理之前；overlay 鼠标路由接
+入口）；overlay 鼠标路由接
 ``on_sprite_drag_started``/``on_sprite_drag_released``/``on_sprite_clicked``
 （点击返回值 True 表示被探头消费，壳层据此抑制点击音效），sprite 移除监听
 接 ``forget``。本模块不 import overlay/shell，bounds 由集成层传入，offscreen
@@ -45,7 +45,7 @@ from typing import Any
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRect
 
-from .pet_sprite import INTERACTION_NORMAL, INTERACTION_THROWN
+from .pet_sprite import INTERACTION_NORMAL
 from .window_effects import eased_progress, rotated_region_bounds
 
 # 日志锚点口径同旧机：定位「探出太多/按框探」需要姿态与分母框数据。
@@ -61,8 +61,6 @@ EDGE_ENTER_MS = 300
 EDGE_STRAIGHTEN_MS = 250
 EDGE_RETURN_MS = 300
 EDGE_IDLE_SECONDS = 5.0
-# 抛掷取消后允许重新进入探头吸附前的等待秒数（旧批 A 语义）。
-EDGE_REENTRY_SECONDS = 5.0
 # 进入前的持续静止时长（sprite 版「停在边缘」判据）：拖着经过边缘不算静止。
 EDGE_REST_SECONDS = 0.35
 # 静止判定的速度上限（px/s）：行为控制器的步态速度远高于此。
@@ -79,11 +77,6 @@ STRAIGHTENED = "STRAIGHTENED"
 RETURNING = "RETURNING"
 
 _TRANSITION_MODES = frozenset({ENTERING, STRAIGHTENING, RETURNING})
-# 触发「等待落地停稳后重新进入」的取消原因（抛掷给 5 秒缓冲，避免刚摔回来
-# 又被吸住）。
-_REENTRY_REASONS = frozenset({"throw"})
-
-
 def edge_side_at_rest(sprite: Any, bounds: QRect) -> str | None:
     """sprite 是否贴在 bounds 的左/右缘（稳定身体框口径）。
 
@@ -125,14 +118,13 @@ def probe_target_x(side: str, exposure: float, projected_local: QRect,
 class _ProbeState:
     """单个 sprite 的探头会话状态（控制器私有，不落在 sprite 上）。
 
-    ``mode == OFF`` 时该条目只承担两件事之一：进入前的静止累计，或碰撞/抛掷
-    取消后的重进倒计时（``reentry_remaining > 0``）。两种都不是"会话"。
+    ``mode == OFF`` 时该条目只承担进入前的静止累计，不是"会话"。
     """
 
     __slots__ = ("mode", "side", "angle", "exposure", "transition_start",
                  "transition_duration_ms", "from_angle", "to_angle",
                  "from_exposure", "to_exposure", "last_tick_time",
-                 "idle_remaining", "rest_seconds", "reentry_remaining")
+                 "idle_remaining", "rest_seconds")
 
     def __init__(self, now: float) -> None:
         self.mode = OFF
@@ -148,13 +140,12 @@ class _ProbeState:
         self.last_tick_time = now
         self.idle_remaining = 0.0
         self.rest_seconds = 0.0
-        self.reentry_remaining = 0.0
 
 
 class SpriteEdgeProbeWorld:
     """一组 sprite 的边缘探头世界：``tick(sprites, dt)`` 推进状态机。
 
-    与现有控制器（BehaviorController / ThrowPhysicsController）同构：纯 tick +
+    与现有控制器（BehaviorController）同构：纯 tick +
     事件入口，bounds 由集成层传入，
     不查 QScreen。``config`` 每次进入判定前热读 ``edge_probe_enabled``（设置页
     热切换生效）；关闭且无会话时整条 tick 只做一次 dict 取值即返回。
@@ -206,11 +197,6 @@ class SpriteEdgeProbeWorld:
         st = self._states.get(sprite)
         return st.exposure if st is not None and st.mode != OFF else 1.0
 
-    def reentry_remaining_of(self, sprite: Any) -> float:
-        """剩余重进倒计时秒数（无倒计时为 0.0）。"""
-        st = self._states.get(sprite)
-        return st.reentry_remaining if st is not None else 0.0
-
     def _enabled(self) -> bool:
         """热读 config（每次进入判定前调用）：缺 key/无 config 一律视为关。"""
         getter = getattr(self._config, "get", None)
@@ -238,14 +224,12 @@ class SpriteEdgeProbeWorld:
             st = self._states.get(sprite)
             if st is not None and st.mode != OFF:
                 self._tick_session(sprite, st, now)
-            elif st is not None and st.reentry_remaining > 0.0:
-                self._tick_reentry(sprite, st, now)
             else:
                 self._tick_pre_entry(sprite, now)
 
     # ---------------------------------------------------------------- 事件入口
     def on_sprite_drag_started(self, sprite: Any) -> None:
-        """拖拽开始：取消会话，并作废预进入累计/重进倒计时（旧机同语义）。"""
+        """拖拽开始：取消会话，并作废预进入累计（旧机同语义）。"""
         if self._hidden or not self._enabled():
             return
         st = self._states.get(sprite)
@@ -287,8 +271,7 @@ class SpriteEdgeProbeWorld:
         """取消会话（幂等）：清探头姿态（角度 0/曝光 1）→ 常规钳制把身体钳回屏内。
 
         ``restore`` 保留只为对齐旧机签名：sprite 世界没有窗口 x 恢复值，清姿态
-        本身就是恢复（旧 ``_restore_x`` 的等价物）。抛掷取消会 arm
-        ``EDGE_REENTRY_SECONDS`` 重进倒计时（旧批 A 语义）。
+        本身就是恢复（旧 ``_restore_x`` 的等价物）。
         """
         del restore  # 见 docstring：sprite 世界不需要窗口坐标恢复
         st = self._states.pop(sprite, None)
@@ -298,10 +281,6 @@ class SpriteEdgeProbeWorld:
         if callable(clear):
             clear()
         log.info("[边缘探头] 退出 reason=%s side=%s", reason, st.side)
-        if reason in _REENTRY_REASONS:
-            armed = _ProbeState(self._clock())
-            armed.reentry_remaining = EDGE_REENTRY_SECONDS
-            self._states[sprite] = armed
 
     def cancel_all(self, reason: str = "") -> None:
         """取消全部会话并清空状态表（功能关闭/角色切换收口；幂等）。"""
@@ -368,24 +347,9 @@ class SpriteEdgeProbeWorld:
         if st.rest_seconds >= EDGE_REST_SECONDS:
             self._enter(sprite, st, now)
 
-    def _tick_reentry(self, sprite: Any, st: _ProbeState, now: float) -> None:
-        """碰撞/抛掷取消后的重进倒计时：到点且仍静止贴边才重新进入。"""
-        dt = max(0.0, now - st.last_tick_time)
-        st.last_tick_time = now
-        st.reentry_remaining = max(0.0, st.reentry_remaining - dt)
-        if st.reentry_remaining > 0.0:
-            return
-        if self._at_rest(sprite) and edge_side_at_rest(sprite, self._bounds) is not None:
-            self._enter(sprite, st, now)
-        else:
-            self._states.pop(sprite, None)
-
     def _tick_session(self, sprite: Any, st: _ProbeState, now: float) -> None:
-        # 兜底：拖拽/抛掷即使没走事件入口（壳层漏接线/事件丢失）也必须打断会话
+        # 兜底：拖拽即使没走事件入口（壳层漏接线/事件丢失）也必须打断会话
         interaction = getattr(sprite, "interaction_state", INTERACTION_NORMAL)
-        if interaction == INTERACTION_THROWN:
-            self.cancel(sprite, "throw")
-            return
         if interaction != INTERACTION_NORMAL or getattr(sprite, "dragging", False):
             self.cancel(sprite, "drag_away")
             return
@@ -403,7 +367,6 @@ class SpriteEdgeProbeWorld:
         side = edge_side_at_rest(sprite, self._bounds) or "left"
         st.side = side
         st.rest_seconds = 0.0
-        st.reentry_remaining = 0.0
         st.idle_remaining = 0.0
         set_velocity = getattr(sprite, "set_velocity", None)
         if callable(set_velocity):
@@ -498,7 +461,7 @@ def create_edge_probe_world(config: Any, bounds: QRect, *, clock=None) -> Sprite
 # 公开接口清单（壳层接线检索用）。
 __all__ = [
     "EDGE_ENGAGE_EXPOSURE", "EDGE_ENTER_MS", "EDGE_IDLE_SECONDS",
-    "EDGE_PEEK_EXPOSURE", "EDGE_PROBE_ANGLE", "EDGE_REENTRY_SECONDS",
+    "EDGE_PEEK_EXPOSURE", "EDGE_PROBE_ANGLE",
     "EDGE_REST_SECONDS", "EDGE_REST_SPEED_EPS", "EDGE_RETURN_MS",
     "EDGE_STRAIGHTEN_MS", "EDGE_TOLERANCE_PX",
     "ENTERING", "OFF", "PEEKING", "RETURNING", "STRAIGHTENED",

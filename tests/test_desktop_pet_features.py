@@ -999,7 +999,6 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
     dialog.scale_combo.setCurrentIndex(dialog.scale_combo.findData(0.85))
     dialog.on_top_check.setChecked(False)
     dialog.no_move_check.setChecked(True)
-    dialog.drag_physics_check.setChecked(True)
     dialog.autostart_check.setChecked(True)
     assert isinstance(dialog.scale_combo, settings_mod.ModernSelect)
     assert isinstance(dialog.speed_select, settings_mod.ModernSelect)
@@ -1079,7 +1078,6 @@ def test_modern_settings_panel_uses_sidebar_and_includes_ai_settings(tmp_path, m
     assert loaded.get("scale") == 0.85
     assert global_config.get("on_top") is False
     assert global_config.get("no_move") is True
-    assert loaded.get("drag_physics") is True
     assert loaded.get("playback_speed") == 1.5
     assert loaded.get("self_talk_bubble_style") == "paper_left"
     assert loaded.get("self_talk_duration_seconds") == 8.5

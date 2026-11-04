@@ -11,7 +11,7 @@
 - **活动区（精灵可站立域）= 各屏可用工作区平移到窗口局部坐标后的矩形集合**
   （``ScreenHost.activity`` + ``PetSprite.set_clamp_rects``），不是单个包围矩形：
   错位拼接的屏间空洞没有显示器，单矩形会让宠走进看不见的地方；
-- **每宿主一份**控制器（BehaviorController/ThrowPhysicsController），由**统一 tick
+- **每宿主一份**行为控制器（BehaviorController），由**统一 tick
   驱动器**（tick_driver.TickDriver，M-2/T2）
   在同一个 QTimer 里推进；``self.overlay`` / ``_bounds`` / 三控制器就是这张窗的面；
 - 进程级共享面仍只有一份：壳、驱动器时钟、音效池、联动/主动搭话、托盘、监视器、
@@ -50,13 +50,11 @@ None，扇出集合为空等于联动/自说自话静默缺失（D0 的另一半
 - 气泡：``show_bubble`` / ``hold_bubble`` / ``hide_bubble`` 落主 sprite 头顶
   （``SpriteBubbleFollower.show``）；提醒队列 ``show_alert`` / ``resolve_alert``
   / ``clear_alerts`` 直接复用 ``window_alerts`` 的 host 形函数（同一份队列
-  语义，不重复造）；飞行期（``_flying_sprites``）气泡整体禁掉——统一门禁
-  ``_bubble_blocked(sprite)``，飞的那只禁泡、其余宠照常（见
-  ``_on_sprite_flight_changed``）；
+  语义，不重复造）；统一气泡门禁 ``_bubble_blocked(sprite)`` 只看设置页
+  抑制位（``_bubble_suppressed``）；
 - 聚合状态：``isVisible`` / ``_dragging`` / ``_physics_mode`` /
   ``_click_effect_phase`` / ``mouse_through`` / ``_bubble_busy_until`` /
-  ``_bubble_suppressed``（proactive G1 守卫与联动节流门读的就是这些；
-  ``_bubble_suppressed`` **不含**飞行态——它同时是联动节流位）；
+  ``_bubble_suppressed``（proactive G1 守卫与联动节流门读的就是这些）；
 - 联动动作：``request_link_anim`` / ``request_link_idle`` / ``switch_clip`` /
   ``cats`` / ``idles`` 映射到 ``BehaviorController``；
 - 显隐：``set_pet_visible`` 同步 pause/resume proactive 与 agent_link
@@ -99,7 +97,6 @@ from .context_menus.shared import (
     animation_icon_cache_drop_library,
     release_menu_tree,
 )
-from .physics import throw_speed_cap
 from .config import (
     DEFAULT_SELF_TALK_BUBBLE_STYLE,
     DEFAULT_SELF_TALK_DURATION_SECONDS,
@@ -109,7 +106,7 @@ from .config import (
 from .asset_paths import default_self_talk_image_dir, resolve_asset_path
 from .overlay_peripherals import FullscreenCursorWatcher
 from .overlay_window import OverlayWindow
-from .pet_sprite import INTERACTION_DRAG, INTERACTION_THROWN, PetSprite
+from .pet_sprite import INTERACTION_DRAG, PetSprite
 from .screen_host import ScreenHost
 from .session_watcher import install_session_watcher
 from .speech_bubble import (
@@ -366,13 +363,8 @@ class _SpritePetHost:
     def isVisible(self) -> bool:  # noqa: N802 (Qt/PetWindow 命名)
         return self._shell._sprite_speech_visible(self._sprite)
 
-    def _sprite_in_flight(self, sprite=None) -> bool:
-        """这一只是否正在飞行（宿主面：默认就是本宿主绑定的 sprite）。"""
-        return self._shell._sprite_in_flight(
-            self._sprite if sprite is None else sprite)
-
     def _bubble_blocked(self, sprite=None) -> bool:
-        """本 sprite 的气泡门禁（设置页抑制期或这一只正在飞行）。"""
+        """本 sprite 的气泡门禁（设置页抑制期）。"""
         return self._shell._bubble_blocked(
             self._sprite if sprite is None else sprite)
 
@@ -387,7 +379,7 @@ class _SpritePetHost:
 
     def show_bubble(self, text: str, duration_ms: int = 3200, **_kwargs) -> bool:
         if self._bubble_blocked():
-            return False  # 飞行期不弹（飞的那只禁泡，见 OverlayShell._bubble_blocked）
+            return False  # 设置页抑制期不弹（见 OverlayShell._bubble_blocked）
         return self._shell._show_bubble_text_for(
             self._sprite, str(text), int(duration_ms), **_kwargs)
 
@@ -409,7 +401,7 @@ class _SpriteServicePresenter(_SpritePetHost):
     与 ``_SpritePetHost`` 的两处差别（其余宿主面逐字沿用）：
 
     - **主 sprite 也带身份**：``show_bubble`` 走壳自己的完整门（提醒让路 / sticky /
-      飞行期），不是"当前最小的可见槽"；子 sprite 走 ``_show_bubble_text_for``。
+      抑制期），不是"当前最小的可见槽"；子 sprite 走 ``_show_bubble_text_for``。
     - ``presentation_available()``：这只宠**还在不在**。判据是对象身份（同一槽重建
       出来的是另一只宠 ⇒ 旧结果不许投给新住客，比"槽号 + 代次"更强），再叠整窗可见
       与这只自己的可见性。关闭/隐藏后迟到的结果**只取消这一次呈现**：不清全局数据
@@ -423,10 +415,10 @@ class _SpriteServicePresenter(_SpritePetHost):
         if not self.presentation_available():
             return False
         if self._bubble_blocked(self._sprite):
-            # 与 ``_SpritePetHost.show_bubble`` 同一道 per-sprite 门禁（设置页抑制期 /
-            # 这一只正在飞行）：override 只查 ``presentation_available`` 会漏掉它——
-            # 飞行中或被抑制的子宠照样冒泡（2026-10-10 终审 F04）。主 sprite 那一侧
-            # 壳的 ``show_bubble`` 自己也会查一次（``_bubble_blocked()``），两条路同门。
+            # 与 ``_SpritePetHost.show_bubble`` 同一道 per-sprite 门禁（设置页
+            # 抑制期）：override 只查 ``presentation_available`` 会漏掉它——被抑制
+            # 的子宠照样冒泡（2026-10-10 终审 F04）。主 sprite 那一侧壳的
+            # ``show_bubble`` 自己也会查一次（``_bubble_blocked()``），两条路同门。
             return False
         if self._sprite is self._shell.sprite:
             return bool(self._shell.show_bubble(text, int(duration_ms), **kwargs))
@@ -478,13 +470,8 @@ class _SpriteSelfTalkHost:
     def _bubble_suppressed(self) -> bool:
         return bool(getattr(self._shell, "_bubble_suppressed", False))
 
-    def _sprite_in_flight(self, sprite=None) -> bool:
-        """这一只是否正在飞行（宿主面：默认就是本宿主绑定的 sprite）。"""
-        return self._shell._sprite_in_flight(
-            self._sprite if sprite is None else sprite)
-
     def _bubble_blocked(self, sprite=None) -> bool:
-        """本 sprite 的气泡门禁（设置页抑制期或这一只正在飞行）。"""
+        """本 sprite 的气泡门禁（设置页抑制期）。"""
         return self._shell._bubble_blocked(
             self._sprite if sprite is None else sprite)
 
@@ -1048,12 +1035,6 @@ class OverlayShell(QObject):
         self._bubble_busy_until = 0.0
         self._bubble_suppressed = False
         self._last_sticky_restore = 0.0
-        # 飞行中的 sprite 集合（B1）：被撞飞的那只禁气泡，其余宠不受影响。
-        # 由行为控制器的飞行边沿回调维护（见 _on_sprite_flight_changed），
-        # **不**复用 _bubble_suppressed——那个位同时是 proactive/联动节流信号
-        # （multi_window_shared / agent_link / todo_reminder 读它），飞行期置真
-        # 会把联动与主动搭话一起掐掉。
-        self._flying_sprites: set = set()
         # 联动动作链（agent_link 的 request_link_anim/idle 落点）
         self._pending_link_anim: str | None = None
         self._link_anim_current: str | None = None
@@ -1099,11 +1080,6 @@ class OverlayShell(QObject):
     def behavior(self):
         host = self._main_host
         return host.behavior if host is not None else None
-
-    @property
-    def physics(self):
-        host = self._main_host
-        return host.physics if host is not None else None
 
     @property
     def _probe(self):
@@ -1153,7 +1129,7 @@ class OverlayShell(QObject):
         # 宿主持有（见 tick_driver.tick_sim），overlay 只做 advance+paint。
         self.driver = TickDriver(self)
         # 全部 overlay advance 之后跑一次：把每只宠的屏归属与 DPR 对齐到它
-        # **这一拍的实际身体位置**（弹簧档的位移发生在 advance 里，事件时刻读到的
+        # **这一拍的实际身体位置**（拖拽位置在事件时刻写入、后续还会被钳制）
         # 是上一拍的位置）。跨屏本身不需要任何路由——同一张窗内自由移动。
         self.driver.set_post_advance(self._advance_screen_sync)
         self._multi_mode = bool(self._multi_window())
@@ -1322,7 +1298,6 @@ class OverlayShell(QObject):
 
         这里是"哪些壳层面挂在窗口上"的唯一清单——漏挂哪个，那一路就静默丢失。
         """
-        host.behavior.on_flight_changed = self._on_sprite_flight_changed
         # 边缘探头（edge_probe 移植）：tick 尾段（姿态最终写入口）；config 键
         # edge_probe_enabled（默认 False）世界内每次进入判定前热读，设置页即切即生效
         from .sprite_edge_probe import create_edge_probe_world
@@ -1645,7 +1620,7 @@ class OverlayShell(QObject):
         if len(self._screen_list) < 2:
             return
         self._sync_sprite_screens()
-        # 拖拽中：弹簧每拍都在动，投影必须跟着刷新，否则缝上的另一半会定格
+        # 拖拽中：位置每拍都在动，投影必须跟着刷新，否则缝上的另一半会定格
         if self._drag_relaxed_sprite is not None:
             self._sync_drag_projection()
         if self._active_multi():
@@ -2300,17 +2275,14 @@ class OverlayShell(QObject):
 
     @property
     def _physics_mode(self):
-        """'drag'/'throw'/None——**必须保持哨兵语义**（None = 不在物理模式）。
+        """'drag'/None——**必须保持哨兵语义**（None = 不在交互接管态）。
 
         消费方读 ``getattr(win, "_physics_mode", None) is not None``：返回
         ``False`` 会让 G1 恒真拦截（multi_window_shared 的同款注释记录了
         legacy 侧踩过的坑）。
         """
-        state = getattr(self.sprite, "interaction_state", None)
-        if state == INTERACTION_DRAG:
+        if getattr(self.sprite, "interaction_state", None) == INTERACTION_DRAG:
             return "drag"
-        if state == INTERACTION_THROWN:
-            return "throw"
         return None
 
     @property
@@ -2376,45 +2348,15 @@ class OverlayShell(QObject):
         redirect = getattr(shell, "_island_feedback_bubble", None)
         return redirect if callable(redirect) else None
 
-    # ---- 飞行期气泡门禁（B1：鱼飞行过程中不弹气泡）----
-    def _sprite_in_flight(self, sprite=None) -> bool:
-        """该 sprite 是否正在飞行（``sprite=None`` = 主 sprite）。"""
-        target = self.sprite if sprite is None else sprite
-        return target is not None and target in self._flying_sprites
-
+    # ---- 气泡门禁（设置页抑制期）----
     def _bubble_blocked(self, sprite=None) -> bool:
-        """统一气泡门禁：设置页抑制期 **或** 该 sprite 正在飞行。
+        """统一气泡门禁：设置页抑制位。
 
         这是 ``window_alerts.bubble_blocked(host, sprite)`` 读的那一面（壳上
-        只有一个真值来源）；``_bubble_suppressed`` 仍是设置页/联动的聚合位，
-        两者**不可**互相赋值——飞行集合按 sprite 判定，飞的那只禁泡、其他宠
-        照常冒泡（见 ``_flying_sprites``）。
+        只有一个真值来源）；``sprite`` 参数保留给逐 sprite 调用面，当前门禁
+        与 sprite 无关。
         """
-        if self._bubble_suppressed:
-            return True
-        return self._sprite_in_flight(sprite)
-
-    def _on_sprite_flight_changed(self, sprite, flying: bool) -> None:
-        """飞行边沿（行为控制器回调）：进飞行收气泡，落地恢复提醒队列。
-
-        进飞行：把该 sprite 记进飞行集合（此后它的一切气泡入口都读
-        ``_bubble_blocked``），并**立即**收掉它当前那只气泡（复用
-        ``window_alerts.set_bubble_suppressed`` True 分支的动作口径：就地
-        hide）——被撞飞瞬间嘴边还挂着气泡是最显眼的穿帮。
-
-        出飞行：先从集合摘除，主 sprite 落地时再走 ``window_alerts`` 的恢复
-        分支（粘滞提醒重挂 / 限时提醒按原时长续上 → 超时后正常推进队列；该
-        分支自带门禁复判，设置页仍开着时不破门）。子 sprite 落地只摘集合：
-        提醒队列的呈现面是主 sprite 的气泡，子宠的飞行不该推动主宠的队列。
-        """
-        if flying:
-            self._flying_sprites.add(sprite)
-            self._hide_bubble_for_sprite(sprite)
-            return
-        self._flying_sprites.discard(sprite)
-        if sprite is not self.sprite or self._speech_bubble is None:
-            return
-        window_alerts.restore_after_suppression(self)
+        return bool(self._bubble_suppressed)
 
     # ---- 气泡呈现（PetWindow.show_bubble / hold_bubble 等价）----
     def show_bubble(self, text: str, duration_ms: int = 3200,
@@ -2422,7 +2364,7 @@ class OverlayShell(QObject):
                     buttons: list | None = None, **_ignored) -> bool:
         """向主 sprite 头顶冒泡（window.py:3850-3886 的 sprite 等价语义）。
 
-        返回是否真上了屏：不可见/飞行期/正挂提醒让路时为 False。免打扰结束的
+        返回是否真上了屏：不可见/抑制期/正挂提醒让路时为 False。免打扰结束的
         汇报走 ``window_alerts.report_quiet_summary`` 的回退气泡面，它按这个
         返回值确认交付——丢弃却报成功会把暂存排空（用户什么都没看到）。
         """
@@ -2538,7 +2480,7 @@ class OverlayShell(QObject):
 
         语义（逐条来自 G2 裁决）：
         - 承载宠仍是有效可见宠 → 副本就地保留：主位回归、别的宠显隐都**不抢回**；
-          副本当前不可见（整窗隐藏/飞行期/设置页抑制）时只记"待恢复"，绝不在
+          副本当前不可见（整窗隐藏/设置页抑制）时只记"待恢复"，绝不在
           不可见期冒泡（那会漏出不该出现的顶层气泡）；``force=True`` 用于恢复
           路径（抑制解除/落地/整窗显示）：副本还在但不可见时补挂回来；
         - 承载宠退出 / 逐只隐藏 / 屏迁移（跟随器重建）→ 有其它可见宠时整条**交接**：
@@ -2574,7 +2516,7 @@ class OverlayShell(QObject):
         self._present_alert_on(presenter, cur)
 
     def _resume_alert_copy(self) -> None:
-        """抑制/飞行/整窗隐藏结束后的提醒恢复：强制按承载宠重挂那一份副本。"""
+        """抑制/整窗隐藏结束后的提醒恢复：强制按承载宠重挂那一份副本。"""
         self._sync_alert_copy(force=True)
 
     def _alert_presenter_usable(self, sprite) -> bool:
@@ -2650,7 +2592,7 @@ class OverlayShell(QObject):
         if follower is None or follower.bubble is None:
             return False
         if self._bubble_blocked(sprite):
-            # 这一只正在飞行 / 设置页抑制期：不上屏，留给恢复分支
+            # 设置页抑制期：不上屏，留给恢复分支
             return False
         self._note_alert_presented(item)
         sticky = bool(item.get("sticky"))
@@ -3027,8 +2969,7 @@ class OverlayShell(QObject):
 
         旧版一窗一宠，答复气泡天经地义落在被点那只头顶；B7b 接上逐 sprite 气泡
         后，这里按发起者分发（``_show_bubble_text_for``：主 = 壳，子 = 它自己那只）。
-        飞行期丢弃：这条直写跟随器（不经 ``show_bubble``），不读门禁就会在
-        起飞中照样冒泡——鱼飞行过程中不弹气泡是全局要求。
+        抑制期丢弃：这条直写跟随器（不经 ``show_bubble``），必须自己读门禁。
         """
         if self._bubble_blocked(self._look_sprite):
             return
@@ -4069,11 +4010,8 @@ class OverlayShell(QObject):
         ``refresh_pet_settings`` 的等价物）：启动、``refresh_settings`` 与
         spawn 后各走一次。
 
-        缺了它（DS 全量审查 M6）：``drag_physics``/``throw_strength``/
-        ``no_move``/``playback_speed`` 只在右键菜单里能改——启动不读 config
-        （上次保存的重启即丢）、设置页改了没反应；且 sprite 侧默认值
-        （``drag_physics=True``、``throw_speed_cap=MAX_THROW_SPEED=6000``）与
-        config 默认（``False``、standard=4800）**相反**，开箱行为就不一致。
+        缺了它（DS 全量审查 M6）：``no_move``/``playback_speed`` 只在右键
+        菜单里能改——启动不读 config（上次保存的重启即丢）、设置页改了没反应。
 
         B7b：逐 sprite **各取自己那份配置**（主 = 主配置，子 = 各自的
         ``config-slot-N.json``，缺键取同源默认）——旧架构每窗读自己的 cfg，
@@ -4114,10 +4052,6 @@ class OverlayShell(QObject):
         if sprite is None:
             return
         cfg = self._sprite_config(sprite) if cfg is None else cfg
-        sprite.throw_speed_cap = throw_speed_cap(cfg.get("throw_strength"))
-        sprite.drag_physics = bool(cfg.get("drag_physics", False))
-        # 静止放手下落（#219）：与 drag_physics 平级，逐 sprite 取自己那份配置
-        sprite.drop_gravity = bool(cfg.get("drop_gravity", False))
         # 桌宠大小（scale）：旧机 refresh_pet_settings 即时 change_scale
         # （window.py:3937-3938），改完即改气泡画布/锚点。
         scale = self._config_scale(cfg)
@@ -4512,9 +4446,9 @@ class OverlayShell(QObject):
         """
         if not self._active_multi() or sprite is None:
             return False
-        # 拖拽期间**不换窗**：这只始终在源窗积分（弹簧目标/轨迹/偏移都是那一套
-        # 坐标系），别的窗只挂带缩放的只读投影。换窗会改写一整组弹簧状态，且
-        # 换完立刻恢复活动区又会把它硬钳到窗边——实机"停在副屏边缘不动"。
+        # 拖拽期间**不换窗**：这只始终在源窗坐标里移动（拖拽偏移是那一套
+        # 坐标系），别的窗只挂带缩放的只读投影。换完立刻恢复活动区又会把它硬
+        # 钳到窗边——实机"停在副屏边缘不动"。
         self._sync_drag_projection(sprite)
         return False
 
@@ -6565,7 +6499,7 @@ class OverlayShell(QObject):
         multi = self._active_multi()
         if multi:
             # 多窗：每张窗跟**自己那块屏**的可用区走；探头边界同样用虚拟桌面
-            # 拖拽中的会话先收尾：拖拽域（放宽到虚拟桌面）、投影、弹簧目标全是
+            # 拖拽中的会话先收尾：拖拽域（放宽到虚拟桌面）、投影全是
             # 按旧几何算出来的，换域之后它们指向窗外，松手会把这只丢在无显示器的
             # 空洞里。
             for each in list(self._hosts):

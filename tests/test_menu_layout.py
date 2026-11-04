@@ -322,7 +322,6 @@ def test_missing_user_layout_resolves_versioned_default():
         "character",
         "playback_speed",
         "size",
-        "drag_physics",
         "no_move",
         "mouse_through",
         "on_top",
@@ -568,7 +567,6 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
         assert rendered == expected_rendered
     pet_controls = next(action.menu() for action in menu.actions() if action.text() == "桌宠控制")
     assert [action.text() for action in pet_controls.actions() if not action.isSeparator()] == [
-        "拖动物理",
         "不移动",
         "窗口置顶",
         "开机自启",
@@ -672,14 +670,14 @@ def test_menu_editor_reorders_and_promotes_actions_with_button_controls():
     chat_index = root_ids.index("chat")
     assert reordered_ids[chat_index : chat_index + 2] == ["look_screen", "chat"]
 
-    promoted = editor.item_for_action("drag_physics")
+    promoted = editor.item_for_action("no_move")
     editor.tree.setCurrentItem(promoted)
     editor.move_menu.aboutToShow.emit()
     next(action for action in editor.move_menu.actions() if action.data() == "__root__").trigger()
 
     assert promoted.parent() is None
-    assert editor.value()["nodes"][-1]["id"] == "drag_physics"
-    assert editor.preview.topLevelItem(editor.preview.topLevelItemCount() - 1).text(0) == "拖动物理"
+    assert editor.value()["nodes"][-1]["id"] == "no_move"
+    assert editor.preview.topLevelItem(editor.preview.topLevelItemCount() - 1).text(0) == "不移动"
     editor.close()
     app.processEvents()
 
@@ -693,7 +691,7 @@ def test_menu_editor_reset_restores_the_versioned_default():
     app = QApplication.instance() or QApplication([])
     editor = MenuLayoutEditor(None)
     editor.item_for_action("chat").setCheckState(0, Qt.CheckState.Unchecked)
-    editor.tree.setCurrentItem(editor.item_for_action("drag_physics"))
+    editor.tree.setCurrentItem(editor.item_for_action("no_move"))
     editor.move_menu.aboutToShow.emit()
     next(action for action in editor.move_menu.actions() if action.data() == "__root__").trigger()
 
@@ -1636,7 +1634,7 @@ def test_menu_preview_and_runtime_qmenu_share_the_same_layout_structure():
         if node["id"] == "pet_controls":
             node["label"] = "常用桌宠操作"
             for child in node["children"]:
-                child["visible"] = child["id"] == "drag_physics"
+                child["visible"] = child["id"] == "no_move"
 
     class FakeConfig:
         def get(self, key, default=None):
@@ -1649,10 +1647,10 @@ def test_menu_preview_and_runtime_qmenu_share_the_same_layout_structure():
 
     class FakePet:
         cfg = FakeConfig()
-        drag_physics = False
+        no_move = False
         on_open_chat = lambda self: None
         on_open_modern_settings = lambda self: None
-        set_drag_physics = lambda self, _enabled: None
+        set_no_move = lambda self, _enabled: None
         request_quit = lambda self: None
 
     def preview_shape(parent):
@@ -2006,7 +2004,7 @@ def test_user_layout_gains_future_default_action_without_losing_custom_order(
                     "label": "桌宠控制",
                     "visible": True,
                     "children": [
-                        {"type": "action", "id": "drag_physics", "visible": True},
+                        {"type": "action", "id": "on_top", "visible": True},
                         {"type": "action", "id": "future_action", "visible": True},
                         {"type": "action", "id": "no_move", "visible": True},
                     ],
@@ -2028,7 +2026,7 @@ def test_user_layout_gains_future_default_action_without_losing_custom_order(
                     "visible": True,
                     "children": [
                         {"type": "action", "id": "no_move", "visible": True},
-                        {"type": "action", "id": "drag_physics", "visible": False},
+                        {"type": "action", "id": "on_top", "visible": False},
                     ],
                 },
                 {"type": "action", "id": "modern_settings", "visible": True},
@@ -2036,15 +2034,13 @@ def test_user_layout_gains_future_default_action_without_losing_custom_order(
             ],
         },
         registered_actions={
-            "drag_physics",
-            "future_action",
+                "future_action",
             "no_move",
             "modern_settings",
             "quit",
         },
         available_actions={
-            "drag_physics",
-            "future_action",
+                "future_action",
             "no_move",
             "modern_settings",
             "quit",

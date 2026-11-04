@@ -158,7 +158,6 @@ class _ReferenceHost:
         self.on_switch_character = lambda character_id: None
         self.playback_speed = 1.0
         self.scale = 1.0
-        self.drag_physics = False
         self.no_move = False
 
     def look_at_screen(self) -> None:
@@ -361,7 +360,7 @@ def test_capabilities_exposed_in_the_overlay_menu(tmp_path):
         menu = build_sprite_full_menu(shell)
         labels = _all_labels(menu)
         for label in ("AI 对话", "播放动画", "切换角色", "播放速率", "大小",
-                      "拖动物理", "边缘探头", "显示本轮消费", "桌宠设置"):
+                      "不移动", "边缘探头", "显示本轮消费", "桌宠设置"):
             assert label in labels, f"modern 树缺项：{label}"
         controls = _find(menu, "桌宠控制").menu()
         assert _find(controls, "生小肥鱼") is not None

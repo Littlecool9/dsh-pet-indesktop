@@ -21,24 +21,20 @@ Phase 4.1a 硬化（PHASE4_DESIGN.md D2/D3）：
 from __future__ import annotations
 
 import math
-import time
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QImage, QPainter, QPixmap
 
 from . import catalog
-from . import physics as physics_mod
 from .library import MovieLibrary, clip_current_image
 from .window_effects import (begin_rotation, end_rotation, rotated_region_bounds,
                              unrotate_point)
 
-# 交互状态（跨模块协调协议，见 .scratch/single-overlay-window/spec.md）：
-# "normal" = 行为状态机驱动（游荡/待机/转向）；"drag" = 被用户拖拽；
-# "thrown" = 抛掷物理接管。行为控制器只在 "normal" 下写 velocity；
-# 碰撞世界只在双方非 "drag" 时结算；物理控制器只在 "thrown" 下积分。
+# 交互状态（跨模块协调协议）："normal" = 行为状态机驱动（游荡/待机/转向）；
+# "drag" = 被用户拖拽，位置由鼠标事件直接写入。行为控制器只在 "normal" 下
+# 写 velocity / 推进掷骰链。
 INTERACTION_NORMAL = "normal"
 INTERACTION_DRAG = "drag"
-INTERACTION_THROWN = "thrown"
 
 # Q 弹挤压时长（口径源 window.py:665 _squash_duration_ms）
 SQUASH_DURATION_MS = 220
@@ -87,14 +83,13 @@ class PetSprite(QObject):
         self.home_screen = None
         # pos 为 overlay 局部逻辑坐标（Phase 1a 单屏：overlay 铺满主屏，
         # 局部坐标 = 屏幕逻辑坐标）；多屏几何见 spec 开放问题 Q1。
-        # 位置变化由外部行为（wander 速度/抛掷物理）写 velocity 或 set_pos；
-        # advance 只负责按 velocity 积分，不知道速度从哪来。一切位置写入
-        # 收口 set_pos（body_box 钳制的唯一执行点）。
+        # 位置变化由外部行为（wander 速度）写 velocity 或 set_pos；advance
+        # 只负责按 velocity 积分，不知道速度从哪来。一切位置写入收口 set_pos
+        #（body_box 钳制的唯一执行点）。
         # 脏上报（V-3/V-4）：overlay 在 add_sprite 时挂 _dirty_cb(old, new)，
         # set_pos 与帧到达直驱重绘，tick 不再是重绘闸门；_last_reported_rect
         # 记"上次上报给 overlay 的绘制外接矩形"（含探头旋转溢出，见
-        # paint_bounds），advance 据此捕获 tick 之外（物理控制器/拖拽事件）
-        # 发生的位移。
+        # paint_bounds），advance 据此捕获 tick 之外（拖拽事件）发生的位移。
         self._dirty_cb = None
         self._kinetic_cb = None  # M-1：运动信号回调（overlay 挂接）
         self._last_reported_rect: QRect | None = None
@@ -120,27 +115,6 @@ class PetSprite(QObject):
         self._hit_image: QImage | None = None
         self._dragging = False
         self._drag_offset: QPointF | None = None
-        # 拖拽轨迹（(monotonic_ts, x, y) 光标样本）：松手初速估算的输入，
-        # 格式对齐 physics.estimate_release_velocity；松手后清空
-        self._drag_trail: list[tuple[float, float, float]] = []
-        # 拖拽弹簧状态（drag_physics 开时生效）：on_move 只写目标点，
-        # advance 用 physics.spring_velocity 阻尼跟随——legacy
-        # window.py _tick_drag_physics 的手感（K=200/C=30，滞后约 4 帧）。
-        # 关 = 1:1 直写（overlay 初版行为）。
-        self._drag_spring_target: QPointF | None = None
-        self._drag_spring_vel = QPointF(0.0, 0.0)
-        # 拖拽弹簧系数（比 legacy 的 200/30 活：滞后约减半、微过冲）
-        self.drag_spring_k = 300.0
-        self.drag_spring_c = 24.0
-        # 弹簧活跃期（拖拽中未收敛）：set_pos 的整数矩形跳报（F-PERF P1）
-        # 让位——绘制落点是 float pos，亚像素步进也要上屏，否则拖拽掉帧
-        self._spring_active = False
-        # 时间源：默认 time.monotonic；测试替换为假钟即可确定性构造轨迹，
-        # 不用固定 sleep 赌时序
-        self._clock = time.monotonic
-        # 甩出速度软上限（px/s，对应旧架构 throw_strength 档位）：由集成层
-        # 按设置写入，松手初速过 physics.soft_clamp_speed 时以此为渐近值
-        self.throw_speed_cap = physics_mod.MAX_THROW_SPEED
         # 播放速率（菜单「播放速率」写入口）：bind_clip 起播时应用到新 clip
         self.playback_speed = 1.0
         # ffmpeg 圈边界回收阈值（分钟，0=关闭；config 缺省 10）：由集成层
@@ -150,15 +124,6 @@ class PetSprite(QObject):
         # Q 弹挤压（点击/碰撞反馈，window.py _squash_geometry 语义）：
         # None = 未激活；否则 0..1 进度，advance 按 220ms 推进
         self._squash_progress: float | None = None
-        # 拖动物理开关（菜单「拖动物理」）：False 时松手原地放下（不抛掷）、
-        # 拖拽 1:1 直跟。缺省 False 对齐 config 默认值与集成层同步口径
-        #（overlay_shell._sync_sprite_settings 按设置显式写入）；弹簧跟随
-        #（on_move 不直写、advance 阻尼积分）只在 True 时生效。
-        self.drag_physics = False
-        # 静止放手下落（config drop_gravity，#219）：True 时低速松手不再原地
-        # 停在半空，而是零初速进抛掷物理（重力落地）。默认关 = 旧行为；
-        # 集成层 `_sync_sprite_settings` 按设置写入。
-        self.drop_gravity = False
         # 见模块顶部 INTERACTION_* 常量：跨模块协调协议的唯一权威字段
         self.interaction_state = INTERACTION_NORMAL
         # 逐只显隐（M14 / PHASE4_DESIGN 4.1b）：False = 不绘制、不命中、不进
@@ -423,8 +388,7 @@ class PetSprite(QObject):
         状态），因此不影响其它 sprite 的钳制。
 
         多矩形跨屏域（``_clamp_rects``）**不**经由本方法返回：那是"多个合法矩形"
-        而不是一个矩形，``_at_ground``/``set_pos`` 各取所需（前者要离当前身体最近的
-        那一块，后者逐块钳取位移最小的解）。
+        而不是一个矩形，由 ``set_pos`` 逐块钳取位移最小的解。
         """
         relaxed = self.probe_clamp_bounds()
         if relaxed is not None:
@@ -432,29 +396,6 @@ class PetSprite(QObject):
         if self._clamp_rects is not None:
             return self._settling_rect()
         return self._bounds
-
-    def _settling_rect(self) -> QRectF | None:
-        """多矩形域里离这只最近的那一块（``_at_ground`` 这类单矩形口径的取法）。
-
-        贴地/落地判据只对"这只此刻所在的那块屏"有意义：取包含身体中心的那块，
-        都不包含时取中心距离最近的那块（错位拼接的缝上就是这种情形）。
-        """
-        rects = self._clamp_rects
-        if not rects:
-            return None
-        body = self._body_local_rect()
-        cx = self.pos.x() + body.x() + body.width() / 2.0
-        cy = self.pos.y() + body.y() + body.height() / 2.0
-        best = None
-        for rect in rects:
-            if rect.contains(cx, cy):
-                return rect
-            dx = max(rect.left() - cx, 0.0, cx - (rect.left() + rect.width()))
-            dy = max(rect.top() - cy, 0.0, cy - (rect.top() + rect.height()))
-            d = dx * dx + dy * dy
-            if best is None or d < best[0]:
-                best = (d, rect)
-        return best[1] if best is not None else None
 
     def set_clamp_rects(self, rects) -> None:
         """登记/清除**多矩形合法域**（跨屏拖拽过渡期用；``None`` 恢复 ``_bounds``）。
@@ -518,25 +459,6 @@ class PetSprite(QObject):
                     return False
         return True
 
-    def _at_ground(self) -> bool:
-        """是否已贴住活动区地面（松手语义用，容差同 ``physics.is_at_rest``）。
-
-        地面 = 身体框下缘贴 bounds 下缘的那个 y，即 ``set_pos`` 钳制域的**最深
-        下界**——直接问钳制函数本身（传 +inf 让 ``_clamp_axis`` 返回它的 upper，
-        含小屏兜底），不另抄一份几何式。与抛掷物理的地板线同源：壳对 sprite 与
-        ``ThrowPhysicsController`` 喂同一个 bounds，``_sprite_bounds`` 的 bottom
-        就是这条线。无 bounds（未挂活动区）时返回 False——宁可进抛掷链，也不假
-        定"已经落地"。
-        """
-        domain = self._clamp_domain()
-        if domain is None:
-            return False
-        body = self._body_local_rect()
-        ground = self._clamp_axis(
-            math.inf, domain.top(), domain.top() + domain.height(),
-            body.y(), body.height())
-        return self.pos.y() >= ground - 1.0
-
     def set_pos(self, pos: QPointF) -> None:
         """唯一位置写入口：写入前按 body_box 钳制（D3）。
 
@@ -578,8 +500,8 @@ class PetSprite(QObject):
             return
         old_rect = self.paint_bounds()
         self.pos = new_pos
-        # V-3/V-4：位移直驱重绘——物理控制器（before_sprites_advance）与
-        # 拖拽事件都在 advance 之外移动 sprite，旧位置必须即时上报清除，
+        # V-3/V-4：位移直驱重绘——拖拽事件在 advance 之外移动 sprite，
+        # 旧位置必须即时上报清除，
         # 否则静态素材冻结、动画素材拖尾。overlay 的 update 天然合并
         # 同一事件轮次内的多次调用，tick 内多次 set_pos 不会放大 paint。
         # 脏矩形口径 = 绘制外接矩形（含探头旋转溢出），45° 姿态下只报
@@ -590,7 +512,7 @@ class PetSprite(QObject):
         # 待上屏帧（_frame_dirty）照旧上报：帧到达路径的报脏语义不变，新帧
         # 有机会上屏。帧到达/换帧另有 _on_frame_changed 直驱通道，不依赖这里。
         new_rect = self.paint_bounds()
-        if new_rect == old_rect and not self._frame_dirty and not self._spring_active:
+        if new_rect == old_rect and not self._frame_dirty:
             return
         self._notify_dirty(old_rect, new_rect)
 
@@ -599,7 +521,7 @@ class PetSprite(QObject):
 
         消费方（overlay/其宿主窗口）C++ 侧已销毁时，回调会以
         ``RuntimeError: ... already deleted`` 抛出。本方法被 ``_on_frame_changed``
-        （clip 信号槽）与 ``set_pos``（鼠标/行为/物理链路）调用，抛出就落成
+        （clip 信号槽）与 ``set_pos``（鼠标/行为链路）调用，抛出就落成
         信号槽里的 unraisable（pytest 按未捕获异常判败）。脏上报是
         fire-and-forget：消费方没了就没有上屏对象，就地丢弃。
 
@@ -618,8 +540,8 @@ class PetSprite(QObject):
 
     def set_velocity(self, velocity: QPointF) -> None:
         self.velocity = QPointF(velocity)
-        # M-1：非零速度 = 运动信号，同步唤醒 tick 档位——行为掷骰起步、
-        # 碰撞写回、松手甩出都不等下一个（可能已降档的）tick
+        # M-1：非零速度 = 运动信号，同步唤醒 tick 档位——行为掷骰起步不等
+        # 下一个（可能已降档的）tick
         cb = self._kinetic_cb
         if cb is not None and not self.velocity.isNull():
             cb()
@@ -700,7 +622,7 @@ class PetSprite(QObject):
     def clear_probe_pose(self) -> None:
         """清探头姿态并恢复常规钳制（身体被钳回 bounds 内）。
 
-        会话取消（拖拽/碰撞/抛掷/功能关闭）的收口：旧机的窗口 x 恢复值在
+        会话取消（拖拽/功能关闭）的收口：旧机的窗口 x 恢复值在
         sprite 世界就是「清姿态 + 常规钳制」——set_pos 会把身体钳回边缘，
         与进入探头前的位置一致。未处于探头姿态时是 no-op（幂等）。
         """
@@ -889,43 +811,6 @@ class PetSprite(QObject):
         if cb is not None:
             cb(self)
 
-    # ---------------------------------------------------------------- 飞行期播放速率（F4）
-    def set_flight_anim_speed(self, factor: float) -> None:
-        """飞行期动画倍率：当前 clip 速率 = 用户播放速率 × factor。
-
-        由 sprite_physics 每 tick 按当拍速度调用（倍率本身是纯函数
-        physics.flight_anim_speed，见 window.py:4328-4340）。速率变化小于
-        0.05 时跳过写入——省一次跨模块调用；**帧表节拍的保护不在这里**：真正
-        "同值不写、真变速顺延到下次 timeout 落地"的判据按取整后的 interval 在
-        clip 内部（``WebMClip._apply_interval`` / ``FrameSeqClip._apply_interval``）
-        ——只有 clip 知道 fps 与解码节流除数，间隔口径在那里才不会漂。原先是
-        每次写入都重设 QTimer，把当拍倒计时截断、帧交付被压慢（实机"上下飞帧数
-        上不去"，见 tests/test_flight_frame_pacing.py）。
-        """
-        clip = self._clip
-        if clip is None:
-            return
-        setter = getattr(clip, "set_playback_speed", None)
-        if not callable(setter):
-            return
-        target = float(self.playback_speed) * float(factor)
-        if abs(float(getattr(clip, "playback_speed", target)) - target) > 0.05:
-            setter(target)
-
-    def reset_playback_speed(self) -> None:
-        """把当前 clip 播放速率复位回用户速率（落地 / 飞行被打断的唯一出口）。
-
-        必须复位：``duration()`` 会除以 clip.playback_speed
-        （webm_clip.py:1387-1390），留着飞行期的加速倍率会让下一次
-        ``_plan_move`` 按加速后的时长量化位移（步态与墙钟失配）。
-        """
-        clip = self._clip
-        if clip is None:
-            return
-        setter = getattr(clip, "set_playback_speed", None)
-        if callable(setter):
-            setter(float(self.playback_speed))
-
     def _on_frame_changed(self, _frame: int) -> None:
         self._frame_dirty = True
         # V-4：帧到达直驱重绘，不经过 tick——tick 降档后动画帧率不随之掉
@@ -936,43 +821,20 @@ class PetSprite(QObject):
     def advance(self, dt: float) -> tuple[QRect, QRect] | None:
         """推进一 tick：仅在 "normal" 状态下按 velocity 积分位置。
 
-        拖拽（"drag"）位置由 on_move 驱动；抛掷（"thrown"）位置由
-        sprite_physics.ThrowPhysicsController 在 before_sprites_advance
-        阶段做 ≤8ms 子步积分——两者都不能在此再积一次（否则双重积分）。
+        拖拽（"drag"）位置由 on_move 直接写入，不能在此再积一次（否则双重
+        位移）。
 
         返回 (旧矩形, 新矩形) 供 overlay 合并脏区域与位置监听 fanout；
         位置未动且帧未变（视觉无变化）返回 None——overlay 据此跳过
         update（按需刷新铁律，见 Phase 0 实测：整窗重绘 CPU +36%）。
 
         旧矩形取 _last_reported_rect（上次上报给 overlay 的绘制外接矩形）
-        而非本函数入口的 rect()：物理控制器（before_sprites_advance）与拖拽
-        事件都在 advance 之外移动 sprite，入口取 rect 会 old==new 漏报
-        旧位置（V-3）。口径用 paint_bounds()（含探头旋转溢出），45° 姿态下
-        旋转角的旧像素同样必须被清掉。
+        而非本函数入口的 rect()：拖拽事件都在 advance 之外移动 sprite，入口
+        取 rect 会 old==new 漏报旧位置（V-3）。口径用 paint_bounds()（含探头
+        旋转溢出），45° 姿态下旋转角的旧像素同样必须被清掉。
         """
         old = (self._last_reported_rect
                if self._last_reported_rect is not None else self.paint_bounds())
-        if (self._dragging and self.drag_physics
-                and self._drag_spring_target is not None):
-            # 拖拽弹簧档：阻尼跟随目标点（physics.spring_velocity）。
-            # K/C 比 legacy（200/30）活一点（实机反馈 200/30 阻尼感偏强）：
-            # 300/24 滞后量约减半、略带过冲弹性；逐 sprite 可调。
-            vx = physics_mod.spring_velocity(
-                self._drag_spring_vel.x(), self.pos.x(), self._drag_spring_target.x(), dt,
-                k=self.drag_spring_k, c=self.drag_spring_c)
-            vy = physics_mod.spring_velocity(
-                self._drag_spring_vel.y(), self.pos.y(), self._drag_spring_target.y(), dt,
-                k=self.drag_spring_k, c=self.drag_spring_c)
-            self._drag_spring_vel = QPointF(vx, vy)
-            self._spring_active = True  # 活跃期亚像素步进也要报脏上屏
-            self.set_pos(self.pos + self._drag_spring_vel * dt)
-            # 收敛即钉死：渐近尾迹不许永远触发重绘
-            if (abs(self._drag_spring_target.x() - self.pos.x()) < 0.5
-                    and abs(self._drag_spring_target.y() - self.pos.y()) < 0.5
-                    and abs(vx) < 5.0 and abs(vy) < 5.0):
-                self._drag_spring_vel = QPointF(0.0, 0.0)
-                self._spring_active = False
-                self.set_pos(self._drag_spring_target)
         if self.interaction_state == INTERACTION_NORMAL and not self.velocity.isNull():
             self.set_pos(self.pos + self.velocity * dt)  # 积分也过 body_box 钳制
         squashing = False
@@ -1135,119 +997,45 @@ class PetSprite(QObject):
     def dragging(self) -> bool:
         return self._dragging
 
-    @property
-    def drag_trail(self) -> list[tuple[float, float, float]]:
-        """当前拖拽轨迹样本（(monotonic_ts, x, y)，只读副本；松手后清空）。"""
-        return list(self._drag_trail)
-
     def on_press(self, pos: QPointF) -> None:
-        """按下：记录 grab 偏移、velocity 归零、开始轨迹采样——**只是点击候选**。
+        """按下：记录 grab 偏移、velocity 归零——**只是点击候选**。
 
         旧机语义（window.py:3169-3171）：位移过 ``catalog.DRAG_THRESHOLD`` 才
-        算真拖拽，按下瞬间不置拖拽态（不挪窗、不切悬空动画、探头会话不取消、
-        碰撞世界不当无限质量）。拖拽态的升级入口是 ``begin_drag``（由 overlay
-        在过阈值时调用）。轨迹样本（时间戳 + 光标位置）是松手时
-        physics.estimate_release_velocity 估算甩出初速的输入。
+        算真拖拽，按下瞬间不置拖拽态（不挪窗、不切悬空动画、探头会话不取消）。
+        拖拽态的升级入口是 ``begin_drag``（由 overlay 在过阈值时调用）。
         """
         self._drag_offset = QPointF(pos) - self.pos
         self.velocity = QPointF(0, 0)
-        self._drag_trail = [(self._clock(), pos.x(), pos.y())]
-
-    def translate_frame(self, delta: QPointF) -> None:
-        """拖拽中换局部坐标系（跨屏移交宿主）：把**绝对坐标类**样本整体平移。
-
-        ``delta`` = 新原点 - 旧原点（全局像素）。换屏后 sprite 的局部落点由调用方
-        按 ``pos - delta`` 写入；本方法只管拖拽会话里那些"位置量"：
-
-        - ``_drag_spring_target``（弹簧档的目标点，绝对坐标）；
-        - ``_drag_trail``（松手初速的输入，绝对坐标采样）。
-
-        ``_drag_offset`` 刻意**不平移**：它是"光标 - 落点"的**差值**，同一个物理
-        手势在两个坐标系里逐位相同（平移了反而把宠从光标下错开）。轨迹同理——
-        整体平移后相邻样本的差值不变，``estimate_release_velocity`` 读到的仍是
-        真实手势速度，不会把跨屏这一跳当成甩动。
-        """
-        delta = QPointF(delta)
-        if delta.isNull():
-            return
-        if self._drag_spring_target is not None:
-            self._drag_spring_target = self._drag_spring_target - delta
-        if self._drag_trail:
-            dx, dy = delta.x(), delta.y()
-            self._drag_trail = [(t, x - dx, y - dy) for (t, x, y) in self._drag_trail]
 
     def begin_drag(self) -> None:
         """过 ``DRAG_THRESHOLD`` 升级为真拖拽（幂等）。
 
-        碰撞无限质量（``_is_dragging``）、探头「drag_away」取消、拖拽悬空
-        动画全部以这一刻为准——按下即生效会让每次点击闪悬空姿态、探头
-        点击拉直失效、按住未动的宠在碰撞世界变成无限质量（旧机三者都不是）。
+        探头「drag_away」取消、拖拽悬空动画全部以这一刻为准——按下即生效会
+        让每次点击闪悬空姿态、探头点击拉直失效（旧机两者都不是）。
         """
         if self._dragging:
             return
         self._dragging = True
-        self._drag_spring_target = None
-        self._drag_spring_vel = QPointF(0.0, 0.0)
-        self._spring_active = False
         self.interaction_state = INTERACTION_DRAG
 
     def on_move(self, pos: QPointF) -> None:
         if not self._dragging or self._drag_offset is None:
             return
-        if self.drag_physics:
-            # 弹簧档：只写目标点，位置由 advance 的阻尼积分追过去（不直写）
-            self._drag_spring_target = QPointF(pos) - self._drag_offset
-        else:
-            self.set_pos(QPointF(pos) - self._drag_offset)
-        now = self._clock()
-        self._drag_trail.append((now, pos.x(), pos.y()))
-        cutoff = now - physics_mod.TRAIL_KEEP_SEC
-        self._drag_trail = [s for s in self._drag_trail if s[0] >= cutoff]
+        self.set_pos(QPointF(pos) - self._drag_offset)
 
     def on_release(self, pos: QPointF) -> None:
-        """松手：落在光标处，按拖拽末段轨迹决定去向（语义对齐 window.py:3352-3366）。
+        """松手：宠落在光标处，速度归零、回到行为控制器。
 
-        估算初速 >= DEAD_ZONE_SPEED → 置 "thrown" 并写初速（
-        estimate_release_velocity 内部已过 soft_clamp_speed 软膝），
-        抛掷物理控制器接管；低于死区 = 原地放下，velocity 归零回
-        "normal"（行为控制器随后接管）。松手位置不入轨迹——否则
-        estimate 的 RELEASE_STALE_SEC「停顿即静止放下」判定失效。
-
-        ``drop_gravity``（#219）打开时低速这一支改为**零初速**进 "thrown"，
-        由现成的重力链自然落地（不再停在半空）——唯一例外是已经贴地：那一
-        路走原地放下的老路（详见下方注释）。开关关 = 本方法行为与历史逐字
-        相同。
+        这是唯一的松手路径：把拖拽偏移对消后的落点写回（位置写入仍走
+        set_pos 的 body_box 钳制），清掉拖拽会话并回到 "normal"——行为
+        控制器随后按待机/掷骰链继续，不做任何惯性、抛掷或下落。
         """
         if not self._dragging:
             return
-        # 弹簧档松手**不 snap 到光标**：弹簧跟随的滞后位置就是起抛/落地点
-        #（legacy window.py 同语义——瞬移过去再飞出去是 v4.3.0-hotfix 第一版
-        # 的错，实机反馈瞬移突兀）。直跟档下宠本来就在光标处，snap 是 no-op。
-        if self._drag_offset is not None and not self.drag_physics:
+        if self._drag_offset is not None:
             self.set_pos(QPointF(pos) - self._drag_offset)
-        # 初速口径不变（轨迹采样的是光标位置）；弹簧状态随拖拽结束复位。
-        self._drag_spring_target = None
-        self._drag_spring_vel = QPointF(0.0, 0.0)
-        self._spring_active = False
         self._dragging = False
         self._drag_offset = None
-        rvx, rvy = physics_mod.estimate_release_velocity(
-            self._drag_trail, self._clock(), cap=self.throw_speed_cap)
-        self._drag_trail = []
-        if not self.drag_physics:
-            rvx, rvy = 0.0, 0.0  # 拖动物理关：原地放下（window.py 同语义）
-        if math.hypot(rvx, rvy) < physics_mod.DEAD_ZONE_SPEED:
-            self.velocity = QPointF(0, 0)
-            if self.drop_gravity and not self._at_ground():
-                # 静止放手下落：零初速交给抛掷物理，重力负责落地
-                self.interaction_state = INTERACTION_THROWN
-            else:
-                # 贴地松手不进抛掷接管：零初速 + 贴地时物理会在首个 8ms 子步
-                # 就判回静止（vy 只到 g·dt≈11px/s，远低于落地截止），白付一次
-                # 悬空 clip 绑定 + 整池落地预热提交（实测 3 tick 0.48→2.00ms）。
-                self.interaction_state = INTERACTION_NORMAL
-        else:
-            self.velocity = QPointF(rvx, rvy)
-            self.interaction_state = INTERACTION_THROWN
-
+        self.velocity = QPointF(0, 0)
+        self.interaction_state = INTERACTION_NORMAL
 

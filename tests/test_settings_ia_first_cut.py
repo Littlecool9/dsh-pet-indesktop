@@ -42,7 +42,7 @@ _FORBIDDEN_TOKENS = ("SMTC", "UDP", "223.5.5.5", "网卡字节计数器", "甩�
 #: 标签 1 的高级组标题随平台上有没有「标题格式」行动态取（用例里拼）。
 _PET_TAB_SECTIONS = {
     "display": ("显示",),
-    "motion": ("动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼"),
+    "motion": ("动画与移动", "拖动", "边缘探头", "生小肥鱼"),
 }
 
 
@@ -171,10 +171,6 @@ def test_v1_rewritten_rows_carry_the_final_wording(tmp_path, monkeypatch):
     """七处定稿的逐处落点（行级，含动态日流量与平台分支）。"""
     dialog, _cfg = _dialog(tmp_path, monkeypatch)
     try:
-        drop = _row(dialog, "drop_gravity").hint_label.text()
-        assert drop.startswith("松开鼠标时如果宠物几乎没移动，它不再停在半空，而是自然落下、落地静止；")
-        assert "贴地松手不会弹起。与「拖动物理」无关：关掉拖动物理后甩出惯性依然不生效。" in drop
-
         target = _row(dialog, "harness_launch_target").hint_label.text()
         assert "「自动」和「仅 dsh 服务」都会只拉起 dsh 后台服务（不打开界面）；" in target
         assert "右键菜单的手动启动不受此设置影响。" in target
@@ -226,7 +222,7 @@ def test_v2_new_advanced_groups_are_advanced_and_collapsed(tmp_path, monkeypatch
             assert len(ancestors) == 1, f"{key} 的 SettingsSection 祖先必须唯一"
 
         # 常用开关一律留在主视线（未被误藏）。
-        common = ["autostart", "drag_physics", "agent_sound_enabled"]
+        common = ["autostart", "lock_position", "agent_sound_enabled"]
         for key in common:
             assert _section_of(dialog, key).advanced is False, f"{key} 是常用开关，不得收进高级组"
     finally:
@@ -329,7 +325,7 @@ def test_v1_long_hints_fit_their_labels_at_compact_width(tmp_path, monkeypatch):
     try:
         dialog.resize(dialog.minimumSize())
         dialog.show()
-        keys = ["drop_gravity", "harness_autostart", "harness_launch_target"]
+        keys = ["edge_probe", "harness_autostart", "harness_launch_target"]
         for key in keys:  # 折叠组先展开，否则子行的几何是陈旧值（量不出裁切）
             section = _section_of(dialog, key)
             if section.advanced:

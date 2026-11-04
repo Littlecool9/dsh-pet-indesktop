@@ -4,9 +4,9 @@ PetWindow retains thin compatibility methods passing itself as host, so
 existing callers, signal connections and test patches (including unbound
 ``PetWindow.show_alert(pet, ...)`` calls) keep working unchanged.
 
-气泡门禁只走 :func:`bubble_blocked`：安装位（设置页抑制位 ``_bubble_suppressed``）
-与飞行位（壳按 sprite 判定的飞行集合）由 host 自己给，本模块不再各处现读
-``_bubble_suppressed``——两套守卫并存就是「飞行期漏气泡」的成因。
+气泡门禁只走 :func:`bubble_blocked`：设置页抑制位 ``_bubble_suppressed`` 由
+host 自己给（overlay 壳带一个 ``_bubble_blocked`` 适配面），本模块不再各处
+现读该私有属性。
 """
 
 from __future__ import annotations
@@ -187,15 +187,14 @@ def alert_survives_suppression(alert_type: str, *, sticky: bool, buttons, priori
 
 
 def bubble_blocked(host, sprite=None) -> bool:
-    """统一气泡门禁：设置页抑制期 **或** 该 sprite 正在飞行。
+    """统一气泡门禁：设置页抑制期。
 
-    host 自带 ``_bubble_blocked``（overlay 壳按 sprite 判定，见
-    ``overlay_shell.OverlayShell._bubble_blocked``）时以它为准；PetWindow 没有
-    sprite 级飞行态，退回既有的 ``_bubble_suppressed`` 契约（行为逐字不变）。
+    host 自带 ``_bubble_blocked``（overlay 壳的适配面，见
+    ``overlay_shell.OverlayShell._bubble_blocked``）时以它为准；没有该面的
+    host 退回既有的 ``_bubble_suppressed`` 契约（行为逐字不变）。
 
-    ``sprite=None`` = host 的默认宠（壳 = 主 sprite）。调用方一律走这个函数，
-    绝不各写一份 ``getattr(host, "_bubble_suppressed")``——那样飞行期就漏出
-    气泡来（B1 的缺口正是这六处各写各的守卫）。
+    ``sprite`` 参数保留给壳的逐 sprite 调用面（当前门禁与 sprite 无关）；
+    调用方一律走这个函数，绝不各写一份 ``getattr(host, "_bubble_suppressed")``。
 
     **免打扰不在这里**：自言自语（含点击回应台词）也走本门禁，而它属于交互
     应答，免打扰期间必须照常冒（issue #208 规格）。普通提醒/气泡请改读
@@ -242,7 +241,7 @@ def report_quiet_summary(host, items) -> bool:
     门禁拦下）而不是 ``show_bubble``：结束那一刻最常见的情形是"正挂着一条审批
     气泡"，直发气泡会被让路丢弃，走提醒队列才保证送达。宿主没有提醒队列面
     （overlay 的 SpriteMenuFacade）时回退直发气泡——**这条回退也必须自证上屏**：
-    overlay 的气泡面在不可见/飞行期/正挂提醒时是当场丢弃的，无条件报成功会让
+    overlay 的气泡面在不可见/正挂提醒时是当场丢弃的，无条件报成功会让
     调用方把暂存排空而用户什么都没看到（本批自己立的交付确认制）。
 
     返回是否确实交付出去了（空暂存 = 无需打扰用户，返回 False）。
@@ -275,19 +274,6 @@ def report_quiet_summary(host, items) -> bool:
     return False
 
 
-def sprite_in_flight(host, sprite=None) -> bool:
-    """该 sprite 是否正在飞行（气泡门禁里的**飞行分量**，不含设置页抑制）。
-
-    只有需要区分两种抑制的调用方才用它：飞行期是瞬时的（鱼飞几秒），上屏
-    推迟到落地即可；设置页抑制期是长时的用户意图，按既有语义退到气泡位直写展示。
-    无该接口的 host（PetWindow / 测试替身）恒 False。
-    """
-    checker = getattr(host, "_sprite_in_flight", None)
-    if callable(checker):
-        return bool(checker(sprite))
-    return False
-
-
 def set_bubble_suppressed(host, suppressed: bool) -> None:
     """设置窗口打开期间暂停气泡显示；True 时立即隐藏当前气泡。"""
     host._bubble_suppressed = bool(suppressed)
@@ -307,13 +293,7 @@ def set_bubble_suppressed(host, suppressed: bool) -> None:
 def restore_after_suppression(host) -> None:
     """抑制结束后的恢复：粘滞提醒重挂、限时提醒续时、无 current 则推进队列。
 
-    两份调用方共用同一口径（``set_bubble_suppressed(False)`` 与「飞行落地」）：
-    共同语义都是「刚才不让冒的泡，现在可以冒了」，差别只在抑制位本身（设置页
-    开关 vs. 壳的飞行集合）——绝不把两者合并成一次 ``set_bubble_suppressed``
-    调用，那会顺手把设置页抑制位也清掉（proactive/联动节流读它）。
-
-    入口再判一次门禁：抑制刚解除但另一路仍然挡着（典型 = 鱼还在飞：设置页在
-    飞行中途开关）时不破门，留给那一路自己的结束后恢复。
+    入口再判一次门禁：抑制位仍开着时直接返回，不破门。
 
     壳（提醒承载宠可迁移、限时提醒按剩余 TTL）把「重挂 current」整段交给自己的
     单一漏斗 ``_sync_alert_copy``：这里按当前目标重挂会把已经迁移到子宠的提醒
@@ -394,9 +374,7 @@ def show_alert(host, text: str, *, subtitle: str = "", duration_ms: int = 0,
         return
     if bubble_blocked(host) and not alert_survives_suppression(
             alert_type, sticky=sticky, buttons=buttons, priority=priority):
-        # 设置页抑制（长时用户意图）照旧丢弃；**飞行期不丢**——飞行只有几秒，
-        # 瞬时抑制的语义是"先不上屏"：入队后由 pump_alerts 的守卫挡住，落地
-        # 走 restore_after_suppression 正常弹出（B1：飞行结束后提醒队列恢复）。
+        # 设置页抑制（长时用户意图）：普通提醒当场丢弃。
         if getattr(host, "_bubble_suppressed", False):
             return
     item = {
@@ -550,9 +528,8 @@ def on_speech_bubble_hidden(host) -> None:
     sticky 恢复防抖：同一 sticky 内容在 300ms 内不重复 show_text，
     避免「审批被盖→恢复→再盖→再恢复」的卡顿循环。"""
     if not host.isVisible() or bubble_blocked(host):
-        # 飞行期同样在这里截断：气泡是壳在起飞边沿主动收的，不能让它顺着
-        # hidden 链路推进队列（否则飞行中会接着弹下一条）。_alert_current 原样
-        # 留着，落地走 restore_after_suppression 重挂/续时。
+        # 抑制期同样在这里截断：_alert_current 原样留着，解除抑制后走
+        # restore_after_suppression 重挂/续时。
         return
     cur = host._alert_current
     if cur is not None:

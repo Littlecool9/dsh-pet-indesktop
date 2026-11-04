@@ -146,7 +146,7 @@ def test_default_config_shows_no_mark_anywhere(env):
 
 def test_mark_and_reset_fit_inside_the_row_without_overlapping_control(env):
     dialog, _cfg, _tmp = env
-    for key in ("on_top", "pet_opacity", "throw_strength", "balance_tier_peak"):
+    for key in ("on_top", "pet_opacity", "lock_position", "balance_tier_peak"):
         row = _row(dialog, key)
         _reveal(dialog, row)
         row.set_default_state("示例", can_reset=True)

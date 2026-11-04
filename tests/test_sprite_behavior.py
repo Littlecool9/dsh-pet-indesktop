@@ -24,7 +24,6 @@ from PySide6.QtWidgets import QApplication
 from pet.pet_sprite import (
     INTERACTION_DRAG,
     INTERACTION_NORMAL,
-    INTERACTION_THROWN,
     PetSprite,
 )
 from pet.sprite_behavior import (
@@ -33,7 +32,6 @@ from pet.sprite_behavior import (
     STATE_DRAG,
     STATE_IDLE,
     STATE_MOVE,
-    STATE_THROWN,
     STATE_TURN,
     BehaviorController,
 )
@@ -273,7 +271,7 @@ def test_focus_cancels_walk_already_queued_behind_a_turn():
         state.stop()
 
 
-def test_focus_does_not_cancel_velocity_owned_by_throw_physics():
+def test_focus_does_not_cancel_velocity_while_dragging():
     from pet.focus_mode import shared_focus_session
     state = shared_focus_session()
     lib = _make_library()
@@ -281,14 +279,14 @@ def test_focus_does_not_cancel_velocity_owned_by_throw_physics():
     c = BehaviorController(BOUNDS, rng=ScriptedRng())
     _roll_into_move(c, sprite, lib)
     assert c.state_of(sprite) == STATE_MOVE
-    sprite.interaction_state = INTERACTION_THROWN
+    sprite.interaction_state = INTERACTION_DRAG
     velocity = QPointF(160, -600)
     sprite.set_velocity(velocity)
     try:
         state.start()
         c.tick([sprite], 0.016)
         assert sprite.velocity == velocity
-        assert c.state_of(sprite) == STATE_THROWN
+        assert c.state_of(sprite) == STATE_DRAG
     finally:
         state.stop()
 
@@ -405,69 +403,6 @@ def test_drag_state_returns_to_idle_when_drag_ends_without_release_callback():
     c.tick([sprite], 0.016)
     assert c.state_of(sprite) == STATE_IDLE
     assert sprite._clip_name == "idle1"
-
-
-# ---------------------------------------------------------------- F4：抛掷飞行期动画
-def test_thrown_binds_drag_clip_and_landing_returns_idle():
-    """F4：飞行期固定播 drag（悬空）clip 并循环；落地回 normal 后切回待机。
-
-    位置/速度归 sprite_physics，本控制器只接管画面（绝不改写 velocity）。
-    """
-    lib = _make_library(drag="hang")
-    sprite = _make_sprite(lib)
-    c = BehaviorController(BOUNDS, rng=ScriptedRng(rolls=(0.99,)))
-    c.predict_enabled = False
-    c.tick([sprite], 0.016)                          # 先接管进待机
-
-    sprite.set_velocity(QPointF(800, -200))
-    sprite.interaction_state = INTERACTION_THROWN
-    c.tick([sprite], 0.016)
-
-    assert c.state_of(sprite) == STATE_THROWN
-    assert sprite._clip_name == "hang"
-    assert sprite.velocity == QPointF(800, -200)     # 速度归物理，绝不改写
-
-    lib.clip("hang").finished.emit()                 # 飞行过圈末
-    assert lib.clip("hang").start_count == 2         # 悬空动画循环（不冻结）
-
-    sprite.interaction_state = INTERACTION_NORMAL    # 落地（sprite_physics 收尾）
-    c.tick([sprite], 0.016)
-    assert c.state_of(sprite) == STATE_IDLE
-    assert sprite._clip_name == "idle1"
-    assert sprite.velocity == QPointF(0, 0)
-
-
-def test_thrown_without_drag_asset_falls_back_to_idle_pool():
-    lib = _make_library()                            # 无 drag 素材
-    sprite = _make_sprite(lib)
-    c = BehaviorController(BOUNDS, rng=ScriptedRng(rolls=(0.99,)))
-    c.predict_enabled = False
-    c.tick([sprite], 0.016)
-
-    sprite.interaction_state = INTERACTION_THROWN
-    c.tick([sprite], 0.016)
-
-    assert c.state_of(sprite) == STATE_THROWN
-    assert sprite._clip_name == "idle1"
-
-
-def test_drag_release_not_taken_over_when_thrown():
-    """松手被判为甩出：on_drag_released 不得把飞行动画抢成待机。"""
-    lib = _make_library(drag="hang")
-    sprite = _make_sprite(lib)
-    c = BehaviorController(BOUNDS, rng=ScriptedRng(rolls=(0.99,)))
-    c.predict_enabled = False
-    c.tick([sprite], 0.016)
-    sprite.on_press(QPointF(10, 10))
-    c.on_drag_started(sprite)
-
-    sprite.interaction_state = INTERACTION_THROWN    # 模拟 on_release 的甩出判定
-    c.on_drag_released(sprite)
-
-    assert c.state_of(sprite) == STATE_DRAG          # 待机链不得抢走飞行段
-    c.tick([sprite], 0.016)
-    assert c.state_of(sprite) == STATE_THROWN
-    assert sprite._clip_name == "hang"
 
 
 # ---------------------------------------------------------------- F7：探头会话闸门
@@ -868,7 +803,7 @@ def test_move_fallback_to_idle_when_no_room():
 
 def test_clamp_pulls_out_of_bounds_sprite_back():
     lib = _make_library()
-    sprite = _make_sprite(lib, pos=(-50, 5000))     # 界外落点（如抛掷切回 normal）
+    sprite = _make_sprite(lib, pos=(-50, 5000))     # 界外落点（拖拽切回 normal）
     c = BehaviorController(BOUNDS, rng=ScriptedRng())
     c.tick([sprite], 0.016)
     assert BOUNDS.contains(sprite.rect())

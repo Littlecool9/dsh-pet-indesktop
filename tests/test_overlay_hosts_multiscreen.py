@@ -317,40 +317,6 @@ def test_drag_across_screens_moves_only_the_dragged_pet(tmp_path, monkeypatch):
         _cleanup(shell)
 
 
-def test_cross_screen_drag_keeps_release_velocity_sane(tmp_path, monkeypatch):
-    """换屏不改手感：松手初速按真实手势估（跨屏这一跳不得被当成甩动）。"""
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a, {"drag_physics": True})
-    try:
-        main = shell.sprite
-        overlay = shell.overlay
-        origin = QPointF(overlay.geometry().topLeft())
-        _hittable(main)
-        hit = QPointF(main.rect().center())
-        overlay.mousePressEvent(_press(hit, origin + hit))
-        for step in range(1, 26):
-            cursor = QPointF(1700 + 40 * step, 400)
-            overlay.mouseMoveEvent(_move(cursor - origin, cursor))
-            shell.driver.tick_sim(1 / 60.0)
-            shell.driver.advance_overlays(1 / 60.0)
-        assert _screen_of(shell, main) is b, "身体整块进入邻屏后就算在副屏上"
-        # 轨迹样本同一套坐标：相邻样本差仍是每步 40px（没有被拼成跨屏的一跳）
-        trail = main.drag_trail
-        assert len(trail) >= 2
-        deltas = [abs(trail[i + 1][1] - trail[i][1]) for i in range(len(trail) - 1)]
-        # 首个差值含"按下点 → 第一帧光标"的固有位移，只看其后：每步都是 40px
-        assert deltas[1:] == pytest.approx([40.0] * (len(deltas) - 1)), (
-            f"轨迹样本帧内一致，实测 {deltas}")
-        cursor = QPointF(1700 + 40 * 25, 400)
-        overlay.mouseReleaseEvent(_release(cursor - origin, cursor))
-        # 拖动物理开着：手没在收尾瞬间暴冲 → 松手不是"甩出去"的暴速
-        speed = (main.velocity.x() ** 2 + main.velocity.y() ** 2) ** 0.5
-        assert speed < 3000.0
-    finally:
-        _cleanup(shell)
-
-
 def test_switching_screen_keeps_clip_and_driver_running(tmp_path, monkeypatch):
     """换屏不是退出：clip 不释放、成员不注销、共享驱动器照旧驱动这张窗。"""
     a, b = _two_screens()
@@ -809,58 +775,6 @@ def test_multi_window_geometry_change_finishes_inflight_drag(tmp_path, monkeypat
         _cleanup(shell)
 
 
-# ---------------------------------------------------------------- 跨屏与弹簧拖拽
-def test_crossing_with_drag_physics_keeps_the_spring_lag(tmp_path, monkeypatch):
-    """拖动物理开着时跨屏：逐拍连续、滞后保留，**不**瞬移到光标处。
-
-    跨屏不产生任何"移交拍"（同一张窗），所以这条用例钉的是更基本的一件事：跨过
-    屏边界的那些 tick 里，位移只能是弹簧自己的那一份，不能出现整块屏的跳变。
-    """
-    a, b = _two_screens()
-    _install_screens(monkeypatch, a, b)
-    shell = _make_shell(tmp_path, a, {"drag_physics": True})
-    try:
-        main = shell.sprite
-        main.set_pos(QPointF(600.0, 600.0))
-        overlay = shell.overlay
-        origin = QPointF(overlay.geometry().topLeft())
-        _hittable(main)
-        hit = QPointF(main.rect().center())
-        overlay.mousePressEvent(_press(hit, origin + hit))
-        cursor = origin + hit
-        for _ in range(5):
-            cursor = QPointF(cursor.x() + 40.0, cursor.y())
-            overlay.mouseMoveEvent(_move(cursor - origin, cursor))
-        assert _screen_of(shell, main) is a
-        assert (QPointF(main._drag_spring_target) - QPointF(main.pos)).x() > 100.0, (
-            "前提：弹簧滞后已经攒出来（拖动确实落后于目标）")
-
-        # 一大步跨过屏边界，然后逐拍推进：每一拍的位移都不许超过当时的剩余滞后
-        cursor = QPointF(cursor.x() + 1400.0, cursor.y())
-        overlay.mouseMoveEvent(_move(cursor - origin, cursor))
-        crossed = False
-        for tick in range(1, 120):
-            prev = QPointF(main.pos)
-            lag = abs(QPointF(main._drag_spring_target).x() - main.pos.x())
-            _tick(shell)
-            step = abs(QPointF(main.pos).x() - prev.x())
-            assert step <= lag + 4.0, (
-                f"第 {tick} 拍位移 {step} 明显超过剩余滞后 {lag}（那是瞬移不是弹簧）")
-            if _screen_of(shell, main) is b:
-                crossed = True
-                break
-        assert crossed, "身体整块进副屏后就算在副屏上（同一张窗，无移交拍）"
-
-        before_release = QPointF(main.pos)
-        overlay.mouseReleaseEvent(_release(cursor - origin, cursor))
-        assert (QPointF(main.pos) - before_release).manhattanLength() < 2.0, (
-            "松手不得把这只从当前位置挪到光标处")
-        assert main.interaction_state in ("normal", "thrown")
-    finally:
-        _cleanup(shell)
-
-
-# ---------------------------------------------------------------- runtime 标记监听
 def test_main_pet_position_listener_tracks_it_across_screens(tmp_path, monkeypatch):
     """主宠移到副屏后：runtime 标记（设置进程避让用）照旧随位置更新。
 

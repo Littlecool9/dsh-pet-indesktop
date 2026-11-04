@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Phase 4.1a overlay 产品壳 offscreen 单测（QT_QPA_PLATFORM=offscreen 可跑）。
 
-覆盖：OverlayShell 构建期 dpr/bounds/默认右下角落位；tick 顺序协议（行为→物理，装桩记录调用序）；start/stop 幂等；
+覆盖：OverlayShell 构建期 dpr/bounds/默认右下角落位；tick 仿真段（行为控制器）；start/stop 幂等；
 音效预热接线（首次可见前预热一次、开关关闭零调用）；geometryChanged 的 rx/ry
 比例迁移；屏拔除的 overlay 重建与拖拽收尾；会话结束与退出收口；app.py 拓扑
 启动只构造 OverlayShell。
@@ -179,9 +179,8 @@ def test_shell_wires_dpr_bounds_and_default_corner():
     assert sprite.home_screen is screen
     assert sprite.dpr_calls == [1.5]                       # 构建即喂主屏 DPR
     assert sprite.bounds_calls[0] == QRect(0, 0, 1920, 1040)  # 可用区转 overlay 局部
-    # 控制器进程级一组；行为/物理边界 = overlay 局部可用区
+    # 行为控制器边界 = overlay 局部可用区
     assert shell.behavior.bounds == QRect(0, 0, 1920, 1040)
-    assert shell.physics.bounds == QRectF(0, 0, 1920, 1040)
     assert shell.overlay.behavior is shell.behavior        # contextMenuEvent 查表点
     # 默认右下角（go_default_corner 旧算式：右缘留 CORNER_MARGIN、底贴可用区底）
     expected = QPointF(1920 - 1 - FakeSprite.SIZE[0] - 24, 1040 - 1 - FakeSprite.SIZE[1])
@@ -219,12 +218,12 @@ def test_shell_assembles_process_level_tick_driver():
     assert driver.overlays == [shell.overlay]
     assert driver.hosts == [host]                       # 宿主即仿真分组的单位
     assert host.behavior is shell.behavior
-    assert host.physics is shell.physics
+    assert not hasattr(host, "physics"), "物理控制器槽已随物理删除"
     # 产品 overlay 不再覆写兼容钩子（仿真段唯一入口 = 驱动器 tick_sim）
     assert "before_sprites_advance" not in type(shell.overlay).__dict__
 
 
-def test_tick_order_behavior_physics():
+def test_tick_sim_runs_behavior_controller():
     shell, _, _ = _make_shell()
     calls = []
 
@@ -238,10 +237,9 @@ def test_tick_order_behavior_physics():
     # M-2 后控制器归宿主（多屏逐屏一份）：替换点从 shell 属性面移到宿主装配点
     host = shell._main_host
     host.behavior = Recorder("behavior")
-    host.physics = Recorder("physics")
     shell.overlay._on_tick(dt=0.016)  # 同步直调，不跑真 QTimer
 
-    assert [c[0] for c in calls] == ["behavior", "physics"]
+    assert [c[0] for c in calls] == ["behavior"]
     for _, sprites, dt in calls:
         assert sprites == [shell.sprite]
         assert dt == 0.016
@@ -257,7 +255,7 @@ def test_start_stop_idempotent():
             calls.append(1)
 
     host = shell._main_host
-    host.behavior = host.physics = Nop()
+    host.behavior = Nop()
 
     assert not shell.overlay._timer.isActive()
     shell.start()
@@ -360,7 +358,6 @@ def test_geometry_change_migrates_sprite_proportionally():
     # 合成窗 = 可用工作区的并集（不是屏几何）：任务栏那条不算窗内（#302）
     assert shell.overlay.geometry() == QRect(0, 0, 1280, 680)
     assert shell.behavior.bounds == QRect(0, 0, 1280, 680)
-    assert shell.physics.bounds == QRectF(0, 0, 1280, 680)
     assert sprite.bounds_calls[-1] == QRect(0, 0, 1280, 680)
     assert sprite.dpr_calls[-1] == 2.0               # 几何变化重喂 DPR
     # rx/ry 不变：新中心 = (640, 340) → pos = (580, 300)

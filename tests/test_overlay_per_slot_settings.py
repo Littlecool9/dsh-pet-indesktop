@@ -2,7 +2,7 @@
 """B7b 逐只设置：per-slot 读点/写点/音效/气泡/自言自语/角色切换（offscreen）。
 
 旧架构每只桌宠是**独立进程**，各读自己的 ``config-slot-N.json``：缩放/速度/
-拖拽物理/抛掷力度/音效门与音量/气泡族/角色全部逐只独立，各自一个气泡、
+音效门与音量/气泡族/角色全部逐只独立，各自一个气泡、
 各自计时自言自语，右键菜单与设置页都作用在**被点的那一只**身上。单进程
 overlay 壳此前一律推主配置（审计 C1/C2/C3/C5/F1：给子宠改设置"保存后毫无反应"，
 甚至改到主宠头上）。
@@ -36,7 +36,6 @@ import tests.test_sprite_menu_facade as fac
 from pet import catalog
 from pet import click_sound
 from pet import overlay_spawn_state as ovs
-from pet.physics import THROW_STRENGTH_CAPS
 from pet.sprite_menu_facade import SpriteMenuFacade, build_sprite_full_menu
 
 app = QApplication.instance() or QApplication([])
@@ -106,9 +105,7 @@ def _talk_values(**over) -> dict:
 # ---------------------------------------------------------------- 1. per-slot 读点
 def test_slot_event_applies_only_to_that_slot(tmp_path):
     """预写 config-slot-1.json → 只有子宠 1 按它自己那份设置变，别的宠不动。"""
-    shell, cfg = toggle._make_slot_shell(tmp_path, playback_speed=1.0,
-                                         drag_physics=False,
-                                         throw_strength="gentle")
+    shell, cfg = toggle._make_slot_shell(tmp_path, playback_speed=1.0)
     try:
         shell.spawn_pet()
         shell.spawn_pet()
@@ -118,22 +115,15 @@ def test_slot_event_applies_only_to_that_slot(tmp_path):
         # 运行期手改（模拟其它热改路径留下的值）：三只都改，再看谁被刷回
         for sprite in (main, child_a, child_b):
             sprite.playback_speed = 2.5
-            sprite.drag_physics = True
-            sprite.throw_speed_cap = 1234.0
 
-        _write_slot(cfg, 1, playback_speed=0.5, drag_physics=False,
-                    throw_strength="crazy")
+        _write_slot(cfg, 1, playback_speed=0.5)
         _notify(shell)
 
         # 子宠 1：以它自己的文件为准（旧契约"设置保存即覆盖该宠运行态"）
         assert child_a.playback_speed == 0.5
-        assert child_a.drag_physics is False
-        assert child_a.throw_speed_cap == THROW_STRENGTH_CAPS["crazy"]
         # 主宠与另一只子宠：一个键都不许动（窄契约）
         for sprite in (main, child_b):
             assert sprite.playback_speed == 2.5
-            assert sprite.drag_physics is True
-            assert sprite.throw_speed_cap == 1234.0
     finally:
         toggle._teardown(shell)
 
@@ -160,8 +150,7 @@ def test_slot_scale_and_playback_survive_main_refresh(tmp_path):
 
 def test_slot_missing_or_broken_uses_defaults_not_main(tmp_path):
     """缺文件/缺键取同源默认；坏档案不覆盖、不碰主配置。"""
-    shell, cfg = toggle._make_slot_shell(tmp_path, playback_speed=1.0,
-                                         drag_physics=False)
+    shell, cfg = toggle._make_slot_shell(tmp_path, playback_speed=1.0)
     try:
         shell.spawn_pet()
         main, child = list(shell.overlay.sprites)
@@ -171,13 +160,12 @@ def test_slot_missing_or_broken_uses_defaults_not_main(tmp_path):
         # 缺文件 → 同源默认，不从主宠持续继承
         slot_path.unlink()
         _notify(shell)
-        assert child.playback_speed == 1.0 and child.drag_physics is False
+        assert child.playback_speed == 1.0
 
-        # 损坏 → 逐键回默认（playback 1.0 / drag False），主配置一字不动
+        # 损坏 → 逐键回默认（playback 1.0），主配置一字不动
         slot_path.write_text("{oops", encoding="utf-8")
         _notify(shell)
         assert child.playback_speed == 1.0
-        assert child.drag_physics is False
         assert (cfg.dir / "config.json").read_bytes() == main_bytes
 
         # 缺键（老存档）→ 同源默认，不继承主宠当前值
@@ -194,15 +182,13 @@ def test_slot_missing_or_broken_uses_defaults_not_main(tmp_path):
 # ---------------------------------------------------------------- 2. 逐只音效
 def test_garbage_slot_values_degrade_to_defaults(tmp_path):
     """手改坏的 slot 值（错类型/负数/字符串）不得掀掉同步链，逐键回退/夹取。"""
-    shell, cfg = toggle._make_slot_shell(tmp_path, throw_strength="gentle")
+    shell, cfg = toggle._make_slot_shell(tmp_path)
     try:
         shell.spawn_pet()
         child = shell._spawned[0]
         (cfg.dir / "config-slot-1.json").write_text(json.dumps({
             "version": 4,
             "playback_speed": "loud",
-            "drag_physics": "yes",
-            "throw_strength": {"nope": 1},
             "scale": -3,
             "ffmpeg_recycle_minutes": "soon",
             "self_talk_texts": "not-a-list",
@@ -212,9 +198,7 @@ def test_garbage_slot_values_degrade_to_defaults(tmp_path):
         _notify(shell)
 
         assert child.playback_speed == pytest.approx(1.0)          # 坏值 → 缺省
-        assert child.throw_speed_cap == THROW_STRENGTH_CAPS["standard"]
         assert child.scale == pytest.approx(0.1)                   # 负数 → 夹到下界
-        assert child.drag_physics is True                          # 非空字符串为真
         host = shell._self_talk_hosts[child]
         assert host._self_talk_min_interval >= 5.0
         assert host._self_talk_max_interval >= host._self_talk_min_interval
@@ -439,20 +423,16 @@ def test_facade_persists_child_settings_to_its_slot(tmp_path):
 
         facade.change_scale(1.5)
         facade.set_playback_speed(2.0)
-        facade.set_drag_physics(True)
 
         assert child.scale == pytest.approx(1.5)
         assert child.playback_speed == pytest.approx(2.0)
-        assert child.drag_physics is True
         # 主宠与主配置：一个键都没被写
         assert main.scale == pytest.approx(1.0)
         assert shell._config.get("scale") == pytest.approx(1.0)
         assert shell._config.get("playback_speed") == pytest.approx(1.0)
-        assert shell._config.get("drag_physics") is False
         slot = _slot_file(cfg, 1)
         assert slot["scale"] == pytest.approx(1.5)
         assert slot["playback_speed"] == pytest.approx(2.0)
-        assert slot["drag_physics"] is True
         assert slot.get("user_customized") is True   # 旧契约：用户主动设置过
 
         SpriteMenuFacade(shell, main).change_scale(0.8)

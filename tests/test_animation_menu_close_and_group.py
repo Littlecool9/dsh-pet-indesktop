@@ -11,7 +11,7 @@
 
 覆盖：
 1. 收起真值表：动作项（默认收起）/ 动作项（``anim_menu_stay_open``=连播）/
-   设置项（速率·大小）/ 开关项（拖动物理）/ 子菜单项；
+   设置项（速率·大小）/ 开关项（不移动）/ 子菜单项；
 2. 分组结构：家族拆分、不丢项、单桶不超过原清单、短清单与单家族不拆；
 3. 分组后叶子仍触发同一动作；legacy / modern 两条路径结构一致；
 4. 分组里点动作同样收起（层级变深不改变收起语义）。
@@ -68,11 +68,9 @@ class _FakePet:
         self.acts = list(acts if acts is not None else ["吃西瓜", "吃饺子"])
         self.playback_speed = 1.0
         self.scale = catalog.DEFAULT_SCALE
-        self.drag_physics = False
         self.no_move = False
         self.played = []
         self.speed_calls = []
-        self.drag_calls = []
 
     def switch_clip(self, name):
         self.played.append(name)
@@ -84,10 +82,6 @@ class _FakePet:
     def set_playback_speed(self, value):
         self.speed_calls.append(value)
         self.playback_speed = value
-
-    def set_drag_physics(self, enabled):
-        self.drag_calls.append(enabled)
-        self.drag_physics = enabled
 
     def __getattr__(self, _name):
         return None
@@ -249,7 +243,7 @@ def test_every_animation_leaf_carries_close_on_trigger():
 
 
 def test_setting_and_toggle_entries_do_not_close():
-    """设置类（速率 / 大小）、开关类（拖动物理）与子菜单项一律不受收起影响。"""
+    """设置类（速率 / 大小）、开关类（不移动）与子菜单项一律不受收起影响。"""
     pet = _FakePet()
     root = _build_menu(pet)
     speed = _find(root, "播放速率").menu()
@@ -259,7 +253,7 @@ def test_setting_and_toggle_entries_do_not_close():
         assert not bool(_find(speed, "1.5x").property("closeOnTrigger"))
         assert not bool(_find(size, f"{int(round(catalog.CANVAS_W * catalog.SCALE_STEPS[0]))}px"
                               ).property("closeOnTrigger"))
-        assert not bool(_find_deep(root, "拖动物理").property("closeOnTrigger"))
+        assert not bool(_find_deep(root, "不移动").property("closeOnTrigger"))
         # 真实点击设置项：菜单留在屏上（可连续调档）
         _open_chain(root, ("播放速率",))
         _click(speed, _find(speed, "1.5x"))
@@ -277,7 +271,7 @@ def test_stay_open_preference_does_not_leak_to_setting_entries():
     try:
         speed.aboutToShow.emit()
         assert not bool(_find(speed, "1.5x").property("closeOnTrigger"))
-        assert not bool(_find_deep(root, "拖动物理").property("closeOnTrigger"))
+        assert not bool(_find_deep(root, "不移动").property("closeOnTrigger"))
     finally:
         _close_all(speed, root)
 

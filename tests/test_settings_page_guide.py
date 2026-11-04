@@ -1114,7 +1114,7 @@ def test_anchor_bar_rebuilds_when_the_in_page_tab_changes(tmp_path, monkeypatch)
         app.processEvents()
         assert bar.isHidden() is False
         assert [chip.text() for chip in _chips(bar)] == [
-            "动画与移动", "拖拽与弹射", "边缘探头", "生小肥鱼"]
+            "动画与移动", "拖动", "边缘探头", "生小肥鱼"]
 
         tabs.setCurrentKey("display")
         app.processEvents()

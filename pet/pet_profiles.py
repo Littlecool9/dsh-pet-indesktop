@@ -192,7 +192,7 @@ _SLOT_PROFILE_RE = re.compile(r"^config-slot-(\d+)\.json$")
 #: ``settings_slot_config.SLOT_ROUTED_KEYS`` 同构，测试有逐字漂移守卫。
 PER_PET_SETTING_KEYS = frozenset({
     # 几何 / 运动
-    "scale", "playback_speed", "drag_physics", "drop_gravity", "throw_strength",
+    "scale", "playback_speed",
     "ffmpeg_recycle_minutes",
     # 音效（点击门/音量；音源包 click_sound_pack）
     "click_sound_enabled", "click_sound_volume", "click_sound_pack",

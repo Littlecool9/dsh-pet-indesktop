@@ -650,11 +650,8 @@ class ModernSettingsDialog(QDialog):
         )
         behavior_layout.addWidget(
             SettingsSection(
-                "拖拽与弹射",
+                "拖动",
                 [
-                    SettingRow("drag_physics", "拖动物理", "启用拖拽惯性、重力和边缘反弹。", self.drag_physics_check),
-                    SettingRow("drop_gravity", "静止放手下落", "松开鼠标时如果宠物几乎没移动，它不再停在半空，而是自然落下、落地静止；贴地松手不会弹起。与「拖动物理」无关：关掉拖动物理后甩出惯性依然不生效。", self.drop_gravity_check),
-                    SettingRow("throw_strength", "甩出力度", "控制桌宠被甩出或弹射发射时的最大速度限制。", self.throw_strength_select),
                     SettingRow("lock_position", "锁定位置", "桌宠固定不动，无法拖动（点击互动仍有效）。", self.lock_position_check),
                     SettingRow("shift_drag", "SHIFT+左键拖动", "开启后必须按住 SHIFT 再左键才能拖动桌宠。", self.shift_drag_check),
                 ],
@@ -1644,7 +1641,7 @@ class ModernSettingsDialog(QDialog):
             page_content(
                 [
                     ("动画与移动", claim("playback_speed", "animation_gap", "no_move")),
-                    ("拖拽与弹射", claim("drag_physics", "drop_gravity", "throw_strength", "lock_position", "shift_drag")),
+                    ("拖动", claim("lock_position", "shift_drag")),
                     ("边缘探头", claim("edge_probe")),
                     ("生小肥鱼", claim("spawn_inherit_size", "spawn_scale", "clear_spawned_pets")),
                 ]
@@ -2018,9 +2015,6 @@ class ModernSettingsDialog(QDialog):
         self.config.set("on_top", self.on_top_check.isChecked())
         self.config.set("no_move", self.no_move_check.isChecked())
         self.config.set("mouse_through", self.mouse_through_check.isChecked())
-        self.config.set("drag_physics", self.drag_physics_check.isChecked())
-        self.config.set("drop_gravity", self.drop_gravity_check.isChecked())
-        self.config.set("throw_strength", str(self.throw_strength_select.currentData() or "standard"))
         self.config.set("lock_position", self.lock_position_check.isChecked())
         self.config.set("shift_drag", self.shift_drag_check.isChecked())
         self.config.set("pet_opacity", int(self.pet_opacity_spin.value()))

@@ -16,7 +16,7 @@ Phase 3b：sprite 位置监听（add_position_listener）——sprite 不产生 
 Phase 4 D2/HiDPI：DPR 由 overlay 统一按所在屏喂给**全部** sprite
 （add_sprite/showEvent/屏事件），屏幕 DPR 变化（显示缩放、跨屏、几何变化）
 即重喂并按新 DPR 重建——对齐旧路径 window.py:2129-2218 的信号驱动语义。
-Phase 4 M-2：仿真推进（行为/碰撞/抛掷物理）与 tick 时钟、M-1 档位状态机整体
+Phase 4 M-2：仿真推进（行为）与 tick 时钟、M-1 档位状态机整体
 移交给统一驱动器 ``tick_driver.TickDriver``（T2：驱动器独立持有控制器，调
 ``world.tick(全部 overlays 的 sprites, dt)``）；overlay 只保留职责范围内的
 「advance → 脏矩形 → 位置监听 fanout → update」段（``tick_advance``）与
@@ -289,7 +289,7 @@ class OverlayWindow(QWidget):
         """追加到 z-order 尾部（最上）；重复添加是 no-op。
 
         同时挂接 sprite 的脏上报回调（V-3/V-4）：set_pos 位移与帧到达
-        直驱 update，不经 tick——物理/拖拽移动的旧位置即时清除，tick
+        直驱 update，不经 tick——拖拽移动的旧位置即时清除，tick
         降档后动画帧率不随之掉。
         """
         if sprite in self.sprites:
@@ -302,7 +302,7 @@ class OverlayWindow(QWidget):
                 # 死对象上两者都会抛 RuntimeError 落成 unraisable。
                 return
             if old != new:
-                # 位移 = 运动信号（M-1）：物理/拖拽/行为位移同步升档
+                # 位移 = 运动信号（M-1）：拖拽/行为位移同步升档
                 self._note_kinetic()
             else:
                 # 纯帧通知：记录动画活性（"动画在播"判定的输入）
@@ -608,7 +608,7 @@ class OverlayWindow(QWidget):
     def before_sprites_advance(self, dt: float) -> None:
         """行为层钩子（**deprecation**）：仅由"未挂控制器"的驱动器调用。
 
-        M-2 之前这是唯一的仿真段挂点（demo / Phase 2 装配把碰撞世界与物理
+        M-2 之前这是唯一的仿真段挂点（demo / Phase 2 装配把行为
         挂在这里）；M-2 之后产品路径的仿真段由 ``TickDriver.tick_sim`` 持有
         三控制器完成（T2：驱动器独立，不挂在主 overlay 上），本钩子只在
         "驱动器未挂控制器"的兼容分支被调用——避免"驱动器 + 钩子"双份仿真。
@@ -782,9 +782,7 @@ class OverlayWindow(QWidget):
             # 补做被 grab 闸住的穿透收敛（``_converge_pending``），漏通知会让
             # 那笔待办永久滞留（窗口整窗穿透退不出去）。
             # 本分支的既有语义逐位保留：**不**转发 on_release、不做位置同步、
-            # 不动 ``_press_global``/``_drag_committed``，故只取通知这一份，
-            # 不复用 ``_finish_grab`` 本体（它对遗留真拖拽 grab 会转发
-            # on_release → 按陈旧轨迹算抛掷初速 + 补一次位置同步）。
+            # 不动 ``_press_global``/``_drag_committed``，故只取通知这一份。
             had_grab = self._mouse_grab is not None
             self._mouse_grab = None
             self._press_click_only = False
@@ -827,7 +825,7 @@ class OverlayWindow(QWidget):
         """位移过 ``DRAG_THRESHOLD`` 把点击候选升级为真拖拽（幂等）。
 
         旧机 window.py:3169-3171/3192-3193 语义：按下只是点击候选，过阈值
-        才置拖拽态——sprite.begin_drag（碰撞无限质量/探头取消的判定面）、
+        才置拖拽态——sprite.begin_drag（探头取消的判定面）、
         拖拽悬空动画（behavior.on_drag_started）、壳层探头取消
         （``_drag_committed_cb``）全部挂在这一刻，不是按下即生效。
         """
@@ -875,7 +873,7 @@ class OverlayWindow(QWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event) -> None:
-        self._note_kinetic()  # M-1：松手（甩出判定）同步升档
+        self._note_kinetic()  # M-1：松手同步升档
         grab = self._mouse_grab
         self._finish_grab(self._sprite_local(event.position()))
         if grab is None:

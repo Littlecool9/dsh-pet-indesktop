@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """V-3/V-4 脏矩形契约回归（QT_QPA_PLATFORM=offscreen 可跑）。
 
-背景（REVIEW_VERDICT.md V-3/V-4）：物理控制器在 before_sprites_advance
-阶段、拖拽在鼠标事件里移动 sprite，而 advance() 的 old 取自自身入口——
+背景（REVIEW_VERDICT.md V-3/V-4）：拖拽在鼠标事件/仿真钩子里移动 sprite，
+而 advance() 的 old 取自自身入口——
 old==new → 旧位置永不上报脏矩形 → 静态素材冻结 / 24fps 素材拖尾；且
 重绘完全以 tick 为闸门，任何闲置降档都会把动画帧率打到 tick 频率。
 
@@ -25,7 +25,7 @@ from PySide6.QtGui import QImage, QRegion
 from PySide6.QtWidgets import QApplication
 
 from pet.overlay_window import OverlayWindow
-from pet.pet_sprite import INTERACTION_THROWN, PetSprite
+from pet.pet_sprite import INTERACTION_DRAG, PetSprite
 
 app = QApplication.instance() or QApplication([])
 
@@ -97,26 +97,26 @@ def _assert_region_covers(overlay: RecordingOverlay, rect: QRect):
     )
 
 
-def test_physics_movement_reports_old_and_new_rect():
-    """V-3：before_sprites_advance 阶段（抛掷物理）的移动必须上报旧+新 rect。"""
+def test_sim_hook_movement_reports_old_and_new_rect():
+    """V-3：before_sprites_advance 阶段的移动必须上报旧+新 rect。"""
     overlay = RecordingOverlay()
     sprite, _clip = _make_sprite()
     overlay.add_sprite(sprite)
-    sprite.interaction_state = INTERACTION_THROWN
+    sprite.interaction_state = INTERACTION_DRAG
     # 首 tick 消费 bind_clip 的首帧 _frame_dirty，之后素材无帧变化
     overlay._on_tick(dt=1 / 60)
     overlay.reset()
 
     old_rect = sprite.rect()
 
-    def physics(dt):
+    def move(dt):
         sprite.set_pos(sprite.pos + QPointF(80, 0))
 
-    overlay.before_sprites_advance = physics
+    overlay.before_sprites_advance = move
     overlay._on_tick(dt=1 / 60)
 
     new_rect = sprite.rect()
-    assert old_rect != new_rect, "前提：物理控制器确实移动了 sprite"
+    assert old_rect != new_rect, "前提：钩子确实移动了 sprite"
     _assert_region_covers(overlay, old_rect)
     _assert_region_covers(overlay, new_rect)
 

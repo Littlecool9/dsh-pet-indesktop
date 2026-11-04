@@ -8,7 +8,7 @@
 本文件锁六处缺口（审计 raw.txt F1/F2/F3/A/G）：
 
 1. ``switch_clip`` / ``trigger_move`` / ``set_playback_speed`` / ``change_scale`` /
-   ``set_drag_physics`` / ``go_default_corner`` 作用于被点 sprite，素材清单读它的库；
+   ``change_scale`` / ``set_playback_speed`` / ``go_default_corner`` 作用于被点 sprite，素材清单读它的库；
    子宠设置写它自己的 ``config-slot-N.json``（B7b；主配置一字不动）；
 2. ``hide`` 只隐藏被点的那只（主宠 = 宿主窗，维持整窗隐藏语义）；
 3. ``look_at_screen(sprite=...)`` 记住发起者；
@@ -167,15 +167,6 @@ def test_child_menu_acts_on_clicked_sprite_not_main(tmp_path):
         assert main.scale == main_scale
         assert config.get("scale") == config_scale, "子宠设置不得写主配置"
 
-        # 拖动物理（勾选态读子宠；写也只动子宠）
-        main_drag = main.drag_physics
-        child_drag = child.drag_physics
-        config_drag = config.get("drag_physics")
-        _require(menu, "拖动物理").setChecked(not child_drag)
-        assert child.drag_physics is (not child_drag)
-        assert main.drag_physics is main_drag
-        assert config.get("drag_physics") == config_drag, "子宠设置不得写主配置"
-
         # 回到右下角
         main_pos = main.pos
         _require(menu, "回到右下角").trigger()
@@ -199,10 +190,9 @@ def test_child_menu_settings_keep_master_config_clean(tmp_path):
         child = _spawn_child(shell)
         facade = SpriteMenuFacade(shell, child)
         before = {key: config.get(key) for key in
-                  ("scale", "playback_speed", "drag_physics")}
+                  ("scale", "playback_speed")}
         facade.change_scale(0.5)
         facade.set_playback_speed(1.6)
-        facade.set_drag_physics(not child.drag_physics)
         after = {key: config.get(key) for key in before}
         assert after == before
         assert child.scale == 0.5 and child.playback_speed == 1.6
@@ -210,7 +200,6 @@ def test_child_menu_settings_keep_master_config_clean(tmp_path):
             encoding="utf-8"))
         assert slot["scale"] == 0.5
         assert slot["playback_speed"] == 1.6
-        assert slot["drag_physics"] == (not before["drag_physics"])
     finally:
         shell.clear_spawned_pets()
         shell._delete_runtime_marker()
@@ -219,8 +208,8 @@ def test_child_menu_settings_keep_master_config_clean(tmp_path):
 def test_main_menu_still_persists_to_master_config(tmp_path):
     """主宠菜单（回归守）：逐只设置落 **slot0 档案**，全局那份不被回写。
 
-    契约随规范 §五更新：``scale`` / ``playback_speed`` / ``drag_physics`` 都是每宠键，
-    真值在 ``config-slot-0.json``（与子宠那条用例同构）；主配置里那份旧值不参与，
+    契约随规范 §五更新：``scale`` / ``playback_speed`` 都是每宠键，真值在
+    ``config-slot-0.json``（与子宠那条用例同构）；主配置里那份旧值不参与，
     也不许被当成"第二真值"改写。
     """
     shell, _instance, config = _make_shell(tmp_path)
@@ -230,16 +219,14 @@ def test_main_menu_still_persists_to_master_config(tmp_path):
         facade = SpriteMenuFacade(shell)
         assert facade.sprite is shell.sprite
         before = {key: config.get(key) for key in
-                  ("scale", "playback_speed", "drag_physics")}
+                  ("scale", "playback_speed")}
         facade.change_scale(0.5)
         facade.set_playback_speed(1.6)
-        facade.set_drag_physics(True)
         assert shell.sprite.scale == 0.5
         slot = json.loads((config.dir / "config-slot-0.json").read_text(
             encoding="utf-8"))
         assert slot["scale"] == 0.5
         assert slot["playback_speed"] == 1.6
-        assert slot["drag_physics"] is True
         assert {key: config.get(key) for key in before} == before
     finally:
         shell._delete_runtime_marker()

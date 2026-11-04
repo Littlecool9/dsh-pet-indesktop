@@ -2,7 +2,7 @@
 """M-2 统一 tick 驱动器回归（QT_QPA_PLATFORM=offscreen 可跑）。
 
 覆盖（REVIEW_VERDICT.md M-2 / 设计稿 PHASE4_DESIGN.md T2）：
-- tick_sim 顺序协议（行为→碰撞→物理）与**成员快照完整性**：仿真成员聚合自
+- tick_sim 行为控制器与**成员快照完整性**：仿真成员聚合自
   全部已挂载 overlay（多 overlay 预留；单 overlay 时等价于该 overlay.sprites）；
 - advance+paint 段：驱动器逐个 overlay 调 ``tick_advance``，advance/脏矩形/
   位置监听 fanout/update 仍在 overlay 侧（V-3/V-4 语义不变）；
@@ -150,7 +150,7 @@ class FakeClock:
 
 # ---------------------------------------------------------------- 两段拆分与顺序协议
 def test_tick_sim_order_and_members_aggregate_across_overlays():
-    """T2：成员快照聚合自全部 overlay；顺序协议行为→物理不变。"""
+    """T2：成员快照聚合自全部 overlay；行为控制器照常推进。"""
     driver = TickDriver()
     s1, s2, s3 = FakeSprite(), FakeSprite(), FakeSprite()
     first = FakeOverlay([s1, s2], screen=FakeScreen(60.0))
@@ -159,11 +159,10 @@ def test_tick_sim_order_and_members_aggregate_across_overlays():
     driver.attach(second)
 
     calls: list = []
-    driver.set_controllers(Recorder("behavior", calls),
-                           Recorder("physics", calls))
+    driver.set_controllers(Recorder("behavior", calls))
     driver.on_tick(dt=0.02)
 
-    assert [c[0] for c in calls] == ["behavior", "physics"]
+    assert [c[0] for c in calls] == ["behavior"]
     for _name, sprites, dt in calls:
         assert sprites == [s1, s2, s3]      # 两个 overlay 的成员都在（聚合完整）
         assert dt == 0.02
@@ -182,13 +181,12 @@ def test_controllers_attached_means_no_compat_hook_call():
     overlay = FakeOverlay(screen=FakeScreen(60.0))
     driver.attach(overlay)
     calls: list = []
-    driver.set_controllers(Recorder("behavior", calls),
-                           Recorder("physics", calls))
+    driver.set_controllers(Recorder("behavior", calls))
 
     driver.on_tick(dt=0.016)
 
     assert overlay.hook_calls == []
-    assert [c[0] for c in calls] == ["behavior", "physics"]
+    assert [c[0] for c in calls] == ["behavior"]
     assert overlay.advance_calls == [0.016]
 
 

@@ -5,9 +5,6 @@
 - F2 圈末 re-arm：restart_clip 只调 start()（WebMClip start 自带软停续圈 /
   fresh start 复位 _ended_fired，帧序列 clip 的 start 自带回首帧）、
   clip.finished 转发给挂接的控制器的回调；
-- F4 飞行期动画速率：set_flight_anim_speed 叠加、reset_playback_speed 复位
-  回用户速率（_clip_duration 会除以 playback_speed，不复位会让下一次
-  _plan_move 按加速后的时长建计划）；
 - F6 bind_clip 返回 bool：start() 明确拒绝（False）才算失败，返 None 的
   播放器（GifClip.start）按接受处理。
 
@@ -227,45 +224,6 @@ def test_bind_clip_treats_none_start_result_as_accepted():
     assert sprite.bind_clip("walk") is True
 
 
-# ---------------------------------------------------------------- F4：飞行期速率
-def test_flight_anim_speed_scales_user_playback_speed():
-    clip = FakeClip()
-    sprite = _make_sprite(clip)
-    sprite.playback_speed = 1.5                  # 用户速率
-    sprite.bind_clip("hang")
-
-    sprite.set_flight_anim_speed(1.75)
-
-    assert clip.playback_speed == 1.5 * 1.75
-
-
-def test_reset_playback_speed_restores_user_rate():
-    """落地必须复位：_clip_duration 除 playback_speed（webm_clip.py:1387-1390）。"""
-    clip = FakeClip()
-    sprite = _make_sprite(clip)
-    sprite.playback_speed = 1.2
-    sprite.bind_clip("hang")
-    sprite.set_flight_anim_speed(1.75)
-    assert clip.playback_speed != 1.2
-
-    sprite.reset_playback_speed()
-
-    assert clip.playback_speed == 1.2
-
-
-def test_set_flight_anim_speed_skips_redundant_writes():
-    """每 tick 调用：速率不变（Δ<0.05）不得重复写（WebMClip 会重设 QTimer 间隔）。"""
-    clip = FakeClip()
-    sprite = _make_sprite(clip)
-    sprite.bind_clip("hang")
-    sprite.set_flight_anim_speed(1.0)
-    calls = len(clip.speed_calls)
-
-    sprite.set_flight_anim_speed(1.0)
-
-    assert len(clip.speed_calls) == calls
-
-
 # ---------------------------------------------------------------- 慢帧归因：bind 的 jump 策略
 def test_bind_skips_jump_when_display_frame_ready():
     """显示槽已有帧（预热/上一圈残留）→ 不再 jump（start 不清槽，显示连续）。"""
@@ -352,43 +310,6 @@ def test_subpixel_move_reports_while_frame_pending():
     sprite.set_pos(sprite.pos + QPointF(0.2, 0.0))
 
     assert len(calls) == 1, f"帧待上屏时不得吞掉上报，实际 {calls}"
-
-
-def test_spring_drag_subpixel_step_reports_dirty():
-    """拖拽弹簧（drag_physics 开）的亚像素步进也必须上屏：绘制落点是 float
-    pos（drawPixmap 支持亚像素），小步移动若被整数矩形报脏门槛吞掉，
-    拖拽跟手就掉帧。F-PERF P1 的跳报只适用非弹簧路径（慢速爬行/挤压）。"""
-    clip = FakeClip()
-    sprite = _make_sprite(clip)
-    assert sprite.bind_clip("walk") is True
-    sprite.advance(0.0)          # 消费首帧待上屏标记
-    sprite.drag_physics = True
-    calls = _dirty_recorder(sprite)
-    sprite.on_press(QPointF(0.0, 0.0))       # 压在 sprite 左上角：grab 偏移 (0,0)
-    sprite.begin_drag()
-    sprite.on_move(QPointF(1.3, 0.0))        # 目标仅 +1.3px
-    n0 = len(calls)
-    sprite.advance(0.016)                    # 弹簧首步 ~0.1px（亚像素）
-    assert 0.0 < sprite.pos.x() - 0.0 < 1.0, "前提：步进不足 1px"
-    assert len(calls) > n0, "弹簧拖拽的亚像素步进必须报脏上屏"
-
-
-def test_spring_drag_settles_and_stops_repainting():
-    """弹簧收敛后钉死在目标点、速度归零、不再报脏——渐近尾迹不许永远刷帧。"""
-    clip = FakeClip()
-    sprite = _make_sprite(clip)
-    assert sprite.bind_clip("walk") is True
-    sprite.advance(0.0)
-    sprite.drag_physics = True
-    sprite.on_press(QPointF(10.0, 10.0))
-    sprite.begin_drag()
-    sprite.on_move(QPointF(140.0, 110.0))
-    for _ in range(240):                     # 2s@120Hz 足够收敛
-        sprite.advance(1 / 120)
-    assert sprite.pos == QPointF(130.0, 100.0), f"收敛钉死目标点，实际 {sprite.pos}"
-    calls = _dirty_recorder(sprite)
-    sprite.advance(0.016)
-    assert calls == [], f"收敛后不得再报脏，实际 {calls}"
 
 
 def test_frame_arrival_still_reports_dirty():
