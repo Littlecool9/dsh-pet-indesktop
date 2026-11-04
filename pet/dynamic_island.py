@@ -39,7 +39,6 @@ from . import (
     catalog, island_extension_host, island_layout, island_segments, quiet_mode,
 )
 from .config import _clean_island_coordinate
-from .dsh_state import DshState
 from .island_layout import (
     _BASELINE_DY, _CHIP_ALERT_DOT_PX, _CHIP_H_PX, _CHIP_RADIUS_PX, _CONTENT_PAD_PX,
     _DIVIDER_H_PX, _DIVIDER_W_PX, _ICON_GAP_PX, _ICON_PX, _NAME_GAP_PX, _NAME_MAX_PX,
@@ -868,8 +867,8 @@ class DynamicIsland(QWidget):
             return
         previous = self._dsh_state
         self._dsh_state = value
-        work_states = (DshState.WORKING.value, DshState.THINKING.value)
-        if value == DshState.SUCCESS.value:
+        work_states = ("working", "thinking")
+        if value == "success":
             self._arm_dot_done()
         if self._dot_done and self._status_dot_state() != _DOT_DONE:
             # 被更高优先级状态（错误/待确认/工作）顶掉：立即停表销毁，不留过期绿点
@@ -2968,17 +2967,17 @@ class DynamicIsland(QWidget):
         就把它顶掉，见 :meth:`set_dsh_state` 的同源收口）。
         """
         state = self._dsh_state
-        if state == DshState.ERROR.value:
+        if state == "error":
             # 错误不能自动恢复：同刻只画一个图元时它必须最高优先
             return _DOT_ERROR
-        if state in (DshState.WAITING_APPROVAL.value,
-                     DshState.WAITING_QUESTION.value):
+        if state in ("waiting_approval",
+                     "waiting_question"):
             # 待确认/待回答：读收敛器的锁存位（gated 口径在 dsh_state 里）
             return _DOT_WAITING
-        if state in (DshState.WORKING.value,
-                     DshState.THINKING.value) or self._agent_active:
+        if state in ("working",
+                     "thinking") or self._agent_active:
             return _DOT_WORKING
-        if not self._pet_visible or state == DshState.OFFLINE.value:
+        if not self._pet_visible or state == "offline":
             # 宠物隐藏 / DSH 离线：没有可看的东西，空心环说实话。它盖过完成瞬态
             # ——空心环是唯一能说明"宠物不在/DSH 没在跑"的信号，不让 4s 绿点把它
             # 遮掉（完成只是空闲点位的临时替身，见下）

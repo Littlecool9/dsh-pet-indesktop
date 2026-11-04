@@ -437,7 +437,7 @@ def test_window_private_surface_frozen():
     """S2 收口成果：window 私有成员跨模块访问在以下文件中必须保持零命中。"""
     pattern = re.compile(r"(?:win|pet|window)\._[a-z]")
     offenders = []
-    for rel in ("app.py", "agent_link.py"):
+    for rel in ("app.py", "modules/agent_link/agent_link.py"):
         for lineno, line in enumerate(_read(rel).splitlines(), 1):
             if pattern.search(line):
                 offenders.append(f"{rel}:{lineno}: {line.strip()}")

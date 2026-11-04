@@ -1942,11 +1942,20 @@ class OverlayShell(QObject):
         扇出集合为空 → provider 永远送不到。这里由壳自接一次；legacy 路径
         仍由 app.py 在每窗创建后调用，两边不重叠。
         """
-        shared = getattr(getattr(self._instance, "shell", None), "_shared", None)
+        shell = getattr(self._instance, "shell", None)
+        shared = getattr(shell, "_shared", None)
         if shared is None:
             return
+        from .module_host import module_service
+
+        manager = module_service(shell, "agent_link")
+        if manager is None:
+            # 兼容测试替身（不是真模块宿主）：仍允许读旧共享面。
+            manager = getattr(shared, "agent_link", None)
+        if manager is None:
+            return
         try:
-            shared.proxy.set_link_next_provider(shared.agent_link._next_busy_anim)
+            shared.proxy.set_link_next_provider(manager._next_busy_anim)
         except Exception:
             logging.debug("overlay: 接入共享联动链失败", exc_info=True)
 

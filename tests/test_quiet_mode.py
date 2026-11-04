@@ -358,7 +358,7 @@ def test_agent_link_hard_failure_alert_passes_through_quiet(win):
     普通提醒压进暂存队列，用户在最需要看到报错的时刻什么都看不到，与「审批、报错
     照常提醒」的规格相矛盾。
     """
-    from pet.agent_link import AgentLinkManager
+    from pet.modules.agent_link.agent_link import AgentLinkManager
 
     quiet_mode.shared_quiet_state().start(15)
     mgr = AgentLinkManager(win, win.cfg, min_interval=0.0)

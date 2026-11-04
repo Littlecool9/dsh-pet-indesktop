@@ -1801,6 +1801,7 @@ def test_dsh_converged_state_wiring_drives_thinking(tmp_path, monkeypatch):
 
     QApplication.instance() or QApplication([])
     owner = AppShell(QApplication.instance(), Config(tmp_path))
+    owner._start_modules()
     manager = owner._shared.agent_link
     monitor = manager.monitors["dsh"]
     monitor._running = True  # 仿真活体监视器（迟到信号隔离闸只放活在跑的信号）
@@ -1834,6 +1835,7 @@ def test_dsh_converged_state_wiring_drives_thinking(tmp_path, monkeypatch):
         # AppShell 转发口在无岛时必须静默 no-op
         owner._on_dsh_state_changed("working", "thinking")
     finally:
+        owner._stop_modules()
         owner._shared.stop_all()
 
 

@@ -27,11 +27,14 @@ class ModuleConfigSchema:
     - ``defaults``：本模块拥有的配置键与出厂默认值（键名稳定，不许改名）。
     - ``normalize``：就地清洗 ``dict``（手改配置里的脏值）；抛异常由调用方隔离。
     - ``global_keys``：这些键是**全局**配置（落主 ``config.json``），不进每宠档案。
+    - ``normalize_on_reload``：``Config.reload`` 读完盘后立即清洗本 schema 拥有的键
+      （外部写盘可能带脏值；默认 ``False`` = 保持旧口径，等下次 ``set``/构造清洗）。
     """
 
     defaults: Mapping[str, Any]
     normalize: Callable[[dict], None] | None = None
     global_keys: tuple[str, ...] = ()
+    normalize_on_reload: bool = False
 
     def __post_init__(self) -> None:
         for key in self.defaults:

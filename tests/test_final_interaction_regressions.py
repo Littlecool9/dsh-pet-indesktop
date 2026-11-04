@@ -43,7 +43,7 @@ from PySide6.QtCore import QObject  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pet import dsh_probe  # noqa: E402
-from pet.agent_link import AgentLinkManager, BaseAgentMonitor  # noqa: E402
+from pet.modules.agent_link.agent_link import AgentLinkManager, BaseAgentMonitor  # noqa: E402
 from pet.config import Config  # noqa: E402
 from pet.multi_window_shared import MultiWindowProxy  # noqa: E402
 

@@ -30,7 +30,6 @@ from . import platform_win
 from . import quiet_mode
 from . import vision as vision_mod
 from . import window_alerts
-from .agent_link import AgentLinkManager
 from .proactive import ProactiveScreenWatcher
 
 log = logging.getLogger("dsh-pet-standalone")
@@ -321,9 +320,10 @@ class MultiWindowProxy:
 
     @property
     def agent_link_manager(self):
-        # G2.5 联动去重：读共享 agent_link 管理器（无共享时为 None）
-        shared = getattr(self._shell, "_shared", None)
-        return getattr(shared, "agent_link", None) if shared is not None else None
+        # G2.5 联动去重：读宿主提供的 agent_link 服务（模块缺失 = 关闭）。
+        from .module_host import module_service
+
+        return module_service(self._shell, "agent_link")
 
     @property
     def hidden_bubble_redirect(self):
@@ -338,59 +338,6 @@ class MultiWindowProxy:
         if overlay_shell is None:
             return None
         return getattr(overlay_shell, "hidden_bubble_redirect", None)
-
-
-class SharedAgentLinkManager(AgentLinkManager):
-    """进程级共享的 ``AgentLinkManager``：呈现扇出 + 生命周期按「任窗仍存活」处理。
-
-    与每窗独立 manager 的差别：
-    - ``shutdown()`` / ``pause()`` / ``resume()`` 为 no-op——单个桌宠窗口关闭、
-      隐藏、切换角色都不该停掉其它窗共享的监视器（否则一窗退、全局断）；
-    - 真正的收口只在进程级 ``stop_all()``（由 AppShell 在 aboutToQuit 调用）。
-    """
-
-    def __init__(self, proxy: MultiWindowProxy, config, **kw) -> None:
-        super().__init__(proxy, config, **kw)
-        self._stopped = False
-
-    @property
-    def presentation(self):
-        """Compatibility facade for callers of the pre-split presentation API."""
-        return self
-
-    def show_link_bubble(self, text: str, *, important: bool = False, duration_ms: int = 4500) -> None:
-        """Expose presentation's historical bubble entry point."""
-        self._show_link_bubble(text, important=important, duration_ms=duration_ms)
-
-    def pause(self) -> None:
-        # 单窗隐藏不停共享监视器；呈现扇出已按「可见窗」过滤
-        pass
-
-    def resume(self) -> None:
-        # 共享监视器不随单窗显隐启停（呈现扇出已按可见窗过滤），但恢复显示时必须
-        # 把隐藏/无宠期间到达、当时无处可投的常驻交互补投出去——显示 owner 的队列
-        # 在不可见宿主上收不到条目，这是"隐藏期审批在恢复后仍能看到"的唯一恢复路径。
-        self.redeliver_pending_interactions()
-
-    def shutdown(self) -> None:
-        # 单窗关闭/切换角色不动共享监视器；全部退出由 stop_all() 收口。
-        # 但基类的「过继给 QApplication」GC 安全收口必须继承：多窗代理 parent
-        # 为 None 时 C++ 对象为 Python 持有，wrapper 经信号连接/闭包成环只能等
-        # 循环 GC，跨线程析构带 QTimer/信号连接的 QObject 会腐化 Qt 事件队列
-        # （interpreter 退出 access violation，见 AgentLinkManager 注释）。
-        # 这里只接管生命周期、不关停监视器——嘲笑/直连测试退出时（conftest
-        # _shutdown_live_for_tests 每测收口路径）同样要走该收口。
-        AgentLinkManager._adopt_to_app_for_gc(self)
-
-    def stop_all(self) -> None:
-        """进程级收口：幂等，只真正关停监视器一次。"""
-        if self._stopped:
-            return
-        self._stopped = True
-        try:
-            super().shutdown()
-        except Exception:
-            log.exception("关闭共享 Agent 管理器失败")
 
 
 class SharedProactiveWatcher(ProactiveScreenWatcher):
@@ -532,8 +479,10 @@ class SharedSubsystems:
     """
 
     def __init__(self, shell) -> None:
+        self._shell = shell
         self.proxy = MultiWindowProxy(shell)
-        self.agent_link = SharedAgentLinkManager(self.proxy, shell.config)
+        # Agent 联动是独立模块：共享 manager 由 pet.modules.agent_link 在
+        # start() 里创建并经宿主服务提供，这里不再 import/构造它。
         # 共享 watcher 的 cfg 是**进程级**配置（开关/白名单/额度/密钥都是全局面），
         # 只有宠物名要跟随当前身份：角色身份由壳的每宠视图给（见 pet_name）。
         self.proactive = SharedProactiveWatcher(
@@ -550,6 +499,13 @@ class SharedSubsystems:
         )
         self.quiet.ended.connect(self._on_quiet_ended)
         _LIVE_SHARED_SUBSYSTEMS.add(self)
+
+    @property
+    def agent_link(self):
+        """兼容旧调用面：返回模块提供的共享 manager（模块缺失 = None）。"""
+        from .module_host import module_service
+
+        return module_service(self._shell, "agent_link")
 
     def _on_quiet_ended(self, items) -> None:
         """免打扰结束（到点 / 退出全屏）：一条气泡汇报暂存提醒。
@@ -594,7 +550,6 @@ class SharedSubsystems:
         注释）。
         """
         self.proactive.stop_all()
-        self.agent_link.stop_all()
         self.fs.stop()
         self.quiet.stop()
         _release_qt_lifetimes(self)

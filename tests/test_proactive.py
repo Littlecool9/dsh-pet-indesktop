@@ -940,7 +940,7 @@ class TestPhase4UIAndMenuIntegration:
     def test_window_menu_proactive_and_agent_toggles(self, tmp_path, monkeypatch):
         from PySide6.QtWidgets import QApplication, QMessageBox
         import tests.test_sprite_menu_facade as fac
-        from pet.agent_link import AgentLinkManager
+        from pet.modules.agent_link.agent_link import AgentLinkManager
         from pet.proactive import ProactiveScreenWatcher
         from pet.sprite_menu_facade import SpriteMenuFacade
 
@@ -956,7 +956,7 @@ class TestPhase4UIAndMenuIntegration:
         # mock QMessageBox 避免弹窗阻塞
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
         # 禁止测试写入真实 ~/.claude/settings.json（旧版曾污染真实配置，见终审记录）
-        from pet.agent_link import ClaudeCodeMonitor
+        from pet.modules.agent_link.agent_link import ClaudeCodeMonitor
         monkeypatch.setattr(ClaudeCodeMonitor, "install_hooks", lambda f: True)
 
         try:
@@ -1032,7 +1032,7 @@ class TestPhase4UIAndMenuIntegration:
         from types import SimpleNamespace
 
         from PySide6.QtWidgets import QApplication
-        from pet.agent_link import AgentLinkManager
+        from pet.modules.agent_link.agent_link import AgentLinkManager
         from pet.sprite_menu_facade import SpriteMenuFacade
 
         app = QApplication.instance() or QApplication([])
@@ -1049,7 +1049,7 @@ class TestPhase4UIAndMenuIntegration:
 
         # DSH 开启需授权确认 + 安装桥接插件：mock 掉弹窗与真实 dsh CLI 调用
         from PySide6.QtWidgets import QMessageBox
-        from pet.agent_link import DshMonitor
+        from pet.modules.agent_link.agent_link import DshMonitor
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
         monkeypatch.setattr(DshMonitor, "install_bridge", classmethod(lambda cls: (True, "ok")))
         monkeypatch.setattr(DshMonitor, "uninstall_bridge", classmethod(lambda cls: None))

@@ -34,7 +34,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
-import pet.agent_link as agent_link_mod
+import pet.modules.agent_link.agent_link as agent_link_mod
 import pet.app as app_mod
 import pet.overlay_shell as overlay_shell_mod
 from pet import dsh_probe

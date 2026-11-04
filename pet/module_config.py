@@ -103,7 +103,25 @@ def normalize_module_keys(data: dict) -> None:
             logger.exception("模块配置清洗失败（schema=%r）", schema)
 
 
+def normalize_reload_keys(data: dict) -> None:
+    """``Config.reload`` 专用：只清洗声明 ``normalize_on_reload`` 的模块 schema。
+
+    默认模块保持旧口径（reload 存原值、下次 set/构造再清洗），避免把磁盘上的
+    原始值与编辑基线悄悄归一化后让后续保存误判"没有差异"。
+    """
+    if not isinstance(data, dict):
+        return
+    for schema in _schemas():
+        normalizer = schema.normalize
+        if normalizer is None or not schema.normalize_on_reload:
+            continue
+        try:
+            normalizer(data)
+        except Exception:
+            logger.exception("模块配置 reload 清洗失败（schema=%r）", schema)
+
+
 __all__ = [
     "module_defaults", "module_global_keys", "module_keys",
-    "normalize_module_keys", "reset_cache",
+    "normalize_module_keys", "normalize_reload_keys", "reset_cache",
 ]
