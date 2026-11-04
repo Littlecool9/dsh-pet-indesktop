@@ -488,9 +488,12 @@ class DynamicIsland(QWidget):
     card_expanded = Signal()  # 卡片展开（AppShell 借此静默刷新余额）
     chat_requested = Signal()  # 桌宠隐藏时单击胶囊（hidden_chat 开启）：弹岛对话气泡
 
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, *, focus=None):
         super().__init__(parent)
         self.config = config
+        # 专注模块的只读服务（宿主注入）；None = 模块未运行，岛按“专注关闭”表现。
+        self._focus = focus
+        self._focus_controls = None
         self._cfg = _cfg_dict(config)
         self.setObjectName("dynamic-island")
         flags = (
@@ -1450,28 +1453,33 @@ class DynamicIsland(QWidget):
             button_row.addWidget(btn)
         actions.addLayout(button_row)
 
-        from .focus_ui import FocusControls
-        self._focus_controls = FocusControls(self.config, self._card_box)
+        service = self._focus
+        if service is not None:
+            self._focus_controls = service.create_controls(self.config, self._card_box)
         for section in (self._card_overview, self._card_metrics, self._focus_controls,
                         self._card_message_box, self._card_actions):
-            layout.addWidget(section)
+            if section is not None:
+                layout.addWidget(section)
         self._card_box.hide()
         self._sync_card_labels()
-        from .focus_mode import shared_focus_session
-        session = shared_focus_session()
-        listener = self.refresh_focus
-        session.add_listener(listener)
-        self.destroyed.connect(lambda _obj=None: session.remove_listener(listener))
+        if service is not None:
+            listener = self.refresh_focus
+            service.add_listener(listener)
+            self.destroyed.connect(
+                lambda _obj=None, service=service: service.remove_listener(listener))
 
     def refresh_focus(self) -> None:
         """Update focus content without a per-second topmost/system probe."""
         import shiboken6
-        if not shiboken6.isValid(self) or not shiboken6.isValid(self._focus_controls):
-            from .focus_mode import shared_focus_session
-            shared_focus_session().remove_listener(self.refresh_focus)
+        service = self._focus
+        controls = self._focus_controls
+        if (service is None or not shiboken6.isValid(self)
+                or controls is None or not shiboken6.isValid(controls)):
+            if service is not None:
+                service.remove_listener(self.refresh_focus)
             return
         self._plan_inputs_key = self._content_cache_key = None
-        self._focus_controls.refresh()
+        controls.refresh()
         if not self.isVisible():
             return
         if self._mode == "expanded":
@@ -1522,18 +1530,20 @@ class DynamicIsland(QWidget):
             self._apply_card_style(btn, button_style)
             btn.setFixedHeight(_CARD_BUTTON_H)
         self._card_toggle_btn.setText("隐藏桌宠" if self._pet_visible else "显示桌宠")
-        self._focus_controls.refresh()
-        for btn in (self._focus_controls.toggle, self._focus_controls.end):
-            btn.setFont(self._font_for("name"))
-            self._apply_card_style(btn, button_style
-                                   + f"QPushButton:focus {{ border: 2px solid {accent.name()}; }}"
-                                   + f"QPushButton:disabled {{ color: {secondary_color.name()};"
-                                   + f" background: rgba({accent_rgb}, 0.03); border-color: rgba({accent_rgb}, 0.15); }}")
-            btn.setFixedHeight(_CARD_BUTTON_H)
-        self._focus_controls.status.setFont(self._font_for("aux"))
-        self._apply_card_style(self._focus_controls.status, f"color: {primary_color.name()};")
-        self._focus_controls.detail.setFont(self._font_for("aux"))
-        self._apply_card_style(self._focus_controls.detail, f"color: {secondary_color.name()};")
+        controls = self._focus_controls
+        if controls is not None:
+            controls.refresh()
+            for btn in (controls.toggle, controls.end):
+                btn.setFont(self._font_for("name"))
+                self._apply_card_style(btn, button_style
+                                       + f"QPushButton:focus {{ border: 2px solid {accent.name()}; }}"
+                                       + f"QPushButton:disabled {{ color: {secondary_color.name()};"
+                                       + f" background: rgba({accent_rgb}, 0.03); border-color: rgba({accent_rgb}, 0.15); }}")
+                btn.setFixedHeight(_CARD_BUTTON_H)
+            controls.status.setFont(self._font_for("aux"))
+            self._apply_card_style(controls.status, f"color: {primary_color.name()};")
+            controls.detail.setFont(self._font_for("aux"))
+            self._apply_card_style(controls.detail, f"color: {secondary_color.name()};")
         # ---- A 概览 ----
         self._card_balance_label.setText(self._balance_text)
         self._card_tier_label.setText(self._balance_tier_text)
@@ -1626,8 +1636,11 @@ class DynamicIsland(QWidget):
         按这里的数设的，两者不等就是账目错了）。
         """
         rows = self._card_metric_rows()
+        controls = self._focus_controls
+        focus_height = (controls.content_height(self._card_content_width())
+                        if controls is not None else 0)
         total = (_CARD_MARGIN_TOP + self._card_overview_height()
-                 + self._focus_controls.content_height(self._card_content_width())
+                 + focus_height
                  + self._card_metrics_height(rows) + self._card_message_height()
                  + self._card_actions_height() + _CARD_MARGIN_BOTTOM)
         return total
@@ -1646,7 +1659,9 @@ class DynamicIsland(QWidget):
         self._card_message_box.setFixedHeight(self._card_message_height(lines))
         self._card_message_label.setFixedHeight(lines * metrics.lineSpacing())
         self._card_actions.setFixedHeight(self._card_actions_height())
-        self._focus_controls.setFixedHeight(self._focus_controls.content_height(self._card_content_width()))
+        controls = self._focus_controls
+        if controls is not None:
+            controls.setFixedHeight(controls.content_height(self._card_content_width()))
 
     def _card_row_baseline(self) -> int:
         """B 区行的共享基线（相对行顶）= 内边距 + 值列（13px）的 ascent。"""
@@ -2194,8 +2209,8 @@ class DynamicIsland(QWidget):
         icon = bool(c.get("show_icon", True))
         name = bool(c.get("show_name", True))
         info = bool(c.get("show_info", True))
-        from .focus_mode import shared_focus_session
-        info = info or shared_focus_session().engaged
+        service = self._focus
+        info = info or bool(service is not None and service.engaged)
         status = bool(c.get("show_status", True))
         if not (icon or name or info or status):
             info = True
@@ -2293,9 +2308,8 @@ class DynamicIsland(QWidget):
         它们是产品契约的锚点，收缩不得动（见设计稿 §3.2 保底级）。
         """
         mode = str(self._cfg.get("info_mode") or "time")
-        from .focus_mode import shared_focus_session
-        focus = shared_focus_session()
-        if focus.engaged:
+        focus = self._focus
+        if focus is not None and focus.engaged:
             text = focus.label()
             sample = "长休息 180:00"
             elide_px = 0
@@ -3672,8 +3686,9 @@ class DynamicIsland(QWidget):
             self._ext_sampler = None
         # 窗口关了就没有"下一次读快照"，留着只是一条空转的定时器。
         self._ext_timer.stop()
-        from .focus_mode import shared_focus_session
-        shared_focus_session().remove_listener(self.refresh_focus)
+        service = self._focus
+        if service is not None:
+            service.remove_listener(self.refresh_focus)
         super().closeEvent(event)
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -3831,8 +3846,8 @@ class DynamicIsland(QWidget):
         screen = self._screen_at(event.globalPosition().toPoint())
         available = screen.availableGeometry() if screen is not None else None
         if not self._dragging:
-            from .focus_mode import shared_focus_session
-            if shared_focus_session().engaged:
+            service = self._focus
+            if service is not None and service.engaged:
                 self.expand_card()
             elif self._mode == "docked" and not self._hover_peek:
                 # 细条单击 = 滑出预览（不停留展开卡片，保持轻量）

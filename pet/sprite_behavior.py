@@ -262,9 +262,12 @@ class BehaviorController:
         margin: int = catalog.MOVE_MARGIN,
         min_distance: int = catalog.MOVE_MIN_PX,
         max_distance: int = catalog.MOVE_MAX_PX,
+        focus_provider=None,
     ) -> None:
         self.bounds = QRect(bounds)
         self.rng = rng if rng is not None else random
+        # 专注状态由模块经宿主服务提供；没有模块/宿主 = 专注关闭。
+        self._focus_provider = focus_provider
         self.margin = margin
         self.min_distance = min_distance
         self.max_distance = max_distance
@@ -310,6 +313,16 @@ class BehaviorController:
         """立即结束 gap（点击/拖拽接管打断氛围步，window.py:_cancel_animation_gap）。"""
         st.gap_remaining = 0.0
 
+    def _focus_focusing(self) -> bool:
+        provider = self._focus_provider
+        if provider is None:
+            return False
+        try:
+            service = provider()
+        except Exception:
+            return False
+        return bool(service is not None and getattr(service, "focusing", False))
+
     # ---------------------------------------------------------------- 对外 API
     def tick(self, sprites, dt: float) -> None:
         """推进一轮：normal 走掷骰链，drag 只做画面接管。
@@ -324,8 +337,7 @@ class BehaviorController:
                 st = self._states[sprite] = _SpriteState()
                 st.predictor = self._make_predictor(sprite)
             istate = getattr(sprite, "interaction_state", INTERACTION_NORMAL)
-            from .focus_mode import shared_focus_session
-            if (istate == INTERACTION_NORMAL and shared_focus_session().focusing
+            if (istate == INTERACTION_NORMAL and self._focus_focusing()
                     and (st.state == STATE_MOVE or st.pending_move is not None)):
                 self._enter_idle(sprite, st, self._categories(sprite.library))
             if istate != INTERACTION_NORMAL:
@@ -1298,8 +1310,7 @@ class BehaviorController:
         / loops / loop_duration，F3）：旧架构 window.py:2753-2768 的计划键
         同款，位置由曲线（而非平均速度）决定，静帧段不位移。
         """
-        from .focus_mode import shared_focus_session
-        if shared_focus_session().focusing or getattr(sprite, "probe_active", False):
+        if self._focus_focusing() or getattr(sprite, "probe_active", False):
             return False
         moves = cats["moves"]
         if not moves:

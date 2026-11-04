@@ -113,7 +113,7 @@ class FocusHistory:
                 batch = list(self._pending)
                 self._pending.clear()
             try:
-                from .config import atomic_replace_with_retry
+                from ...config import atomic_replace_with_retry
                 with _WRITE_LOCK:
                     sessions = []
                     if self.path.exists():

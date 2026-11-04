@@ -3,12 +3,13 @@ import sys
 
 from PySide6.QtWidgets import QPlainTextEdit
 
-from .focus_mode import normalize_focus_config
 from .settings_widgets import BrowserSpinBox, SettingRow, ToggleSwitch
 
 
 def build_focus_rows(dialog):
-    cfg = normalize_focus_config(dialog.config.get("focus_mode"))
+    cfg = dialog.config.get("focus_mode")
+    if not isinstance(cfg, dict):
+        return []  # 专注模块未登记：没有这项功能，设置页也不留半截行。
     editor = QPlainTextEdit(dialog)
     editor.setObjectName("focusWorkContext")
     editor.setPlainText(cfg["work_context"])
@@ -49,4 +50,4 @@ def save_focus_settings(dialog):
     values = {key: spin.value() for key, spin in dialog.focus_controls.items()}
     values.update(work_context=dialog.focus_work_context.toPlainText(),
                   screen_enabled=dialog.focus_screen_enabled.isChecked())
-    dialog.config.set("focus_mode", normalize_focus_config(values))
+    dialog.config.set("focus_mode", values)

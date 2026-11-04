@@ -2120,10 +2120,10 @@ class AppShell:
             return
         if getattr(self, "island", None) is None:
             from .dynamic_island import DynamicIsland
+            from .module_host import module_service
 
-            self.island = DynamicIsland(self.config)
-            if getattr(self, "_shared", None) is not None:
-                self._shared.focus.changed.connect(self.island.refresh_focus)
+            self.island = DynamicIsland(
+                self.config, focus=module_service(self, "focus"))
             # 纯桌宠版（无聊天模块）：hidden_chat 的岛单击路由回退为展开卡片，
             # 防"桌宠隐藏 → 岛点了没反应 → 无法恢复"的死锁。getattr 兼容
             # __new__ 测试桩（property 内 AttributeError 时取默认 True）

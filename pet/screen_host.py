@@ -30,7 +30,7 @@ from .sprite_behavior import BehaviorController
 class ScreenHost:
     """整桌面合成窗的宿主：overlay、单矩形边界、活动区矩形集合与控制器组。"""
 
-    def __init__(self, screen, overlay, bounds: QRect) -> None:
+    def __init__(self, screen, overlay, bounds: QRect, *, focus_provider=None) -> None:
         # ``screen`` = 家那块屏（关闭跨屏时唯一活动区、屏拔出时的兜底判据）。
         self.screen = screen
         self.overlay = overlay
@@ -38,7 +38,7 @@ class ScreenHost:
         # ((screen, QRect) ...)：活动区矩形集合 + 它属于哪块屏，几何同步按屏对齐
         self.activity: tuple = ()
         # 仿真：行为（漫游/落位边界）→ 附加控制器
-        self.behavior = BehaviorController(self.bounds)
+        self.behavior = BehaviorController(self.bounds, focus_provider=focus_provider)
         # 附加仿真控制器（tick 尾段，顺序即列表序）
         self.extras: list = []
         self.probe = None

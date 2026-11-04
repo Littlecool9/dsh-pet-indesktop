@@ -13,12 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def benchmark():
-    from pet.focus_mode import FocusSession, normalize_focus_config
+    from pet.modules.focus.session import FocusSession, normalize_focus_config
     state = FocusSession()
     result = {}
 
     def movement_gate():
-        from pet.focus_mode import shared_focus_session
+        from pet.modules.focus.session import shared_focus_session
         return shared_focus_session().focusing
 
     for name, fn in (("idle_tick", state.tick),
@@ -57,7 +57,7 @@ def gui(output):
     from pet import modern_settings_dialog as settings_mod
     from pet.config import Config
     from pet.dynamic_island import DynamicIsland
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
     from scripts.capture_settings_pages import _apply_dark_palette
 
     app = QApplication.instance() or QApplication([])
@@ -98,8 +98,9 @@ def gui(output):
         finally:
             dialog.close()
             app.processEvents()
-        island = DynamicIsland(cfg)
+        from pet.modules.focus.state import FocusService
         state = shared_focus_session()
+        island = DynamicIsland(cfg, focus=FocusService(state, cfg))
         try:
             island.show()
             island.expand_card()
@@ -148,7 +149,7 @@ def application(output):
     import psutil
     from pet.app import AppShell
     from pet.config import Config
-    from pet.focus_mode import shared_focus_session
+    from pet.modules.focus.session import shared_focus_session
     from pet import click_sound
 
     app = QApplication.instance() or QApplication([])
@@ -240,8 +241,8 @@ def live_ai(output, profile_base):
     from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
     from pet import vision
     from pet.config import Config
-    from pet.focus_mode import FocusSession
-    from pet.focus_service import FocusController
+    from pet.modules.focus.session import FocusSession
+    from pet.modules.focus.controller import FocusController
     from pet.settings_slot_config import route_settings_config
 
     app = QApplication.instance() or QApplication([])

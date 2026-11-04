@@ -15,6 +15,23 @@ from .modules.host import ModuleHostBase
 logger = logging.getLogger(__name__)
 
 
+def module_service(shell, module_id: str, default: Any = None) -> Any:
+    """从应用壳的模块宿主取一个服务；模块缺失/未启动时返回 ``default``。
+
+    核心读模块能力（例如专注状态）只走这一个入口：拿不到服务 = 该功能关闭，
+    与用户主动关掉同义——核心从不 import 具体模块。
+    """
+    host = getattr(shell, "_module_host", None)
+    getter = getattr(host, "get", None)
+    if not callable(getter):
+        return default
+    try:
+        return getter(module_id, default)
+    except Exception:
+        logger.debug("读取模块 %s 的服务失败", module_id, exc_info=True)
+        return default
+
+
 class AppModuleHost(ModuleHostBase):
     def __init__(self, shell, parent=None) -> None:
         super().__init__(parent)
@@ -55,4 +72,4 @@ class AppModuleHost(ModuleHostBase):
         dialog.activateWindow()
 
 
-__all__ = ["AppModuleHost"]
+__all__ = ["AppModuleHost", "module_service"]

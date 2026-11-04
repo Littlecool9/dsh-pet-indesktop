@@ -9,8 +9,8 @@ from PySide6.QtCore import QEventLoop, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from pet.config import Config
-from pet.focus_mode import FocusSession
-from pet.focus_service import FocusController
+from pet.modules.focus.session import FocusSession
+from pet.modules.focus.controller import FocusController
 
 
 app = QApplication.instance() or QApplication([])
@@ -123,7 +123,7 @@ def test_front_window_only_and_persona_context_reach_visual_request(tmp_path, mo
     from pet import vision
     cfg, state, target, controller = setup_controller(tmp_path)
     calls = []
-    monkeypatch.setattr("pet.focus_service.foreground_observation_available", lambda: True)
+    monkeypatch.setattr("pet.modules.focus.controller.foreground_observation_available", lambda: True)
     monkeypatch.setattr(vision, "foreground_window_info", lambda: {"rect": (2, 3, 22, 23)})
     monkeypatch.setattr(vision, "capture_window_rect", lambda rect: Image.new("RGB", (20, 20)))
 
@@ -239,7 +239,7 @@ def test_pause_during_capture_prevents_a_new_http_request(tmp_path, monkeypatch)
     entered = threading.Event()
     release = threading.Event()
     transmitted = []
-    monkeypatch.setattr("pet.focus_service.foreground_observation_available", lambda: True)
+    monkeypatch.setattr("pet.modules.focus.controller.foreground_observation_available", lambda: True)
     monkeypatch.setattr(vision, "foreground_window_info", lambda: {"rect": (0, 0, 20, 20)})
 
     def capture(rect):
@@ -290,7 +290,7 @@ def test_error_is_visible_and_does_not_stop_clock(tmp_path, monkeypatch):
 def test_off_task_speech_cooldown_and_uncertain_silence(tmp_path, monkeypatch):
     from types import SimpleNamespace
     now = [0.0]
-    monkeypatch.setattr("pet.focus_service.time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr("pet.modules.focus.controller.time", SimpleNamespace(monotonic=lambda: now[0]))
     cfg, state, target, controller = setup_controller(tmp_path)
     try:
         state.start()

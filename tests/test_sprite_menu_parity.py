@@ -108,6 +108,8 @@ class _StubAppShell:
         self._record("open_todo_panel")
 
     def running_module(self, module_id):
+        if module_id == "focus":
+            return _FocusModuleStub()
         if module_id != "network_info":
             return None
         shell = self
@@ -150,6 +152,17 @@ class _StubInstance(cap.CapInstance):
         return fac.RichLibrary()
 
 
+class _FocusModuleStub:
+    """运行中的专注模块菜单面（与真实模块同源，只读全局会话）。"""
+
+    def build_menu(self, menu, pet):
+        from pet.modules.focus.session import shared_focus_session
+        from pet.modules.focus.state import FocusService
+        from pet.modules.focus.ui import build_focus_menu
+
+        return build_focus_menu(menu, pet, FocusService(shared_focus_session()))
+
+
 class _ReferenceModule:
     def open_dialog(self) -> None:
         pass
@@ -168,7 +181,13 @@ class _ReferenceHost:
         self.on_look_screen = self.look_at_screen if chat else None
         self.on_open_modern_settings = lambda: None
         self.on_open_todo_panel = lambda: None
-        self.running_module = lambda _module_id: _ReferenceModule()
+        def running_module(module_id):
+            # 基准宿主与 _StubAppShell 同能力：网络信息与专注模块在运行。
+            if module_id == "focus":
+                return _FocusModuleStub()
+            return _ReferenceModule() if module_id == "network_info" else None
+
+        self.running_module = running_module
         self.module_unavailable_reason = lambda _module_id: ""
         self.on_switch_character = lambda character_id: None
         self.playback_speed = 1.0

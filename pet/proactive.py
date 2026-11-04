@@ -26,6 +26,20 @@ from .proactive_limiter import (
 )
 from .proactive_memory import ProactiveMemory
 
+
+def _focus_service_of(win):
+    """窗口/代理宿主上的专注服务；没有模块或没有宿主时返回 None（= 专注关闭）。"""
+    getter = getattr(win, "focus_service", None)
+    if callable(getter):
+        try:
+            return getter()
+        except Exception:
+            return None
+    from .module_host import module_service
+
+    return module_service(getattr(win, "_shell", None), "focus")
+
+
 __all__ = [
     "DEFAULT_PROACTIVE_CONFIG",
     "PRESET_DEFAULTS",
@@ -251,8 +265,8 @@ class ProactiveScreenWatcher:
 
             def _forward_bubble(self, text: str, duration_ms: int) -> None:
                 from . import window_alerts as _alerts
-                from .focus_mode import shared_focus_session
-                if shared_focus_session().owns_observation:
+                service = _focus_service_of(self._watcher.win)
+                if service is not None and service.owns_observation:
                     return
 
                 if _alerts.quiet_blocked(self._watcher.win):
@@ -346,8 +360,8 @@ class ProactiveScreenWatcher:
 
     def _on_tick(self) -> None:
         """8s 心跳主线程快速判定（G1~G4）。"""
-        from .focus_mode import shared_focus_session
-        if shared_focus_session().owns_observation:
+        service = _focus_service_of(self.win)
+        if service is not None and service.owns_observation:
             return
         if self._worker_busy or self._request_in_flight:
             return
@@ -496,8 +510,8 @@ class ProactiveScreenWatcher:
     ) -> None:
         """主线程槽：接收后台截图计算结果，执行 dHash 差异与频控，进入真实请求或日志模式。"""
         try:
-            from .focus_mode import shared_focus_session
-            if shared_focus_session().owns_observation:
+            service = _focus_service_of(self.win)
+            if service is not None and service.owns_observation:
                 return
             info = info or {}
             eff = effective_proactive_config(self.cfg.get("proactive_screen", {}))
