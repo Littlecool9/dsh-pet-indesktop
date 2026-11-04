@@ -203,6 +203,27 @@ export function createPetApiService({ chat, purpose, petService, stateDir, curre
       json(res, result.ok ? 200 : 400, result);
       return;
     }
+    // 共享「主动说话」额度：桌宠的视觉观察 / 自言自语和 SurfCore 的目的机制
+    // 抢同一个计数器（dailyMax / gapMinMs / 安静时段 / 专注模式）。
+    if (req.method === 'POST' && suffix === '/proactive/claim') {
+      let body = null;
+      try { body = JSON.parse((await readBody(req, PET_BODY_LIMIT)) || '{}'); } catch {
+        json(res, 400, { ok: false, code: 'invalid-json', error: '请求体不是合法 JSON', hint: '发送 application/json，body 形如 {"source":"vision"}。' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || typeof body.source !== 'string' || !body.source.trim()) {
+        json(res, 400, { ok: false, code: 'invalid-source', error: '缺少 source', hint: 'body 必须是 {"source":"vision" | "self-talk" | "..."}，source 为非空字符串。' });
+        return;
+      }
+      if (!purpose?.claim) {
+        json(res, 503, { ok: false, code: 'purpose-unavailable', error: 'purpose 服务不可用', hint: '重启 DSH 后再试。' });
+        return;
+      }
+      const result = purpose.claim(body);
+      json(res, result?.ok === false ? 400 : 200, result);
+      return;
+    }
     if (req.method === 'POST' && suffix === '/focus') {
       let body = {};
       try { body = JSON.parse((await readBody(req, PET_BODY_LIMIT)) || '{}'); } catch {}

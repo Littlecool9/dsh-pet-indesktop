@@ -197,6 +197,8 @@ export function createPurposeState(now = Date.now()) {
     pending: [],
     history: [],
     lastSkip: null,
+    // 最近一次「主动说话额度」被谁领走（桌宠视觉 / 自言自语 / QQ 目的机制）。
+    lastClaim: null,
   };
 }
 
@@ -267,6 +269,9 @@ export function normalizePurposeState(raw, now = Date.now()) {
   base.history = (Array.isArray(raw.history) ? raw.history : []).map(normalizeHistoryEntry).filter(Boolean).slice(-200);
   base.lastSkip = isPlainObject(raw.lastSkip)
     ? { at: Number(raw.lastSkip.at) || 0, reason: String(raw.lastSkip.reason ?? '').slice(0, 80) }
+    : null;
+  base.lastClaim = isPlainObject(raw.lastClaim) && Number(raw.lastClaim.at) > 0
+    ? { source: String(raw.lastClaim.source ?? '').slice(0, 40), at: Number(raw.lastClaim.at) }
     : null;
   return base;
 }

@@ -6,6 +6,7 @@
 
 | 日期 | 案例 | 一句话 | 版本 |
 | --- | --- | --- | --- |
+| 2026-11-04 | [共享主动说话额度 + QQ 主人专注上下文](2026-11-04-proactive-claim-and-qq-focus.md) | `/proactive/claim` 共用 daily/gap/quiet/focus；QQ 只加专注状态行 | 待发布 |
 | 2026-11-04 | [桌宠本地接口扩展：人格/自言自语/额度/直连用量/专注阶段](2026-11-04-pet-api-desktop-client.md) | 新增 persona/self-talk/budget/usage 路由；focus 带 phase/endsAt | 待发布 |
 | 2026-11-03 | [人格语气层重复/未进目的提示词](2026-11-03-persona-tone-dedup.md) | tone 不再回退 core；相同内容去重；purpose 接语气层 | 待发布 |
 | 2026-11-03 | [群里的 #sl 刷屏指令不唤醒 SurfCore](2026-11-03-ignore-hash-commands.md) | 非主人纯 # 短指令过滤；主人/@/引用放行 | 待发布 |
