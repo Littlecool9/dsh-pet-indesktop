@@ -6,6 +6,7 @@ import json
 import logging
 import socket
 import threading
+import time
 from dataclasses import FrozenInstanceError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -78,7 +79,7 @@ class FakePetApi:
             ("POST", "/chat"): (200, {"ok": True, "reply": {"text": "嗯"}}),
             ("GET", "/events"): (200, {"ok": True, "bootId": "b", "cursor": 0, "events": []}),
         }
-        self._lock = threading.Lock()
+        self._cond = threading.Condition()
         api = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -106,7 +107,7 @@ class FakePetApi:
                 )
                 query = parse_qs(parsed.query)
                 headers = {key.lower(): value for key, value in self.headers.items()}
-                with api._lock:
+                with api._cond:
                     api.requests.append(
                         {
                             "method": self.command,
@@ -116,6 +117,7 @@ class FakePetApi:
                             "body": body,
                         }
                     )
+                    api._cond.notify_all()
                     expected = api.token
                 if headers.get("x-pet-token") != expected:
                     self._write(401, {"ok": False, "error": "bad token"})
@@ -152,6 +154,21 @@ class FakePetApi:
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def wait_for(self, predicate, timeout: float = 5.0) -> bool:
+        """等待 ``predicate(requests)`` 成立；只在条件变量上等，不猜时序。"""
+        with self._cond:
+            deadline = time.monotonic() + timeout
+            while not predicate(self.requests):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._cond.wait(remaining)
+            return True
+
+    def snapshot(self) -> list[dict]:
+        with self._cond:
+            return list(self.requests)
 
     def close(self) -> None:
         self.server.shutdown()
