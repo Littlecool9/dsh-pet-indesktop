@@ -624,10 +624,10 @@ server.tool(
 
 server.tool(
   'qq_get_recent_messages',
-  '查看指定会话的最近消息（只读），支持 offset 扩大范围。',
+  '查看指定会话的最近消息（只读），支持 offset 扩大范围。key 可以是唤醒提示里列出的其它会话；token 仍用你当前会话的令牌（跨会话读取开启时）。',
   {
-    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
-    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号；也可以是唤醒提示里列出的其它会话'),
+    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】；看别的会话也用你当前这个）'),
     limit: z.number().optional().describe('最多返回条数，默认 20，最大 100'),
     offset: z.number().optional().describe('跳过最近 N 条，用于向前翻看更早消息，默认 0')
   },
@@ -917,10 +917,10 @@ server.tool(
 
 server.tool(
   'qq_get_message_detail',
-  '按 message_id / 本地 seq 查看单条消息的发送者、引用信息与正文（只读）。注意：正文最多返回 200 字符，textTruncated=true 表示被截断，这里不是读取长消息全文的入口。',
+  '按 message_id / 本地 seq 查看单条消息的发送者、引用信息与正文（只读）。key 可以是唤醒提示里列出的其它会话；token 仍用你当前会话的令牌（跨会话读取开启时）。注意：正文最多返回 200 字符，textTruncated=true 表示被截断，这里不是读取长消息全文的入口。',
   {
-    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
-    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号；也可以是唤醒提示里列出的其它会话'),
+    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】；看别的会话也用你当前这个）'),
     messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可能为负数）')
   },
   async ({ key, token, messageId }) => {

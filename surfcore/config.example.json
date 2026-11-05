@@ -15,7 +15,8 @@
   },
   "memoryCard": {
     "sharing": {
-      "privateToGroups": true
+      "privateToGroups": true,
+      "groupsToPrivate": true
     }
   },
   "biliBridge": {
@@ -184,7 +185,8 @@
     "agentPreset": "qq-chat-v2",
     "provideRecommendations": true,
     "crossSession": {
-      "enabled": true
+      "enabled": true,
+      "read": true
     },
     "tools": {
       "getPrompt": true,

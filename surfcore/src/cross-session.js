@@ -1,13 +1,17 @@
 /**
- * 跨会话发送 / 可达会话列表的纯逻辑（2026-11-04）。
+ * 跨会话发送 / 跨会话读取 / 可达会话列表的纯逻辑（2026-11-04）。
  *
  * 背景：reserved2 的每个会话各有自己的 agentToken，发送端点原先要求
  * 「令牌必须属于目标 key」。主人希望她在私聊里说「把那个故事也发到群里」时
  * 真的能发出去，所以发送侧改为：只要能证明这是**任意一个活跃二代会话**的令牌，
- * 就允许跨会话发送；读取端点仍然严格绑定本会话（见 bridge.js 的 x-agent-call 关卡）。
+ * 就允许跨会话发送。读取侧后来也补了反向：私聊里被问「群里刚才说了什么」时，
+ * 她可以拿当前令牌看白名单会话的最近消息（只读，不动目标状态）。
+ *
+ * 两个方向各有独立开关：socialV2.crossSession.enabled（发送）/
+ * socialV2.crossSession.read（读取），默认都开。
  *
  * 本模块不碰 IO、不读配置以外的全局状态，桥接和单测共用同一套判定，
- * 避免 16k 行的 bridge.js 里每个发送端点各写一份。
+ * 避免 16k 行的 bridge.js 里每个端点各写一份。
  */
 
 /** 归一化会话 key：group:007 → group:7；格式不对返回 ''。 */
@@ -18,9 +22,14 @@ export function canonicalConversationKey(key) {
   return Number.isSafeInteger(id) && id > 0 ? `${m[1]}:${id}` : '';
 }
 
-/** 配置开关默认开；只有显式 false 才关闭。 */
+/** 发送开关默认开；只有显式 false 才关闭。 */
 export function crossSessionEnabled(cfg) {
   return cfg?.socialV2?.crossSession?.enabled !== false;
+}
+
+/** 读取开关默认开；只有显式 false 才关闭（与发送开关独立）。 */
+export function crossSessionReadEnabled(cfg) {
+  return cfg?.socialV2?.crossSession?.read !== false;
 }
 
 /**
@@ -42,11 +51,11 @@ export function findLiveTokenKey(conversations, token, eq) {
 }
 
 /**
- * 发送端点的令牌判定。
+ * 发送 / 读取共用的令牌判定。
  * @returns {{allowed:boolean, reason:string, sourceKey:string, crossSession:boolean}}
- *   sourceKey 是令牌所属会话（D3 的额度记账对象）；crossSession=true 表示目标不是它。
+ *   sourceKey 是令牌所属会话；crossSession=true 表示目标不是它。
  */
-export function resolveSendToken({ targetKey, token, conversations, cfg, eq } = {}) {
+function resolveCrossSessionToken({ targetKey, token, conversations, enabled, disabledReason, eq } = {}) {
   const target = canonicalConversationKey(targetKey) || String(targetKey ?? '').trim();
   if (!target) return { allowed: false, reason: 'bad-target', sourceKey: '', crossSession: false };
   if (typeof token !== 'string' || !token) {
@@ -58,10 +67,35 @@ export function resolveSendToken({ targetKey, token, conversations, cfg, eq } = 
     return { allowed: true, reason: 'same-conversation', sourceKey, crossSession: false };
   }
   // 跨会话只在开关开着时放行；关掉后回退到原来的「令牌必须属于目标」。
-  if (!crossSessionEnabled(cfg)) {
-    return { allowed: false, reason: 'cross-session-disabled', sourceKey, crossSession: false };
+  if (!enabled) {
+    return { allowed: false, reason: disabledReason, sourceKey, crossSession: false };
   }
   return { allowed: true, reason: 'cross-session', sourceKey, crossSession: true };
+}
+
+/**
+ * 发送端点的令牌判定（socialV2.crossSession.enabled）。
+ * @returns {{allowed:boolean, reason:string, sourceKey:string, crossSession:boolean}}
+ *   sourceKey 是令牌所属会话（D3 的额度记账对象）；crossSession=true 表示目标不是它。
+ */
+export function resolveSendToken({ targetKey, token, conversations, cfg, eq } = {}) {
+  return resolveCrossSessionToken({
+    targetKey, token, conversations, eq,
+    enabled: crossSessionEnabled(cfg),
+    disabledReason: 'cross-session-disabled',
+  });
+}
+
+/**
+ * 只读端点（recent / message-detail）的令牌判定（socialV2.crossSession.read）。
+ * 读端点没有额度/未读副作用；目标闸门（白名单/工具开关）仍由 bridge 按目标判定。
+ */
+export function resolveReadToken({ targetKey, token, conversations, cfg, eq } = {}) {
+  return resolveCrossSessionToken({
+    targetKey, token, conversations, eq,
+    enabled: crossSessionReadEnabled(cfg),
+    disabledReason: 'cross-read-disabled',
+  });
 }
 
 /** 群名/私聊名是模型可见文本：压成单行、去掉控制字符、限长。 */

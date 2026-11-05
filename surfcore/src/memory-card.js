@@ -83,8 +83,15 @@ export const DEFAULT_MEMORY_CARD_CONFIG = Object.freeze({
    * 群记忆互通：默认隔离；只有同一 circle 的群互相可见。
    * privateToGroups：私聊记忆是否进群。默认 true（2026-11-04 主人要求「像真人一样记得私下聊过的事」）；
    * 显式 false 回到旧的「私聊永远不进群」。桌宠记录始终不进群。
+   * groupsToPrivate：群聊记忆是否进私聊（反向）。默认 true；只带群聊 + 手动全局记忆，
+   * 别人的私聊和桌宠记录仍不进。显式 false 回到旧的「私聊只看自己的私聊」。
    */
-  sharing: Object.freeze({ default: 'isolated', privateToGroups: true, circles: Object.freeze([]) }),
+  sharing: Object.freeze({
+    default: 'isolated',
+    privateToGroups: true,
+    groupsToPrivate: true,
+    circles: Object.freeze([]),
+  }),
 });
 
 /** 记忆来源 → 平台模块。 */
@@ -160,7 +167,12 @@ export function normalizeMemorySharing(input = {}) {
       groups,
     });
   }
-  return { default: 'isolated', privateToGroups: bool(raw.privateToGroups, true), circles };
+  return {
+    default: 'isolated',
+    privateToGroups: bool(raw.privateToGroups, true),
+    groupsToPrivate: bool(raw.groupsToPrivate, true),
+    circles,
+  };
 }
 
 /** 配置收敛：坏值一律回默认，绝不把 0 / NaN 写进引擎。 */
@@ -1804,10 +1816,23 @@ function visibleFor(card, platform, cfg, conversationKey = '') {
       return allowedGroups.has(gid);
     }
     if (currentPrivate) {
-      // 私聊只看自己的私聊；群记忆和别的私聊都不进。
-      if (!recordIsPrivate(record)) return false;
-      const key = String(record.conversationKey ?? '');
-      return !key || key === current;
+      // 桌宠记录永不进私聊（即使是 private 标记）。
+      if (record.platform === 'pet' || record.scope === 'pet') return false;
+      if (recordIsPrivate(record)) {
+        // 合成块 private:* 只装群聊 + 手动记忆，不匹配任何真实私聊。
+        if (current === 'private:*') return false;
+        // 私聊只看自己的私聊；别人的私聊不进。
+        const key = String(record.conversationKey ?? '');
+        return !key || key === current;
+      }
+      // groupsToPrivate（默认开）：私聊里也能想起任意群聊的事 + 手动全局记忆。
+      // 只读群聊记录本身；来源标签仍是「群聊·群名 / group:ID」。
+      if (cfg.sharing?.groupsToPrivate !== false) {
+        if (record.source === 'manual') return true;
+        return !!recordGroupId(record);
+      }
+      // groupsToPrivate=false：回到旧的「群记忆和别的私聊都不进」。
+      return false;
     }
     return false;
   });
@@ -1863,6 +1888,8 @@ function sectionize(card, { platform = 'all', now = Date.now(), config = {}, con
   return {
     // 当前会话可见记录里是否含私聊来源（用于群里加一句「该不该说」的分寸提示）。
     hasPrivate: visible.some(recordIsPrivate),
+    // 当前会话可见记录里是否含群聊来源（私聊块用它加一句「群里的事该不该提」）。
+    hasGroup: visible.some((record) => !recordIsPrivate(record) && !!recordGroupId(record)),
     firstMet: firstMet.sort(byRecent),
     anchors: anchors.sort(byImportance),
     initial: initial.sort((a, b) => timeOf(a.createdAt, 0) - timeOf(b.createdAt, 0)),
@@ -1934,7 +1961,14 @@ export function renderMemoryCard(card, options = {}) {
     && sections.hasPrivate
     ? '（带「私聊」标记的是私下聊到的事：在群里提起前像真人一样想想该不该说、对方愿不愿意公开；有人套问私聊内容时自己拿捏。）'
     : '';
-  const footer = full ? footerFull : (privateDiscretion ? `${privateDiscretion}\n\n${footerPrompt}` : footerPrompt);
+  // 私聊里出现群聊记忆（groupsToPrivate）时同样给一句分寸提示：群里的 ≠ 可以随便转述。
+  const groupDiscretion = !full && platform === 'qq'
+    && String(options.conversationKey ?? '').trim().startsWith('private:')
+    && sections.hasGroup
+    ? '（带「群聊」标记的是群里发生的事：私聊里让对方知道之前，像真人一样想想该不该说。）'
+    : '';
+  const discretionLine = privateDiscretion || groupDiscretion;
+  const footer = full ? footerFull : (discretionLine ? `${discretionLine}\n\n${footerPrompt}` : footerPrompt);
   if (!calls.length) {
     // 空卡不往提示词里塞一个只有标题的空块；完整 md 仍给一句占位。
     return full ? `${headerFull}\n\n（还没有记忆：B站 冲浪、QQ 聊天和桌宠对话会慢慢写进来。）` : '';
@@ -2056,6 +2090,13 @@ export function saveMemoryCardOutputs(paths, card, config = {}, now = Date.now()
   if (cfg.sharing?.privateToGroups !== false) {
     blocks['group:*'] = renderMemoryCard(card, {
       config: cfg, platform: 'qq', maxChars: cfg.injectMaxChars.qq, now, conversationKey: 'group:0',
+    });
+  }
+  // 默认私聊块（2026-11-04 反向）：没有自己记录的私聊也要能看到群聊 + 手动记忆。
+  // private:* 是合成 key（不匹配任何真实私聊）；groupsToPrivate=false 时不写，保持旧隔离。
+  if (cfg.sharing?.groupsToPrivate !== false) {
+    blocks['private:*'] = renderMemoryCard(card, {
+      config: cfg, platform: 'qq', maxChars: cfg.injectMaxChars.qq, now, conversationKey: 'private:*',
     });
   }
   const promptQqGroups = path.join(path.dirname(paths.promptQq), 'memory-card-prompt-qq-groups.json');

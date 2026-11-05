@@ -74,7 +74,7 @@ import { normalizeAllowlist, pickBacklogSessions } from './allowlist.js';
 import { pickPeerAlias, buildPeerAliasTag } from './callname.js';
 import { buildPersonaIdentity, personaNameFromCard } from './persona-identity.js';
 import { evaluateWakeBudget, evaluateOutbound, isFreeWakeReason, localDayStart } from './token-guard.js';
-import { crossSessionEnabled, reachableTargets, resolveSendToken } from './cross-session.js';
+import { crossSessionEnabled, crossSessionReadEnabled, reachableTargets, resolveReadToken, resolveSendToken } from './cross-session.js';
 import {
   blockMessage, evaluateBudget, localDayKey, readBudget, readDailyUsage,
 } from './token-budget.js';
@@ -981,7 +981,8 @@ function loadConfig() {
       agentPreset: 'qq-chat-v2',
       provideRecommendations: true,
       // 跨会话发送（2026-11-04 主人要求）：默认开；false 回退到「令牌必须属于目标会话」。
-      crossSession: { enabled: true },
+      // crossSession.read 是反向只读开关（默认开）；关掉后 recent/message-detail 仍严格绑定。
+      crossSession: { enabled: true, read: true },
       tools: {
         getPrompt: true,
 
@@ -4499,6 +4500,20 @@ async function main() {
       cfg,
       eq: tokenEq,
     });
+    /**
+     * 只读端点的令牌判定（2026-11-04 跨会话读取）。
+     *
+     * 只有 recent / message-detail 调用；默认允许任意活跃会话令牌读白名单目标
+     * （socialV2.crossSession.read=false 可回退到「令牌必须属于目标」）。
+     * 白名单/工具开关仍按**目标会话**判定；跨读不写目标状态（见端点里的 crossRead）。
+     */
+    const resolveReadAuth = (key, token) => resolveReadToken({
+      targetKey: key,
+      token: typeof token === 'string' ? token : '',
+      conversations: socialV2.conversations,
+      cfg,
+      eq: tokenEq,
+    });
     // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
     // 语音包服务实例：按 config.json 的 mtime 缓存（既热生效，又保住安装进度）。
@@ -6557,15 +6572,24 @@ async function main() {
           const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 20));
           const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
           if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const readAuth = req.headers['x-agent-token']
+            ? resolveReadAuth(key, req.headers['x-agent-token'])
+            : { allowed: true, crossSession: false };
+          if (!readAuth.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('getRecent')) { sendJson({ ok: false, error: '工具未启用：qq_get_recent_messages' }, 403); return; }
-          const st = getSocialV2State(key);
-          const start = Math.max(0, st.recentMessages.length - offset - limit);
-          const end = Math.max(0, st.recentMessages.length - offset);
-          const messages = st.recentMessages.slice(start, end).map(withCrossSessionNote);
-          const readThroughSeq = req.headers['x-agent-token'] ? noteModelMessagesV2(st, messages) : readThroughSeqV2(st);
-          sendJson({ ok: true, key, messages, readThroughSeq, ...(unreadNoticeV2(st) || {}) });
+          // 跨会话读取只读：目标可能还没 live 状态，也不为它建状态/挂定时器。
+          const st = readAuth.crossSession ? peekSocialV2State(key) : getSocialV2State(key);
+          const messages = (st?.recentMessages ?? []).slice(
+            Math.max(0, (st?.recentMessages?.length ?? 0) - offset - limit),
+            Math.max(0, (st?.recentMessages?.length ?? 0) - offset)
+          ).map(withCrossSessionNote);
+          // 跨读不记「模型已看过」：否则会把来源会话的阅读进度算到目标头上。
+          const readThroughSeq = (req.headers['x-agent-token'] && !readAuth.crossSession)
+            ? noteModelMessagesV2(st, messages)
+            : readThroughSeqV2(st ?? { unread: [] });
+          const notice = st ? unreadNoticeV2(st) : null;
+          sendJson({ ok: true, key, messages, readThroughSeq, ...(notice || {}) });
           return;
         }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/mark-read') {
@@ -8707,7 +8731,10 @@ async function main() {
           const key = String(url.searchParams.get('key') ?? '').trim();
           const messageId = String(url.searchParams.get('messageId') ?? '').trim();
           if (!key || !messageId) { sendJson({ ok: false, error: 'key 和 messageId 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          const readAuth = req.headers['x-agent-token']
+            ? resolveReadAuth(key, req.headers['x-agent-token'])
+            : { allowed: true, crossSession: false };
+          if (!readAuth.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('getMessageDetail')) { sendJson({ ok: false, error: '工具未启用：qq_get_message_detail' }, 403); return; }
           const keyMatch = /^(group|private):(\d+)$/.exec(key);
@@ -8715,8 +8742,9 @@ async function main() {
           const kind = keyMatch[1];
           const id = Number(keyMatch[2]);
           try {
-            const st = getSocialV2State(key);
-            const found = (st.recentMessages || []).find((m) => m && (String(m.seq) === messageId || (m.messageId && String(m.messageId) === messageId)));
+            // 跨读只查目标已有状态；消息 id 仍必须在**目标会话**里（resolveReplyInfo 也按目标 kind/id 查）。
+            const st = readAuth.crossSession ? peekSocialV2State(key) : getSocialV2State(key);
+            const found = (st?.recentMessages || []).find((m) => m && (String(m.seq) === messageId || (m.messageId && String(m.messageId) === messageId)));
             const forwardFields = found ? {
               forwardIds: Array.isArray(found.forwardIds) ? found.forwardIds : [],
               hasForward: !!found.hasForward
@@ -11069,6 +11097,15 @@ async function main() {
       if (key) setupSleepTimerV2(key);
       log(`[reserved2] 唤醒配置无任何触发条件，已重置为默认配置，避免永眠`);
     }
+  }
+
+  /**
+   * 只读查看已有会话状态：不存在时返回 null，**不建状态、不挂定时器**。
+   * 跨会话读取用它，保证看别人的会话不会产生任何副作用。
+   */
+  function peekSocialV2State(key) {
+    const canonical = canonicalV2Key(key);
+    return canonical ? (socialV2.conversations.get(canonical) ?? null) : null;
   }
 
   function getSocialV2State(key) {
@@ -13599,6 +13636,11 @@ async function main() {
         if (/^group:\d+$/.test(target) && typeof blocks['group:*'] === 'string') {
           return blocks['group:*'].trim();
         }
+        // 没有自己记录的私聊：用默认私聊块（群聊 + 手动记忆），镜像 group:* 的反向回退。
+        // groupsToPrivate=false 时插件不写 private:*，这里自然回退为空，保持旧隔离。
+        if (/^private:\d+$/.test(target) && typeof blocks['private:*'] === 'string') {
+          return blocks['private:*'].trim();
+        }
         return '';
       }
       // v2 会话在没有按会话 map 时绝不回退全局块：那会把别的群/私聊记忆带进来。
@@ -14689,6 +14731,8 @@ async function main() {
       .join('、');
     return {
       enabled: true,
+      // 反向只读（D3）：私聊里被问「群里刚才说了什么」时，可以拿当前令牌看别的会话。
+      read: crossSessionReadEnabled(cfg),
       targets,
       hint: '调用 qq_send_message / qq_reply / qq_send_burst / qq_send_sticker / qq_send_voice / qq_send_poke 时，把 key 换成目标会话，token 仍然用你当前这个【会话令牌】（桥接认任意活跃会话令牌）。',
       line: list ? `可发目标：${list}；也可以用你原本的 key 发回当前会话。` : '当前没有额外可达目标；仍可用你原本的 key 发回当前会话。',
@@ -14698,7 +14742,10 @@ async function main() {
   function crossSessionPromptLine() {
     const info = crossSessionPromptInfo();
     if (!info) return '';
-    return `【跨会话发送】你可以主动把消息发到别的会话，像真人想到「这件事也该让那边知道」。${info.hint}${info.line}只发你真想说的，别刷屏。\n\n`;
+    const readLine = info.read
+      ? '【跨会话读取】想看看别的会话最近聊了什么（比如有人问“那边刚才说了啥”），可以调用 qq_get_recent_messages / qq_get_message_detail，把 key 换成目标会话，token 仍用你当前的；读取不会替对方标记已读。'
+      : '';
+    return `【跨会话发送】你可以主动把消息发到别的会话，像真人想到「这件事也该让那边知道」。${info.hint}${info.line}${readLine}只发你真想说的，别刷屏。\n\n`;
   }
 
   // 把 QQ 昵称/号落给 B站 侧：B站 会话跑在插件进程里，拿不到网关登录信息，

@@ -82,13 +82,22 @@ try {
   const groupMapPath = path.join(memoryDir, 'memory-card-prompt-qq-groups.json');
   fs.writeFileSync(groupMapPath, JSON.stringify({
     version: 1,
-    blocks: { 'group:*': '【默认群记忆】私聊·主人：私下说过的事', 'group:456': '【456自己的记忆】' },
+    blocks: {
+      'group:*': '【默认群记忆】私聊·主人：私下说过的事',
+      'group:456': '【456自己的记忆】',
+      'private:*': '【默认私聊记忆】群聊·A群 / group:111：群里说过的事',
+      'private:123': '【123自己的私聊记忆】',
+    },
   }));
   assert.match(harness.memoryCardPromptBlock('group:456'), /456自己的记忆/, '具体群块应优先');
   assert.match(harness.memoryCardPromptBlock('group:444'), /默认群记忆/, '没有自己记录的群应回退到 group:*');
   assert.match(harness.memoryCardPromptBlock('group:444'), /私聊/, '默认块里应有私聊记录');
+  assert.match(harness.memoryCardPromptBlock('private:123'), /123自己的私聊记忆/, '具体私聊块应优先');
+  assert.match(harness.memoryCardPromptBlock('private:888'), /默认私聊记忆/, '没有自己记录的私聊应回退到 private:*');
+  assert.match(harness.memoryCardPromptBlock('private:888'), /群聊/, '默认私聊块里应有群聊记录');
   fs.writeFileSync(groupMapPath, JSON.stringify({ version: 1, blocks: { 'group:456': '【456自己的记忆】' } }));
   assert.equal(harness.memoryCardPromptBlock('group:444'), '', '没有 group:* 时保持旧隔离（空块）');
+  assert.equal(harness.memoryCardPromptBlock('private:888'), '', '没有 private:* 时保持旧隔离（空块）');
   harness.recordMemoryInboxEvent({
     key: 'private:123',
     kind: 'private',

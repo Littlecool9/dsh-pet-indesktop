@@ -80,3 +80,47 @@
 
 - 如果以后要做跨会话**读**（她主动去看别的群），需要另立安全设计；本次不做。
 - 设置页没有开关（本次按约定只留 config key）。
+
+---
+
+## 补充：反向——私聊里回看群聊 + 群记忆进私聊（2026-11-04）
+
+### 现象
+
+主人先在一个群里跟她说话，她也在群里答了；随后主人在**私聊**里问「我刚才在群里说了什么」，她答不上来：
+
+1. 读端点仍把令牌绑在目标 key 上，私聊会话的令牌读不了群会话的 recent/message-detail。
+2. 记忆卡的私聊可见性只放行「当前私聊自己的记录」，群聊记录永远不进私聊提示词。
+
+### 根因
+
+- `bridge.js` 的 `/api/socialV2/recent` 与 `/api/socialV2/message-detail` 都写 `agentTokenOk(key, token)`；上一版只松开了发送侧。
+- `memory-card.js` 的 `visibleFor()` 在 `currentPrivate` 分支里 `!recordIsPrivate(record) return false`，群记录被硬排除。
+
+### 修法
+
+1. **跨会话读取（默认开）**：`socialV2.crossSession.read !== false` 时，`/recent` 与 `/message-detail` 接受任意活跃二代会话令牌读**白名单内**的目标；`src/cross-session.js` 新增 `crossSessionReadEnabled()` / `resolveReadToken()`，bridge 里对应 `resolveReadAuth()`。
+   - 其余端点（unread / mark-read / snapshot / memory-* / state / prompt / wake-config / close / wait / forward-* / images / stickers 等）仍严格 `agentTokenOk`，跨会话一律 403。
+   - 跨读走 `peekSocialV2State()`：不新建目标状态、不挂定时器；也不调用 `noteModelMessagesV2()`，所以目标未读数、读水位、`lastActionAt`、`noActionCount`、`modelSeenSeqs` 都不变；不记发送额度。
+   - `message-detail` 的 message id 仍必须在**目标会话**里（本地 recent 或按目标 kind/id 查网关）。
+2. **群记忆进私聊（默认开）**：`memoryCard.sharing.groupsToPrivate !== false` 时，私聊 `visibleFor()` 放行「任意群聊记录 + 手动全局记忆」；别人的私聊、桌宠记录仍排除；群记录保留 `群聊·群名 / group:ID` 来源。
+   - 私聊块含群记录时追加一句分寸提示：`带「群聊」标记的是群里发生的事：私聊里让对方知道之前，像真人一样想想该不该说。`
+   - `saveMemoryCardOutputs()` 额外写默认 `private:*` 块（合成 key `private:*` 不匹配任何真实私聊，只装群聊 + 手动记忆）；bridge `memoryCardPromptBlock()` 对 map 里没有的 `private:N` 回退到它，镜像 `group:*`。
+3. **提示词 / 工具描述**：`crossSessionPromptInfo()` 增加 `read`；`crossSessionPromptLine()` 在读开关开启时追加 `【跨会话读取】…qq_get_recent_messages / qq_get_message_detail…`。`mcp-snowluma-safe.js` 的两个工具描述说明 key 可以是别的会话、token 仍用当前令牌。
+
+### 开关与回滚
+
+- 跨会话读取：`socialV2.crossSession.read: false`（recent/message-detail 回到旧的 403）。
+- 群记忆进私聊：`memoryCard.sharing.groupsToPrivate: false`（回到「私聊只看自己的私聊」，且不写/不回退 `private:*`）。
+- 两个开关互相独立，也分别独立于发送侧的 `socialV2.crossSession.enabled` / `memoryCard.sharing.privateToGroups`。
+- 代码回滚：bridge 两个读端点恢复 `agentTokenOk`；`memory-card.js` 恢复 `currentPrivate` 的硬排除并删除 `private:*` 分支。
+
+### 隐私取舍
+
+打开后，**私聊里的任何人**都可能从她的记忆/回看里得知群里发生的事；是否转述由她按分寸提示自行判断，不设硬拦截。若不想承担这个风险，把 `groupsToPrivate` 或 `crossSession.read` 设为 `false`。
+
+### 验证
+
+- `node scripts/test-cross-session.mjs`：read helper、默认跨读 200 / `read=false` 403、非白名单/过期令牌 403、其它端点仍 403、跨读不改目标未读/读水位/lastActionAt/唤醒计数、提示词只在读开关开时出现 `【跨会话读取】`。
+- `node scripts/test-memory-sharing.mjs`：默认私聊看到任意群记录 + 来源标签 + 分寸提示；别人的私聊/桌宠排除；`groupsToPrivate=false` 回旧隔离；`private:*` 默认块写入/不写入。
+- `node scripts/test-memory-card-wiring.mjs`：`private:N` 缺块回退 `private:*`，没有 `private:*` 时保持空块（fail closed）。
