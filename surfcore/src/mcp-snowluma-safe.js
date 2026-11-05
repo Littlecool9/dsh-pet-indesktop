@@ -578,10 +578,10 @@ server.tool(
 
 server.tool(
   'qq_get_context_snapshot',
-  '一次读取会话上下文：未读 + 最近 + 会话状态 + 活跃成员。默认只返回最近少量摘要，带 truncated/refs；需要精确正文再用 qq_get_message_detail。避免连续调用 unread/recent/social/activeMembers。',
+  '一次读取会话上下文：未读 + 最近 + 会话状态 + 活跃成员。默认只返回最近少量摘要，带 truncated/refs；需要精确正文再用 qq_get_message_detail。避免连续调用 unread/recent/social/activeMembers。key 也可以是唤醒提示里列出的其它会话（只读看看那边聊了什么，不会替对方标已读）；token 仍用你当前会话的令牌（跨会话读取开启时）。',
   {
-    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
-    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
+    key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号；也可以是唤醒提示里列出的其它会话'),
+    token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】；看别的会话也用你当前这个）'),
     include: z.array(z.enum(['unread', 'recent', 'social', 'activeMembers'])).optional().describe('默认四类都取；只取需要的可减少结果'),
     unreadLimit: z.number().int().min(1).max(100).optional().describe('未读最多返回条数，默认 12'),
     recentLimit: z.number().int().min(1).max(100).optional().describe('最近消息最多返回条数，默认 10'),

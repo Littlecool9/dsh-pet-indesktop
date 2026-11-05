@@ -6520,11 +6520,19 @@ async function main() {
         if (req.method === 'GET' && url.pathname === '/api/socialV2/snapshot') {
           const key = String(url.searchParams.get('key') ?? '').trim();
           if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
-          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          // 跨会话读取（socialV2.crossSession.read）：默认 balanced 工具档位只给模型这一个读工具，
+          // 所以它必须和 recent / message-detail 一起接跨读 helper（2026-11-04 真机：私聊里读不到群消息）。
+          const readAuth = req.headers['x-agent-token']
+            ? resolveReadAuth(key, req.headers['x-agent-token'])
+            : { allowed: true, crossSession: false };
+          if (!readAuth.allowed) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (req.headers['x-agent-token'] && !v2ToolEnabled('getSnapshot')) { sendJson({ ok: false, error: '工具未启用：qq_get_context_snapshot' }, 403); return; }
           const include = String(url.searchParams.get('include') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
-          const st = getSocialV2State(key);
+          // 跨读只看已有状态，不建状态/定时器；快照本身是纯读取，不推进目标的已读水位。
+          const st = readAuth.crossSession
+            ? (peekSocialV2State(key) ?? { unread: [], recentMessages: [] })
+            : getSocialV2State(key);
           const configured = cfg.socialV2?.snapshot ?? {};
           const caps = {
             unread: url.searchParams.get('unreadLimit') ?? configured.unread,
@@ -6540,7 +6548,8 @@ async function main() {
             caps,
             afterSeq: Number(url.searchParams.get('afterSeq') ?? 0) || 0,
           });
-          sendJson({ ...snapshot, ...(unreadNoticeV2(st) || {}) });
+          // 跨读不带「去 wait/unread」的催促：那是目标会话自己的待办，不是来源会话的。
+          sendJson({ ...snapshot, ...(readAuth.crossSession ? {} : (unreadNoticeV2(st) || {})) });
           return;
         }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/unread') {
@@ -14743,7 +14752,7 @@ async function main() {
     const info = crossSessionPromptInfo();
     if (!info) return '';
     const readLine = info.read
-      ? '【跨会话读取】想看看别的会话最近聊了什么（比如有人问“那边刚才说了啥”），可以调用 qq_get_recent_messages / qq_get_message_detail，把 key 换成目标会话，token 仍用你当前的；读取不会替对方标记已读。'
+      ? '【跨会话读取】想看看别的会话最近聊了什么（比如有人问“那边刚才说了啥”），可以调用 qq_get_context_snapshot（想要精确正文再用 qq_get_message_detail；有 qq_get_recent_messages 时也可以用它），把 key 换成目标会话，token 仍用你当前的；读取不会替对方标记已读。'
       : '';
     return `【跨会话发送】你可以主动把消息发到别的会话，像真人想到「这件事也该让那边知道」。${info.hint}${info.line}${readLine}只发你真想说的，别刷屏。\n\n`;
   }

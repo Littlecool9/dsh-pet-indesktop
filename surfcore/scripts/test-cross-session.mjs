@@ -96,8 +96,10 @@ for (const endpoint of [
 ]) {
   assert.match(endpointBlock(endpoint), /resolveSendAuth\(/, `${endpoint} 必须使用跨会话令牌 helper`);
 }
-// 读取只开 recent / message-detail；其余读端点在 HTTP 层仍严格绑定（见第 3 节）。
-for (const endpoint of ['/api/socialV2/recent', '/api/socialV2/message-detail']) {
+// 读取只开 recent / message-detail / snapshot；其余读端点在 HTTP 层仍严格绑定（见第 3 节）。
+// snapshot 必须在列：默认 balanced 工具档位把 qq_get_recent_messages 隐藏了，
+// 模型手里真正有的是 qq_get_context_snapshot（2026-11-04 真机：私聊里读不到群消息）。
+for (const endpoint of ['/api/socialV2/recent', '/api/socialV2/message-detail', '/api/socialV2/snapshot']) {
   assert.match(endpointBlock(endpoint), /resolveReadAuth\(/, `${endpoint} 必须使用跨会话读取 helper`);
 }
 assert.ok(!/if \(token && !agentTokenOk\(key, token\)\)/.test(bridgeSource), '发送端点不能残留旧的严格绑定');
@@ -174,6 +176,11 @@ try {
   const readDetail = await request(port, 'GET', `/api/socialV2/message-detail?key=${encodeURIComponent(targetKey)}&messageId=fixture-mid-1`, undefined, { 'x-agent-token': sourceToken });
   assert.equal(readDetail.status, 200, `跨会话读取消息详情：${readDetail.raw}`);
   assert.match(String(readDetail.body?.info?.text ?? ''), /群里刚才说的话/, '消息详情必须来自目标会话');
+  const readSnapshot = await request(port, 'GET', `/api/socialV2/snapshot?key=${encodeURIComponent(targetKey)}`, undefined, { 'x-agent-token': sourceToken });
+  assert.equal(readSnapshot.status, 200, `默认允许跨会话读快照（balanced 档位下她唯一的读工具）：${readSnapshot.raw}`);
+  assert.match(readSnapshot.raw, /群里刚才说的话/, '跨读快照要看到目标会话的消息');
+  const ghostSnapshot = await request(port, 'GET', `/api/socialV2/snapshot?key=${encodeURIComponent('group:457')}`, undefined, { 'x-agent-token': sourceToken });
+  assert.notEqual(ghostSnapshot.status, 500, `目标还没有状态时跨读快照不能崩：${ghostSnapshot.raw}`);
   const targetAfter = {
     unread: targetState.unread.length,
     lastReadThroughSeq: targetState.lastReadThroughSeq || 0,
@@ -188,8 +195,8 @@ try {
   for (const [method, p, body] of [
     ['GET', `/api/socialV2/unread?key=${encodeURIComponent(targetKey)}&limit=5`, undefined],
     ['POST', '/api/socialV2/mark-read', { key: targetKey }],
-    ['GET', `/api/socialV2/snapshot?key=${encodeURIComponent(targetKey)}`, undefined],
     ['GET', `/api/socialV2/memory?key=${encodeURIComponent(targetKey)}`, undefined],
+    ['GET', `/api/socialV2/state?key=${encodeURIComponent(targetKey)}`, undefined],
   ]) {
     const deniedEndpoint = await request(port, method, p, body, { 'x-agent-token': sourceToken });
     assert.equal(deniedEndpoint.status, 403, `${method} ${p} 不能跨会话访问`);
@@ -255,6 +262,12 @@ try {
   assert.ok(prompt.includes('【跨会话发送】'), '唤醒提示必须告诉模型可以跨会话发送');
   assert.ok(prompt.includes('【跨会话读取】'), '读开关开启时唤醒提示必须告诉模型可以看别的会话');
   assert.ok(prompt.includes('qq_get_recent_messages'), '读提示要给出具体工具名');
+  assert.ok(prompt.includes('qq_get_context_snapshot'), '读提示必须点名默认档位下真正可见的 qq_get_context_snapshot');
+  // 守卫：提示里点名的读工具，在默认 balanced 档位下必须真的注册给模型。
+  const mcpSource = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'mcp-snowluma-safe.js'), 'utf8');
+  const balancedHidden = /balanced:\s*new Set\(\[([\s\S]*?)\]\)/.exec(mcpSource)?.[1] ?? '';
+  assert.ok(balancedHidden, '找不到 balanced 档位的隐藏列表');
+  assert.ok(!balancedHidden.includes("'qq_get_context_snapshot'"), '默认档位不能隐藏 qq_get_context_snapshot');
   assert.ok(prompt.includes(targetKey) && prompt.includes(sourceKey), '唤醒提示要列出目标 key');
   assert.ok(!/\n.*\n.*\n/.test(info.targets.map((t) => t.name).join('\n')), '目标名不能带换行');
 } finally {
@@ -300,6 +313,8 @@ try {
   assert.match(String(recentOff.body?.error ?? ''), /agent token 无效/);
   const detailOff = await request(port, 'GET', '/api/socialV2/message-detail?key=group%3A456&messageId=fixture-read-off', undefined, { 'x-agent-token': sourceToken });
   assert.equal(detailOff.status, 403, 'read=false 时跨会话读详情必须 403');
+  const snapshotOff = await request(port, 'GET', '/api/socialV2/snapshot?key=group%3A456', undefined, { 'x-agent-token': sourceToken });
+  assert.equal(snapshotOff.status, 403, 'read=false 时跨会话读快照必须 403');
   // 同一会话自己的令牌仍能读。
   const ownRead = await request(port, 'GET', '/api/socialV2/recent?key=group%3A456&limit=5', undefined, { 'x-agent-token': hReadOff.getSocialV2State('group:456').agentToken });
   assert.equal(ownRead.status, 200, 'read=false 不影响本会话读取');

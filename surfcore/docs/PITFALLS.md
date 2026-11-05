@@ -4047,3 +4047,20 @@ npm run test:audit
 **教训**
 - 计数器的「一轮」要对齐用户感知的「一次请求」，而不是实现里的「一个模型回合」；两者在长回合里会分叉。
 - 绕开 `sendWakePromptV2` 的投递路径（目的回合）要逐项核对它做的簿记：通道门（#127）、计数清零（本条）。
+
+## #129（2026-11-04）跨会话读取单测全绿，真机私聊仍读不到群消息
+
+**现象**
+- 开了 `socialV2.crossSession.read` 后，私聊里问「群里刚才说了什么」，她说读不到群消息。
+
+**根因**
+- 默认工具档位 `balanced` 在 MCP **注册期**隐藏 `qq_get_recent_messages`，模型只拿得到 `qq_get_context_snapshot`；
+  跨读只接了 recent/message-detail，快照端点仍严格绑定，提示词还点名了一个模型看不见的工具。
+- 测试直接打 HTTP 端点，绕过了 MCP 注册层。
+
+**处置**
+- 快照端点接跨读 helper；提示词改点名 `qq_get_context_snapshot`；测试加「提示点名的工具在默认档位必须注册」守卫。
+- case：`docs/cases/2026-11-04-cross-session-human-like.md`（补丁一节）
+
+**教训**
+- 给模型的新能力要从「模型看得到的工具清单」往下验，不能只验 HTTP 端点：工具档位/开关会在注册期把工具藏掉。

@@ -28,6 +28,7 @@ import * as presetPrompt from '../src/preset-prompt.js';
 import * as fishGuard from '../src/fish-guard.js';
 import * as tokenGuard from '../src/token-guard.js';
 import * as crossSession from '../src/cross-session.js';
+import * as contextSnapshot from '../src/context-snapshot.js';
 import * as tokenBudget from '../src/token-budget.js';
 import * as turnGuard from '../src/turn-guard.js';
 import * as gateEvents from '../src/gate-events.js';
@@ -262,7 +263,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     probeDshBaseUrl: async () => true,
     discoverDshBaseUrl: async () => null,
     ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...selfIdentity, ...slang, ...sticker,
-    ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...fishGuard, ...tokenGuard, ...crossSession,
+    ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...fishGuard, ...tokenGuard, ...crossSession, ...contextSnapshot,
     ...qqAt,
     ...modelOptions,
     ...dshModelFollow,

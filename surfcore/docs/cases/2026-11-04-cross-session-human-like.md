@@ -124,3 +124,26 @@
 - `node scripts/test-cross-session.mjs`：read helper、默认跨读 200 / `read=false` 403、非白名单/过期令牌 403、其它端点仍 403、跨读不改目标未读/读水位/lastActionAt/唤醒计数、提示词只在读开关开时出现 `【跨会话读取】`。
 - `node scripts/test-memory-sharing.mjs`：默认私聊看到任意群记录 + 来源标签 + 分寸提示；别人的私聊/桌宠排除；`groupsToPrivate=false` 回旧隔离；`private:*` 默认块写入/不写入。
 - `node scripts/test-memory-card-wiring.mjs`：`private:N` 缺块回退 `private:*`，没有 `private:*` 时保持空块（fail closed）。
+
+## 补丁：真机私聊里仍读不到群消息（快照工具没接跨读）
+
+### 现象
+
+- 合入跨会话读取后真机测试：群记忆能进私聊，但在私聊里让她「看看群里刚才说了什么」，她说读不到群消息。
+
+### 根因
+
+- `src/mcp-snowluma-safe.js` 按工具档位（`socialV2.toolProfile`，默认 `balanced`）在**注册期**隐藏
+  `qq_get_recent_messages`，模型手里只有合并工具 `qq_get_context_snapshot`。
+- 跨会话读取只接了 `/api/socialV2/recent` 与 `/message-detail`；`/api/socialV2/snapshot` 仍是 `agentTokenOk` 严格绑定。
+- 提示词点名的又是被隐藏的 `qq_get_recent_messages` —— 模型既看不到这个工具，能用的快照又被 403。
+- 测试只打 HTTP 端点、没核对「提示里点名的工具在默认档位是否注册」，所以单测全绿、真机不通。
+
+### 修法
+
+- `/api/socialV2/snapshot` 接 `resolveReadAuth`；跨读用 `peekSocialV2State`（不建状态），不附带目标会话的
+  「去 wait/unread」催促（`unreadNotice`），本会话读取行为不变。
+- 提示词 `【跨会话读取】` 改为点名 `qq_get_context_snapshot`（有 recent 工具时也可用）；快照工具描述补「key 可以是别的会话、token 用当前」。
+- 测试：`test-cross-session.mjs` 增加快照跨读 200 / `read=false` 403、目标状态不变、提示点名快照工具，
+  以及守卫「`balanced` 隐藏列表不得包含 `qq_get_context_snapshot`」；`audit-bridge-harness.mjs` 补注入 `context-snapshot.js`
+  （此前夹具里快照端点只能走到 403，成功路径从未被执行过）。
